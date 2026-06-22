@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HR Org Chart - Interactive Organization Directory</title>
+    <!-- Google Fonts: Inter & Outfit -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i data-lucide="network" class="logo-icon"></i>
+                    <span>HR Org Chart</span>
+                </div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h3>Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-value" id="total-headcount">0</span>
+                        <span class="stat-label">Total Headcount</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="total-departments">0</span>
+                        <span class="stat-label">Departments</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h3>Departments</h3>
+                <ul class="department-list" id="sidebar-dept-list">
+                    <!-- Loaded dynamically -->
+                </ul>
+            </div>
+
+            <div class="sidebar-footer">
+                <button class="btn btn-secondary btn-block" id="btn-reset-data">
+                    <i data-lucide="refresh-cw"></i> Reset Demo Data
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <div class="search-container">
+                    <i data-lucide="search" class="search-icon"></i>
+                    <input type="text" id="search-input" placeholder="Search employees by name, role or department...">
+                    <div class="search-results-dropdown" id="search-results"></div>
+                </div>
+
+                <div class="actions-group">
+                    <button class="btn btn-primary" id="btn-add-employee">
+                        <i data-lucide="user-plus"></i> Add Employee
+                    </button>
+                </div>
+            </header>
+
+            <!-- Chart Control Bar -->
+            <div class="chart-controls">
+                <div class="view-info">
+                    <h2 id="current-view-title">Overall Organization</h2>
+                    <span id="current-view-desc">Showing complete hierarchy</span>
+                </div>
+                <div class="zoom-controls">
+                    <button class="zoom-btn" id="zoom-out" title="Zoom Out"><i data-lucide="minus"></i></button>
+                    <span class="zoom-level" id="zoom-percent">100%</span>
+                    <button class="zoom-btn" id="zoom-in" title="Zoom In"><i data-lucide="plus"></i></button>
+                    <button class="zoom-btn" id="zoom-fit" title="Fit to Screen"><i data-lucide="maximize-2"></i></button>
+                </div>
+            </div>
+
+            <!-- Chart Container (Viewport) -->
+            <div class="chart-viewport" id="chart-viewport">
+                <!-- Instruction tooltip -->
+                <div class="canvas-tip">
+                    <i data-lucide="info"></i> Drag to pan. Scroll to zoom. Click card to view details.
+                </div>
+                
+                <!-- Zoomable/Pannable Canvas -->
+                <div class="chart-canvas" id="chart-canvas">
+                    <!-- SVG Overlay for connector lines -->
+                    <svg class="connections-overlay" id="svg-overlay"></svg>
+                    
+                    <!-- DOM tree content -->
+                    <div class="tree-container" id="tree-container">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Employee Detail Drawer (Slide over from right) -->
+    <div class="drawer-overlay" id="detail-drawer-overlay"></div>
+    <div class="drawer" id="detail-drawer">
+        <div class="drawer-header">
+            <h3>Employee Profile</h3>
+            <button class="close-btn" id="close-detail-drawer"><i data-lucide="x"></i></button>
+        </div>
+        <div class="drawer-body" id="detail-drawer-body">
+            <!-- Rendered dynamically -->
+        </div>
+        <div class="drawer-footer">
+            <button class="btn btn-secondary" id="btn-edit-employee">
+                <i data-lucide="edit"></i> Edit Details
+            </button>
+            <button class="btn btn-danger" id="btn-delete-employee">
+                <i data-lucide="trash-2"></i> Delete Employee
+            </button>
+        </div>
+    </div>
+
+    <!-- Employee Form Modal -->
+    <div class="modal-overlay" id="form-modal-overlay"></div>
+    <div class="modal" id="form-modal">
+        <div class="modal-header">
+            <h3 id="modal-title">Add New Employee</h3>
+            <button class="close-btn" id="close-form-modal"><i data-lucide="x"></i></button>
+        </div>
+        <form id="employee-form">
+            <input type="hidden" id="form-employee-id">
+            <div class="modal-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-name">Full Name <span class="required">*</span></label>
+                        <input type="text" id="form-name" required placeholder="e.g. John Doe">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-role">Job Title <span class="required">*</span></label>
+                        <input type="text" id="form-role" required placeholder="e.g. Senior Software Engineer">
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-department">Department <span class="required">*</span></label>
+                        <input type="text" id="form-department" required placeholder="e.g. Engineering">
+                    </div>
+                    <div class="form-group">
+                        <label for="form-manager">Reports To</label>
+                        <select id="form-manager">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-email">Email Address</label>
+                        <input type="email" id="form-email" placeholder="e.g. john.doe@company.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="form-phone">Phone Number</label>
+                        <input type="tel" id="form-phone" placeholder="e.g. 081-234-5678">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-bio">Bio / Notes</label>
+                        <textarea id="form-bio" rows="3" placeholder="Brief description of responsibilities or bio..."></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="btn-cancel-form">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btn-submit-form">Save Employee</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Notification system -->
+    <div class="notification-container" id="notification-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
