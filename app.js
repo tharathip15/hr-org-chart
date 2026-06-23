@@ -450,8 +450,14 @@ function init() {
     if (saved) {
         try {
             employees = JSON.parse(saved);
+            // If the saved data contains the old demo data (e.g. Sarah Jenkins), force reset to the new corporate data!
+            if (employees.some(e => e.name === "Sarah Jenkins")) {
+                employees = [...DEFAULT_EMPLOYEES];
+                saveData();
+            }
         } catch (e) {
             employees = [...DEFAULT_EMPLOYEES];
+            saveData();
         }
     } else {
         employees = [...DEFAULT_EMPLOYEES];
