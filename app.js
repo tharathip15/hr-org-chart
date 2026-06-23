@@ -1204,6 +1204,11 @@ function openEmployeeForm(editId = null) {
         }
     }
     
+    // Populate Department Suggestions Datalist
+    const deptList = document.getElementById("department-list");
+    const uniqueDepts = [...new Set(employees.map(e => e.department))].sort();
+    deptList.innerHTML = uniqueDepts.map(dept => `<option value="${escapeHTML(dept)}">`).join("");
+    
     overlay.classList.add("active");
     modal.classList.add("active");
 }
