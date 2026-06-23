@@ -544,17 +544,52 @@ function setupEventListeners() {
         }
     });
     
-    // Reset data button
-    document.getElementById("btn-reset-data").addEventListener("click", () => {
-        if (confirm("Are you sure you want to reset to the default demo organization chart? All custom additions will be lost.")) {
-            employees = [...DEFAULT_EMPLOYEES];
-            collapsedNodes.clear();
-            selectedDept = "All";
-            saveData();
-            renderAll();
-            fitToScreen();
-            showNotification("Organization chart reset to demo data", "info");
-        }
+    // Export Backup data
+    document.getElementById("btn-export-data").addEventListener("click", () => {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(employees, null, 2));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", "hr_org_chart_backup.json");
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+        showNotification("Backup file downloaded successfully", "success");
+    });
+    
+    // Import Backup data trigger
+    const fileInput = document.getElementById("import-file-input");
+    document.getElementById("btn-import-trigger").addEventListener("click", () => {
+        fileInput.click();
+    });
+    
+    fileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const parsed = JSON.parse(event.target.result);
+                if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name && parsed[0].department) {
+                    if (confirm(`Are you sure you want to import this backup? It will overwrite your current chart with ${parsed.length} employees.`)) {
+                        employees = parsed;
+                        collapsedNodes.clear();
+                        selectedDept = "All";
+                        saveData();
+                        renderAll();
+                        fitToScreen();
+                        showNotification("Backup imported successfully!", "success");
+                    }
+                } else {
+                    showNotification("Invalid backup file structure", "error");
+                }
+            } catch (err) {
+                showNotification("Failed to parse JSON backup file", "error");
+            }
+            // Clear input so same file can be uploaded again
+            fileInput.value = "";
+        };
+        reader.readAsText(file);
     });
     
     // Add Employee Button

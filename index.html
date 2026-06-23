@@ -45,9 +45,13 @@
             </div>
 
             <div class="sidebar-footer">
-                <button class="btn btn-secondary btn-block" id="btn-reset-data">
-                    <i data-lucide="refresh-cw"></i> Reset Demo Data
+                <button class="btn btn-secondary btn-block" id="btn-export-data" style="margin-bottom: 8px;">
+                    <i data-lucide="download"></i> Export Backup (.json)
                 </button>
+                <button class="btn btn-secondary btn-block" id="btn-import-trigger">
+                    <i data-lucide="upload"></i> Import Backup (.json)
+                </button>
+                <input type="file" id="import-file-input" accept=".json" style="display: none;">
             </div>
         </aside>
 
@@ -185,6 +189,6 @@
     <!-- Notification system -->
     <div class="notification-container" id="notification-container"></div>
 
-    <script src="app.js?v=2.2"></script>
+    <script src="app.js?v=2.3"></script>
 </body>
 </html>
