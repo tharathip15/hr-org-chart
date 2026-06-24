@@ -555,18 +555,7 @@ function setupEventListeners() {
         
         e.preventDefault();
         if (draggedId !== null) {
-            const empIndex = employees.findIndex(emp => emp.id === draggedId);
-            if (empIndex > -1) {
-                const emp = employees[empIndex];
-                if (emp.managerId !== null) {
-                    if (confirm(`Do you want to set ${emp.name} as a Top Level manager (reports to no one)?`)) {
-                        emp.managerId = null;
-                        saveData();
-                        renderAll();
-                        showNotification(`Reassigned ${emp.name} as Top Level`, "success");
-                    }
-                }
-            }
+            openDropActionModal(draggedId, null);
         }
     });
     
@@ -699,6 +688,116 @@ function setupEventListeners() {
             deleteEmployee(id);
             closeDetailDrawer();
         }
+    });
+    
+    // Close Drop Modal
+    document.getElementById("close-drop-modal").addEventListener("click", closeDropModal);
+    document.getElementById("drop-modal-overlay").addEventListener("click", closeDropModal);
+    
+    // Opt 1: Report to (or Set as Top Level if dropTargetId is null)
+    document.getElementById("opt-report-to").addEventListener("click", () => {
+        if (dropDraggedId === null) return;
+        const emp = employees.find(e => e.id === dropDraggedId);
+        if (!emp) return;
+        
+        if (dropTargetId !== null) {
+            // Report to target
+            const mgr = employees.find(e => e.id === dropTargetId);
+            if (mgr) {
+                emp.managerId = dropTargetId;
+                // Also update department to match manager
+                emp.department = mgr.department;
+                saveData();
+                renderAll();
+                showNotification(`Reassigned ${emp.name} under ${mgr.name} (${mgr.department})`, "success");
+            }
+        } else {
+            // Set as Top Level
+            emp.managerId = null;
+            saveData();
+            renderAll();
+            showNotification(`Reassigned ${emp.name} as Top Level`, "success");
+        }
+        closeDropModal();
+    });
+    
+    // Opt 2: Become Manager (Insert above target)
+    document.getElementById("opt-become-manager").addEventListener("click", () => {
+        if (dropDraggedId === null || dropTargetId === null) return;
+        const emp = employees.find(e => e.id === dropDraggedId);
+        const targetEmp = employees.find(e => e.id === dropTargetId);
+        if (!emp || !targetEmp) return;
+        
+        // Store target's old manager
+        const oldManagerId = targetEmp.managerId;
+        
+        // Emp reports to target's old manager
+        emp.managerId = oldManagerId;
+        // Target reports to Emp
+        targetEmp.managerId = emp.id;
+        
+        // Set Emp's department to target's department
+        emp.department = targetEmp.department;
+        
+        saveData();
+        renderAll();
+        
+        showNotification(`Inserted ${emp.name} as manager of ${targetEmp.name}`, "success");
+        closeDropModal();
+    });
+    
+    // Opt 3: Change Department Only
+    document.getElementById("opt-change-dept").addEventListener("click", () => {
+        if (dropDraggedId === null) return;
+        const emp = employees.find(e => e.id === dropDraggedId);
+        if (!emp) return;
+        
+        if (dropTargetId !== null) {
+            // Change department to target's department immediately
+            const targetEmp = employees.find(e => e.id === dropTargetId);
+            if (targetEmp) {
+                emp.department = targetEmp.department;
+                saveData();
+                renderAll();
+                showNotification(`Moved ${emp.name} to ${targetEmp.department} department`, "success");
+                closeDropModal();
+            }
+        } else {
+            // Dropped on background - show department input and datalist
+            const deptGroup = document.getElementById("dept-select-group");
+            const input = document.getElementById("drop-new-dept");
+            const datalist = document.getElementById("drop-department-list");
+            
+            // Populate datalist with unique departments
+            const uniqueDepts = [...new Set(employees.map(e => e.department))].sort();
+            datalist.innerHTML = uniqueDepts.map(dept => `<option value="${escapeHTML(dept)}">`).join("");
+            
+            // Set current department as value
+            input.value = emp.department;
+            
+            deptGroup.style.display = "block"; // Show input field
+        }
+    });
+    
+    // Save new department button
+    document.getElementById("btn-save-new-dept").addEventListener("click", () => {
+        if (dropDraggedId === null) return;
+        const emp = employees.find(e => e.id === dropDraggedId);
+        const input = document.getElementById("drop-new-dept");
+        if (emp && input) {
+            const oldDept = emp.department;
+            const newDept = input.value.trim();
+            if (!newDept) {
+                showNotification("กรุณาระบุชื่อแผนก", "error");
+                return;
+            }
+            emp.department = newDept;
+            
+            saveData();
+            renderAll();
+            showNotification(`Moved ${emp.name} from ${oldDept} to ${newDept}`, "success");
+        }
+        closeDropModal();
     });
 }
 
@@ -1492,6 +1591,8 @@ function showNotification(message, type = "info") {
 
 // Drag and Drop Global State & Handlers
 let draggedId = null;
+let dropDraggedId = null;
+let dropTargetId = null;
 
 function handleDragStart(e) {
     draggedId = parseInt(this.dataset.id);
@@ -1531,26 +1632,75 @@ function handleDrop(e) {
     const descendants = getDescendantIds(draggedId);
     if (descendants.includes(targetId)) return;
     
-    // Update manager
-    const empIndex = employees.findIndex(emp => emp.id === draggedId);
-    if (empIndex > -1) {
-        const emp = employees[empIndex];
-        const oldManagerId = emp.managerId;
-        emp.managerId = targetId;
-        
-        saveData();
-        renderAll();
-        
-        // Show success notification
-        const manager = employees.find(m => m.id === targetId);
-        showNotification(`Reassigned ${emp.name} to report to ${manager.name}`, "success");
-    }
+    openDropActionModal(draggedId, targetId);
 }
 
 function handleDragEnd(e) {
     this.classList.remove("dragging");
     document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
     draggedId = null;
+}
+
+function openDropActionModal(dragged, target) {
+    dropDraggedId = dragged;
+    dropTargetId = target;
+    const emp = employees.find(e => e.id === dropDraggedId);
+    if (!emp) return;
+    
+    const modal = document.getElementById("drop-action-modal");
+    const overlay = document.getElementById("drop-modal-overlay");
+    const desc = document.getElementById("drop-modal-desc");
+    
+    const optReportTo = document.getElementById("opt-report-to");
+    const optBecomeManager = document.getElementById("opt-become-manager");
+    const optChangeDept = document.getElementById("opt-change-dept");
+    
+    const optReportToDesc = document.getElementById("opt-report-to-desc");
+    const optBecomeManagerDesc = document.getElementById("opt-become-manager-desc");
+    const optChangeDeptDesc = document.getElementById("opt-change-dept-desc");
+    
+    const deptGroup = document.getElementById("dept-select-group");
+    deptGroup.style.display = "none";
+    
+    if (target !== null) {
+        const mgr = employees.find(e => e.id === target);
+        if (!mgr) return;
+        
+        optReportTo.style.display = "flex";
+        optBecomeManager.style.display = "flex";
+        optChangeDept.style.display = "flex";
+        
+        optReportTo.querySelector("strong").innerText = "รายงานตรงต่อ (ต่อล่าง)";
+        optBecomeManager.querySelector("strong").innerText = "เป็นหัวหน้างานของ (ต่อบน)";
+        optChangeDept.querySelector("strong").innerText = "ย้ายแผนกอย่างเดียว";
+        
+        desc.innerHTML = `ต้องการจัดโครงสร้างสำหรับ <strong>${escapeHTML(emp.name)}</strong> ร่วมกับ <strong>${escapeHTML(mgr.name)}</strong> อย่างไร?`;
+        optReportToDesc.innerText = `ให้ ${emp.name} ทำงานภายใต้ ${mgr.name} (และเปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department})`;
+        optBecomeManagerDesc.innerText = `ให้ ${emp.name} มาเป็นหัวหน้าของ ${mgr.name} (แทรกสายงานระหว่างหัวหน้าเดิมของ ${mgr.name} กับตัว ${mgr.name})`;
+        optChangeDeptDesc.innerText = `เปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department} เท่านั้น (รักษาสายรายงานผู้จัดการคนเดิม)`;
+    } else {
+        optReportTo.style.display = "flex";
+        optBecomeManager.style.display = "none";
+        optChangeDept.style.display = "flex";
+        
+        optReportTo.querySelector("strong").innerText = "ตั้งเป็นระดับสูงสุด (Top Level)";
+        optChangeDept.querySelector("strong").innerText = "ย้ายแผนกของพนักงาน";
+        
+        optReportToDesc.innerText = `ให้ ${emp.name} รายงานตรงต่อตนเอง (ไม่ขึ้นตรงกับใคร)`;
+        optChangeDeptDesc.innerText = `เปลี่ยนแผนกใหม่ของ ${emp.name}`;
+        
+        desc.innerHTML = `จัดวางพนักงาน <strong>${escapeHTML(emp.name)}</strong> ในแคนวาสพื้นหลัง`;
+    }
+    
+    overlay.classList.add("active");
+    modal.classList.add("active");
+}
+
+function closeDropModal() {
+    document.getElementById("drop-modal-overlay").classList.remove("active");
+    document.getElementById("drop-action-modal").classList.remove("active");
+    dropDraggedId = null;
+    dropTargetId = null;
 }
 
 // Run application on load
