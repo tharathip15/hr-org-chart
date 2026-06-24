@@ -907,35 +907,55 @@ function zoom(factor) {
     updateCanvasTransform();
 }
 
-// Fit organization tree to screen bounds
-function fitToScreen() {
-    const tree = document.getElementById("tree-container");
+// Helper: get bounding box of all employee cards in canvas-local coordinates
+function getTreeContentBounds() {
+    const cards = document.querySelectorAll(".node-card");
+    if (cards.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0 };
     
-    // Momentarily reset scale/pan to get natural unscaled dimensions
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    
+    cards.forEach(card => {
+        const r = getCanvasLocalRect(card);
+        if (r.width === 0 || r.height === 0) return;
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x + r.width);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y + r.height);
+    });
+    
+    return {
+        minX,
+        maxX,
+        minY,
+        maxY,
+        width: maxX - minX,
+        height: maxY - minY
+    };
+}
+
+// Fit organization tree to screen bounds based on actual card positions
+function fitToScreen() {
+    updateCanvasBounds();
+    
+    const bounds = getTreeContentBounds();
+    if (bounds.width === 0 || bounds.height === 0) return;
+    
     const viewportRect = viewport.getBoundingClientRect();
     
-    // Save current styling to restore in case
-    const oldTransform = canvas.style.transform;
-    canvas.style.transform = "none";
-    
-    const treeRect = tree.getBoundingClientRect();
-    canvas.style.transform = oldTransform;
-    
-    const treeWidth = treeRect.width;
-    const treeHeight = treeRect.height;
-    
-    if (treeWidth === 0 || treeHeight === 0) return;
-    
-    const padding = 60;
-    const scaleX = (viewportRect.width - padding * 2) / treeWidth;
-    const scaleY = (viewportRect.height - padding * 2) / treeHeight;
+    const padding = 80; // Add some breathing room around the tree
+    const scaleX = (viewportRect.width - padding * 2) / bounds.width;
+    const scaleY = (viewportRect.height - padding * 2) / bounds.height;
     
     currentScale = Math.min(scaleX, scaleY);
-    currentScale = Math.max(0.2, Math.min(1.2, currentScale)); // clamp fitting scale
+    currentScale = Math.max(0.15, Math.min(1.2, currentScale)); // clamp fitting scale
     
     // Center it horizontally, add padding top
-    panX = (viewportRect.width - treeWidth * currentScale) / 2;
-    panY = 40;
+    const centerX = bounds.minX + bounds.width / 2;
+    panX = (viewportRect.width / 2) - centerX * currentScale;
+    panY = 80 - bounds.minY * currentScale;
     
     updateCanvasTransform();
     
@@ -963,18 +983,13 @@ function focusAndHighlightEmployee(id) {
         
         targetCard.classList.add("highlighted");
         
-        // Centering viewport on the target card
+        // Centering viewport on the target card using canvas-local coordinates
         const viewportRect = viewport.getBoundingClientRect();
-        const canvasRect = canvas.getBoundingClientRect();
-        const cardRect = targetCard.getBoundingClientRect();
-        
-        // Card coordinates relative to canvas (unscaled)
-        const cx = (cardRect.left - canvasRect.left) / currentScale;
-        const cy = (cardRect.top - canvasRect.top) / currentScale;
+        const tLocal = getCanvasLocalRect(targetCard);
         
         // Center the card in the viewport
-        panX = (viewportRect.width / 2) - (cx + (cardRect.width / currentScale) / 2) * currentScale;
-        panY = (viewportRect.height / 2) - (cy + (cardRect.height / currentScale) / 2) * currentScale;
+        panX = (viewportRect.width / 2) - (tLocal.x + tLocal.width / 2) * currentScale;
+        panY = (viewportRect.height / 2) - (tLocal.y + tLocal.height / 2) * currentScale;
         
         updateCanvasTransform();
         drawConnections();
@@ -1231,69 +1246,101 @@ function renderTree() {
     });
 }
 
-// Generate connection lines in the SVG overlay
+// Helper: get element's position in canvas-local coordinates (unaffected by CSS transform)
+function getCanvasLocalRect(el) {
+    // Walk up the DOM accumulating offsetTop/offsetLeft until we reach chart-canvas
+    let x = 0, y = 0;
+    let cur = el;
+    while (cur && cur !== canvas) {
+        x += cur.offsetLeft;
+        y += cur.offsetTop;
+        cur = cur.offsetParent;
+    }
+    return { x, y, width: el.offsetWidth, height: el.offsetHeight };
+}
+
+// Update the SVG overlay bounds based on all employee cards
+function updateCanvasBounds() {
+    const minWidth = 20000;
+    const minHeight = 10000;
+    const padding = 600;
+    const cards = document.querySelectorAll(".node-card");
+    let maxX = minWidth;
+    let maxY = minHeight;
+
+    cards.forEach(card => {
+        const r = getCanvasLocalRect(card);
+        if (r.width === 0 || r.height === 0) return;
+        maxX = Math.max(maxX, r.x + r.width);
+        maxY = Math.max(maxY, r.y + r.height);
+    });
+
+    const width = Math.max(minWidth, Math.ceil(maxX) + padding);
+    const height = Math.max(minHeight, Math.ceil(maxY) + padding);
+
+    svgOverlay.setAttribute("width", width);
+    svgOverlay.setAttribute("height", height);
+    svgOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+}
+
+// Generate connection lines in the SVG overlay using orthogonal routing
 function drawConnections() {
     svgOverlay.innerHTML = "";
-    
-    const canvasRect = canvas.getBoundingClientRect();
-    
+    updateCanvasBounds();
+
     const nodes = document.querySelectorAll(".tree-node");
+
     nodes.forEach(node => {
         const parentId = parseInt(node.dataset.id);
-        
-        // Use :scope to only find the DIRECT .node-card-wrapper child of this node
-        const parentCardWrapper = node.querySelector(':scope > .node-card-wrapper');
-        if (!parentCardWrapper) return;
-        const parentCard = parentCardWrapper.querySelector(`.node-card[data-id="${parentId}"]`);
-        if (!parentCard) return;
-        
-        // Use :scope to only find the DIRECT .node-children of this node (not nested ones)
-        const childrenContainer = node.querySelector(':scope > .node-children');
-        if (!childrenContainer || childrenContainer.classList.contains("collapsed")) return;
-        
-        // Fetch only immediate .tree-node children of this container
-        const childNodes = childrenContainer.querySelectorAll(`:scope > .tree-node`);
-        childNodes.forEach(childNode => {
+        const parentCardWrapper = node.querySelector(":scope > .node-card-wrapper");
+        const parentCard = parentCardWrapper?.querySelector(`.node-card[data-id="${parentId}"]`);
+        const childrenContainer = node.querySelector(":scope > .node-children");
+
+        if (!parentCard || !childrenContainer || childrenContainer.classList.contains("collapsed")) return;
+
+        const pLocal = getCanvasLocalRect(parentCard);
+        if (pLocal.width === 0 || pLocal.height === 0) return;
+
+        const startX = pLocal.x + pLocal.width / 2;
+        const startY = pLocal.y + pLocal.height;
+        const childAnchors = [];
+
+        childrenContainer.querySelectorAll(":scope > .tree-node").forEach(childNode => {
             const childId = parseInt(childNode.dataset.id);
-            const childCardWrapper = childNode.querySelector(':scope > .node-card-wrapper');
-            if (!childCardWrapper) return;
-            const childCard = childCardWrapper.querySelector(`.node-card[data-id="${childId}"]`);
+            const childCardWrapper = childNode.querySelector(":scope > .node-card-wrapper");
+            const childCard = childCardWrapper?.querySelector(`.node-card[data-id="${childId}"]`);
             if (!childCard) return;
-            
-            // Compute screen-relative positions
-            const pRect = parentCard.getBoundingClientRect();
-            const cRect = childCard.getBoundingClientRect();
-            
-            // Skip if either element has zero dimensions (not yet rendered)
-            if (pRect.width === 0 || cRect.width === 0) return;
-            
-            // Map to canvas-local coordinates (pre-scale, pre-translate)
-            const px = (pRect.left - canvasRect.left) / currentScale;
-            const py = (pRect.top - canvasRect.top) / currentScale;
-            const pWidth = pRect.width / currentScale;
-            const pHeight = pRect.height / currentScale;
-            
-            const cx = (cRect.left - canvasRect.left) / currentScale;
-            const cy = (cRect.top - canvasRect.top) / currentScale;
-            const cWidth = cRect.width / currentScale;
-            
-            // Connection Anchors: Parent bottom-center → Child top-center
-            const startX = px + pWidth / 2;
-            const startY = py + pHeight;
-            const endX = cx + cWidth / 2;
-            const endY = cy;
-            
-            const midY = (startY + endY) / 2;
-            
-            // Render smooth Bezier Curve SVG Path
+
+            const cLocal = getCanvasLocalRect(childCard);
+            if (cLocal.width === 0 || cLocal.height === 0) return;
+
+            childAnchors.push({
+                id: childId,
+                x: cLocal.x + cLocal.width / 2,
+                y: cLocal.y
+            });
+        });
+
+        if (childAnchors.length === 0) return;
+
+        // Bus line sits halfway between parent bottom and first child top
+        const firstChildY = Math.min(...childAnchors.map(c => c.y));
+        const busY = startY + Math.max(16, Math.round((firstChildY - startY) / 2));
+
+        childAnchors.forEach(child => {
+            const pathParts = [
+                `M ${startX} ${startY}`,
+                `L ${startX} ${busY}`,
+                `L ${child.x} ${busY}`,
+                `L ${child.x} ${child.y}`
+            ];
             const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`);
+            path.setAttribute("d", pathParts.join(" "));
             path.setAttribute("class", "connection-path");
             
-            if (highlightedConnections.has(`${parentId}-${childId}`)) {
+            if (highlightedConnections.has(`${parentId}-${child.id}`)) {
                 path.classList.add("highlighted");
             }
-            
             svgOverlay.appendChild(path);
         });
     });

@@ -460,8 +460,8 @@ body {
 .chart-canvas {
     position: absolute;
     transform-origin: 0 0;
-    width: 5000px; /* huge dimensions to accommodate panning */
-    height: 5000px;
+    width: 20000px; /* huge dimensions to accommodate panning */
+    height: 10000px;
     pointer-events: auto;
 }
 
@@ -470,8 +470,7 @@ body {
     position: absolute;
     top: 0;
     left: 0;
-    width: 100%;
-    height: 100%;
+    overflow: visible;
     pointer-events: none;
     z-index: 5;
 }
@@ -481,6 +480,8 @@ body {
     stroke: var(--text-tertiary);
     stroke-width: 2.5px;
     stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
     transition: stroke var(--transition-normal), stroke-width var(--transition-fast);
 }
 
