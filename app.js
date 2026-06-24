@@ -544,6 +544,32 @@ function setupEventListeners() {
         }
     });
     
+    // Viewport drag and drop to make employee top-level
+    viewport.addEventListener("dragover", (e) => {
+        e.preventDefault();
+    });
+    
+    viewport.addEventListener("drop", (e) => {
+        // Only handle if dropped directly on viewport/canvas, not on a card
+        if (e.target.closest(".node-card") || e.target.closest(".drawer") || e.target.closest(".modal")) return;
+        
+        e.preventDefault();
+        if (draggedId !== null) {
+            const empIndex = employees.findIndex(emp => emp.id === draggedId);
+            if (empIndex > -1) {
+                const emp = employees[empIndex];
+                if (emp.managerId !== null) {
+                    if (confirm(`Do you want to set ${emp.name} as a Top Level manager (reports to no one)?`)) {
+                        emp.managerId = null;
+                        saveData();
+                        renderAll();
+                        showNotification(`Reassigned ${emp.name} as Top Level`, "success");
+                    }
+                }
+            }
+        }
+    });
+    
     // Export Backup data
     document.getElementById("btn-export-data").addEventListener("click", () => {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(employees, null, 2));
@@ -939,7 +965,7 @@ function renderTree() {
         let html = `
             <div class="tree-node" data-id="${employee.id}">
                 <div class="node-card-wrapper">
-                    <div class="node-card" data-id="${employee.id}">
+                    <div class="node-card" draggable="true" data-id="${employee.id}">
                         <div class="card-header">
                             <div class="avatar" style="background-color: ${avatarColor}">${initials}</div>
                             <div class="card-title-group">
@@ -995,6 +1021,13 @@ function renderTree() {
             document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
             card.classList.add("selected-focus");
         });
+        
+        // Drag and Drop listeners
+        card.addEventListener("dragstart", handleDragStart);
+        card.addEventListener("dragover", handleDragOver);
+        card.addEventListener("dragleave", handleDragLeave);
+        card.addEventListener("drop", handleDrop);
+        card.addEventListener("dragend", handleDragEnd);
     });
     
     document.querySelectorAll(".node-toggle-btn").forEach(btn => {
@@ -1455,6 +1488,69 @@ function showNotification(message, type = "info") {
             toast.remove();
         }, 300);
     }, 3000);
+}
+
+// Drag and Drop Global State & Handlers
+let draggedId = null;
+
+function handleDragStart(e) {
+    draggedId = parseInt(this.dataset.id);
+    e.dataTransfer.setData("text/plain", draggedId);
+    this.classList.add("dragging");
+    e.dataTransfer.effectAllowed = "move";
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+    const targetId = parseInt(this.dataset.id);
+    
+    // Validate: cannot drop onto itself, its manager, or its descendants
+    if (targetId === draggedId) return;
+    
+    const emp = employees.find(emp => emp.id === draggedId);
+    if (emp && emp.managerId === targetId) return;
+    
+    const descendants = getDescendantIds(draggedId);
+    if (descendants.includes(targetId)) return;
+    
+    this.classList.add("drag-over");
+    e.dataTransfer.dropEffect = "move";
+}
+
+function handleDragLeave(e) {
+    this.classList.remove("drag-over");
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    this.classList.remove("drag-over");
+    const targetId = parseInt(this.dataset.id);
+    
+    // Double-check validation
+    if (targetId === draggedId) return;
+    const descendants = getDescendantIds(draggedId);
+    if (descendants.includes(targetId)) return;
+    
+    // Update manager
+    const empIndex = employees.findIndex(emp => emp.id === draggedId);
+    if (empIndex > -1) {
+        const emp = employees[empIndex];
+        const oldManagerId = emp.managerId;
+        emp.managerId = targetId;
+        
+        saveData();
+        renderAll();
+        
+        // Show success notification
+        const manager = employees.find(m => m.id === targetId);
+        showNotification(`Reassigned ${emp.name} to report to ${manager.name}`, "success");
+    }
+}
+
+function handleDragEnd(e) {
+    this.classList.remove("dragging");
+    document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
+    draggedId = null;
 }
 
 // Run application on load

@@ -559,6 +559,18 @@ body {
     box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.3), var(--shadow-lg);
 }
 
+.node-card.dragging {
+    opacity: 0.45;
+    border-style: dashed;
+    transform: scale(0.98);
+}
+
+.node-card.drag-over {
+    border-color: #10b981;
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2), var(--shadow-lg);
+    transform: scale(1.03) translateY(-4px);
+}
+
 /* Card Header */
 .card-header {
     display: flex;
