@@ -1061,6 +1061,10 @@ function renderTree() {
         const deptClass = getDeptClass(employee.department);
         const avatarColor = employee.avatarColor || getDeptColor(employee.department);
         
+        // Check for multiple positions
+        const dualRoleCount = employees.filter(e => e.name.toLowerCase() === employee.name.toLowerCase()).length;
+        const isDualRole = dualRoleCount > 1;
+        
         let html = `
             <div class="tree-node" data-id="${employee.id}">
                 <div class="node-card-wrapper">
@@ -1068,7 +1072,10 @@ function renderTree() {
                         <div class="card-header">
                             <div class="avatar" style="background-color: ${avatarColor}">${initials}</div>
                             <div class="card-title-group">
-                                <div class="card-name">${escapeHTML(employee.name)}</div>
+                                <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
+                                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
+                                    ${isDualRole ? `<span class="dual-role-badge" title="มีหลายตำแหน่งงาน (Dual Role)" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ''}
+                                </div>
                                 <div class="card-role">${escapeHTML(employee.role)}</div>
                             </div>
                         </div>
@@ -1254,6 +1261,31 @@ function showEmployeeDetails(id) {
         `;
     }
     
+    // Find sibling positions for the same person (Option 3 dual role display)
+    const siblingPositions = employees.filter(e => e.name.toLowerCase() === emp.name.toLowerCase() && e.id !== emp.id);
+    let siblingsHTML = "";
+    if (siblingPositions.length > 0) {
+        siblingsHTML = `
+            <div>
+                <div class="info-section-title">ตำแหน่งงานอื่น ๆ ของพนักงานคนนี้ (${siblingPositions.length})</div>
+                <div class="reports-list">
+                    ${siblingPositions.map(pos => {
+                        const mgr = pos.managerId ? employees.find(e => e.id === pos.managerId) : null;
+                        return `
+                            <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${pos.id})">
+                                <div class="avatar-sm" style="background-color: ${pos.avatarColor || getDeptColor(pos.department)}">${getInitials(pos.name)}</div>
+                                <div class="mini-profile-info">
+                                    <h5>${escapeHTML(pos.role)}</h5>
+                                    <p>${escapeHTML(pos.department)} • หัวหน้า: ${mgr ? escapeHTML(mgr.name) : 'ระดับสูงสุด (Top Level)'}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join("")}
+                </div>
+            </div>
+        `;
+    }
+    
     const body = document.getElementById("detail-drawer-body");
     const initials = getInitials(emp.name);
     const deptClass = getDeptClass(emp.department);
@@ -1296,6 +1328,8 @@ function showEmployeeDetails(id) {
             <div class="info-section-title">Direct Reports (${reports.length})</div>
             ${reportsHTML}
         </div>
+        
+        ${siblingsHTML}
         
         ${emp.bio ? `
             <div>
@@ -1442,6 +1476,8 @@ function handleFormSubmit(e) {
         const id = parseInt(idVal);
         const empIndex = employees.findIndex(e => e.id === id);
         if (empIndex > -1) {
+            const oldName = employees[empIndex].name;
+            
             // Update fields
             employees[empIndex].name = name;
             employees[empIndex].role = role;
@@ -1455,6 +1491,16 @@ function handleFormSubmit(e) {
             if (employees[empIndex].department.toLowerCase() !== department.toLowerCase()) {
                 employees[empIndex].avatarColor = getDeptColor(department);
             }
+            
+            // Sync other entries with the same old name
+            employees.forEach(e => {
+                if (e.id !== id && e.name === oldName) {
+                    e.name = name; // Sync updated name
+                    e.email = email;
+                    e.phone = phone;
+                    e.bio = bio;
+                }
+            });
             
             showNotification(`Updated profile for ${name}`, "success");
         }
