@@ -1220,7 +1220,7 @@ function renderTree() {
         });
     });
     
-    // Recalculate connection lines after layout renders
+    // Recalculate connection lines after layout renders (two rAFs ensure DOM is fully laid out)
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             drawConnections();
@@ -1237,26 +1237,34 @@ function drawConnections() {
     const nodes = document.querySelectorAll(".tree-node");
     nodes.forEach(node => {
         const parentId = parseInt(node.dataset.id);
-        const parentCard = node.querySelector(`.node-card-wrapper > .node-card[data-id="${parentId}"]`);
         
+        // Use :scope to only find the DIRECT .node-card-wrapper child of this node
+        const parentCardWrapper = node.querySelector(':scope > .node-card-wrapper');
+        if (!parentCardWrapper) return;
+        const parentCard = parentCardWrapper.querySelector(`.node-card[data-id="${parentId}"]`);
         if (!parentCard) return;
         
-        const childrenContainer = node.querySelector(`.node-children`);
+        // Use :scope to only find the DIRECT .node-children of this node (not nested ones)
+        const childrenContainer = node.querySelector(':scope > .node-children');
         if (!childrenContainer || childrenContainer.classList.contains("collapsed")) return;
         
-        // Fetch only immediate children of this node
+        // Fetch only immediate .tree-node children of this container
         const childNodes = childrenContainer.querySelectorAll(`:scope > .tree-node`);
         childNodes.forEach(childNode => {
             const childId = parseInt(childNode.dataset.id);
-            const childCard = childNode.querySelector(`.node-card-wrapper > .node-card[data-id="${childId}"]`);
-            
+            const childCardWrapper = childNode.querySelector(':scope > .node-card-wrapper');
+            if (!childCardWrapper) return;
+            const childCard = childCardWrapper.querySelector(`.node-card[data-id="${childId}"]`);
             if (!childCard) return;
             
             // Compute screen-relative positions
             const pRect = parentCard.getBoundingClientRect();
             const cRect = childCard.getBoundingClientRect();
             
-            // Map to canvas scale/coordinates
+            // Skip if either element has zero dimensions (not yet rendered)
+            if (pRect.width === 0 || cRect.width === 0) return;
+            
+            // Map to canvas-local coordinates (pre-scale, pre-translate)
             const px = (pRect.left - canvasRect.left) / currentScale;
             const py = (pRect.top - canvasRect.top) / currentScale;
             const pWidth = pRect.width / currentScale;
@@ -1266,7 +1274,7 @@ function drawConnections() {
             const cy = (cRect.top - canvasRect.top) / currentScale;
             const cWidth = cRect.width / currentScale;
             
-            // Connection Anchors: Parent bottom center to Child top center
+            // Connection Anchors: Parent bottom-center → Child top-center
             const startX = px + pWidth / 2;
             const startY = py + pHeight;
             const endX = cx + cWidth / 2;
@@ -1274,12 +1282,11 @@ function drawConnections() {
             
             const midY = (startY + endY) / 2;
             
-            // Render Bezier Curve SVG Path
+            // Render smooth Bezier Curve SVG Path
             const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
             path.setAttribute("d", `M ${startX} ${startY} C ${startX} ${midY}, ${endX} ${midY}, ${endX} ${endY}`);
             path.setAttribute("class", "connection-path");
             
-            // Check if connection is in highlight set
             if (highlightedConnections.has(`${parentId}-${childId}`)) {
                 path.classList.add("highlighted");
             }
