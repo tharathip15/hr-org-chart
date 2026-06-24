@@ -1220,10 +1220,13 @@ function renderTree() {
         });
     });
     
-    // Recalculate connection lines after layout renders (two rAFs ensure DOM is fully laid out)
+    // Recalculate connection lines after layout renders
+    // Two rAFs ensure DOM paint has started; fallback timeout handles icon/font delays
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             drawConnections();
+            // Extra fallback in case icons/fonts cause layout shifts
+            setTimeout(() => drawConnections(), 300);
         });
     });
 }
@@ -2031,4 +2034,13 @@ function closeDropModal() {
 }
 
 // Run application on load
-window.addEventListener("DOMContentLoaded", init);
+window.addEventListener("DOMContentLoaded", () => {
+    init();
+    
+    // Use ResizeObserver to redraw connections whenever the tree container resizes
+    // (e.g., after icons load, font swaps, or collapse/expand animations)
+    const treeResizeObserver = new ResizeObserver(() => {
+        drawConnections();
+    });
+    treeResizeObserver.observe(treeContainer);
+});
