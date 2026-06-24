@@ -157,9 +157,8 @@
                     </div>
                     <div class="form-group">
                         <label for="form-manager">Reports To</label>
-                        <select id="form-manager">
-                            <!-- Populated dynamically -->
-                        </select>
+                        <input type="text" id="form-manager" list="manager-list" placeholder="None (Top Level)">
+                        <datalist id="manager-list"></datalist>
                     </div>
                 </div>
                 <div class="form-row two-cols">
@@ -236,6 +235,6 @@
     <!-- Notification system -->
     <div class="notification-container" id="notification-container"></div>
 
-    <script src="app.js?v=2.5"></script>
+    <script src="app.js?v=2.6"></script>
 </body>
 </html>

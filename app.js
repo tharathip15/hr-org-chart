@@ -1330,9 +1330,10 @@ function openEmployeeForm(editId = null) {
     form.reset();
     document.getElementById("form-employee-id").value = "";
     
-    // Populate Managers Dropdown
-    const managerSelect = document.getElementById("form-manager");
-    managerSelect.innerHTML = `<option value="">None (Top Level / CEO)</option>`;
+    // Populate Managers Datalist
+    const managerInput = document.getElementById("form-manager");
+    const managerDatalist = document.getElementById("manager-list");
+    managerDatalist.innerHTML = "";
     
     let eligibleManagers = [...employees];
     
@@ -1361,14 +1362,23 @@ function openEmployeeForm(editId = null) {
     eligibleManagers.sort((a, b) => a.name.localeCompare(b.name));
     
     eligibleManagers.forEach(mgr => {
-        managerSelect.innerHTML += `<option value="${mgr.id}">${escapeHTML(mgr.name)} (${escapeHTML(mgr.role)} • ${escapeHTML(mgr.department)})</option>`;
+        managerDatalist.innerHTML += `<option value="${escapeHTML(mgr.name)} (${escapeHTML(mgr.role)} • ${escapeHTML(mgr.department)})">`;
     });
     
     if (editId) {
         const emp = employees.find(e => e.id === editId);
         if (emp && emp.managerId) {
-            managerSelect.value = emp.managerId;
+            const mgr = employees.find(e => e.id === emp.managerId);
+            if (mgr) {
+                managerInput.value = `${mgr.name} (${mgr.role} • ${mgr.department})`;
+            } else {
+                managerInput.value = "";
+            }
+        } else {
+            managerInput.value = "";
         }
+    } else {
+        managerInput.value = "";
     }
     
     // Populate Department Suggestions Datalist
@@ -1392,12 +1402,39 @@ function handleFormSubmit(e) {
     const name = document.getElementById("form-name").value.trim();
     const role = document.getElementById("form-role").value.trim();
     const department = document.getElementById("form-department").value.trim();
-    const managerIdVal = document.getElementById("form-manager").value;
+    const managerInputVal = document.getElementById("form-manager").value.trim();
     const email = document.getElementById("form-email").value.trim();
     const phone = document.getElementById("form-phone").value.trim();
     const bio = document.getElementById("form-bio").value.trim();
+    let managerId = null;
     
-    const managerId = managerIdVal ? parseInt(managerIdVal) : null;
+    if (managerInputVal) {
+        // Try to find a manager that matches the input string
+        const matchedMgr = employees.find(mgr => {
+            const optionText = `${mgr.name} (${mgr.role} • ${mgr.department})`;
+            return optionText === managerInputVal || mgr.name === managerInputVal;
+        });
+        if (matchedMgr) {
+            managerId = matchedMgr.id;
+            
+            // Check for cyclical relationship
+            if (idVal) {
+                const currentId = parseInt(idVal);
+                if (managerId === currentId) {
+                    showNotification("ไม่สามารถตั้งตัวเองเป็นผู้จัดการได้", "error");
+                    return;
+                }
+                const descendantIds = getDescendantIds(currentId);
+                if (descendantIds.includes(managerId)) {
+                    showNotification("ไม่สามารถเลือกผู้ใต้บังคับบัญชาเป็นผู้จัดการได้ (สายงานเป็นวงกลม)", "error");
+                    return;
+                }
+            }
+        } else {
+            showNotification("ชื่อผู้จัดการไม่ถูกต้องหรือไม่มีในระบบ", "error");
+            return;
+        }
+    }
     
     if (!name || !role || !department) {
         showNotification("Please fill in all required fields", "error");
