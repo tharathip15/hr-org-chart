@@ -5,7 +5,7 @@ const DEFAULT_EMPLOYEES = [
     {
         "id": 1,
         "name": "PAIBOON R.",
-        "role": "Chief Executive Officer (CEO)",
+        "role": "CEO",
         "department": "Executive",
         "managerId": null,
         "email": "paiboon.r.@company.com",
@@ -14,188 +14,8 @@ const DEFAULT_EMPLOYEES = [
     },
     {
         "id": 2,
-        "name": "BENJAPORN C.",
-        "role": "Officer",
-        "department": "Waste Treatment",
-        "managerId": 5,
-        "email": "benjapornc@company.com",
-        "phone": "+66 802-234-5678",
-        "bio": "Officer in the Waste Treatment department."
-    },
-    {
-        "id": 3,
-        "name": "CHANINATH A.",
-        "role": "Officer",
-        "department": "Solvent",
-        "managerId": 29,
-        "email": "chaninatha@company.com",
-        "phone": "+66 803-234-5678",
-        "bio": "Officer in the Solvent department."
-    },
-    {
-        "id": 4,
-        "name": "CHINDAPHORN S.",
-        "role": "Officer",
-        "department": "WS/RDF",
-        "managerId": 5,
-        "email": "chindaphorns@company.com",
-        "phone": "+66 804-234-5678",
-        "bio": "Officer in the WS/RDF department."
-    },
-    {
-        "id": 5,
-        "name": "CHOLANAN S.",
-        "role": "Director of Waste & WS/RDF",
-        "department": "WS/RDF",
-        "managerId": 22,
-        "email": "cholanans@company.com",
-        "phone": "+66 805-234-5678",
-        "bio": "Director of Waste & WS/RDF in the WS/RDF department."
-    },
-    {
-        "id": 6,
-        "name": "DIREC T.",
-        "role": "Officer",
-        "department": "Solvent",
-        "managerId": 9,
-        "email": "direct@company.com",
-        "phone": "+66 806-234-5678",
-        "bio": "Officer in the Solvent department."
-    },
-    {
-        "id": 7,
-        "name": "EAKKACHON K.",
-        "role": "Officer",
-        "department": "Energy",
-        "managerId": 5,
-        "email": "eakkachonk@company.com",
-        "phone": "+66 807-234-5678",
-        "bio": "Officer in the Energy department."
-    },
-    {
-        "id": 8,
-        "name": "FUANGLADA M.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 23,
-        "email": "fuangladam@company.com",
-        "phone": "+66 808-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 9,
-        "name": "JIRANAN K.",
-        "role": "Officer",
-        "department": "Solvent",
-        "managerId": 29,
-        "email": "jiranank@company.com",
-        "phone": "+66 809-234-5678",
-        "bio": "Officer in the Solvent department."
-    },
-    {
-        "id": 10,
-        "name": "JIRAPA R.",
-        "role": "Officer",
-        "department": "Finance & Accounting",
-        "managerId": 24,
-        "email": "jirapar@company.com",
-        "phone": "+66 810-234-5678",
-        "bio": "Officer in the Finance & Accounting department."
-    },
-    {
-        "id": 11,
-        "name": "JUTAMAS P.",
-        "role": "Officer",
-        "department": "Finance & Accounting",
-        "managerId": 24,
-        "email": "jutamasp@company.com",
-        "phone": "+66 811-234-5678",
-        "bio": "Officer in the Finance & Accounting department."
-    },
-    {
-        "id": 12,
-        "name": "KHEMIKA A.",
-        "role": "Officer",
-        "department": "Corporate",
-        "managerId": 37,
-        "email": "khemikaa@company.com",
-        "phone": "+66 812-234-5678",
-        "bio": "Officer in the Corporate department."
-    },
-    {
-        "id": 13,
-        "name": "KOTCHAMON J.",
-        "role": "Officer",
-        "department": "Corporate",
-        "managerId": 37,
-        "email": "kotchamonj@company.com",
-        "phone": "+66 813-234-5678",
-        "bio": "Officer in the Corporate department."
-    },
-    {
-        "id": 14,
-        "name": "KULTHARA W.",
-        "role": "Officer",
-        "department": "HR",
-        "managerId": 16,
-        "email": "kultharaw@company.com",
-        "phone": "+66 814-234-5678",
-        "bio": "Officer in the HR department."
-    },
-    {
-        "id": 15,
-        "name": "MIRUNTEE M.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 23,
-        "email": "mirunteem@company.com",
-        "phone": "+66 815-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 16,
-        "name": "NATTAWAN P.",
-        "role": "VP of Human Resources",
-        "department": "HR",
-        "managerId": 39,
-        "email": "nattawanp@company.com",
-        "phone": "+66 816-234-5678",
-        "bio": "VP of Human Resources in the HR department."
-    },
-    {
-        "id": 17,
-        "name": "NATTHANIDA L.",
-        "role": "Officer",
-        "department": "Finance & Accounting",
-        "managerId": 11,
-        "email": "natthanidal@company.com",
-        "phone": "+66 817-234-5678",
-        "bio": "Officer in the Finance & Accounting department."
-    },
-    {
-        "id": 18,
-        "name": "NE W.",
-        "role": "Officer",
-        "department": "Overview",
-        "managerId": 1,
-        "email": "new@company.com",
-        "phone": "+66 818-234-5678",
-        "bio": "Officer in the Overview department."
-    },
-    {
-        "id": 19,
-        "name": "NILIN W.",
-        "role": "Officer",
-        "department": "Finance & Accounting",
-        "managerId": 24,
-        "email": "nilinw@company.com",
-        "phone": "+66 819-234-5678",
-        "bio": "Officer in the Finance & Accounting department."
-    },
-    {
-        "id": 20,
         "name": "NUNTAPORN S.",
-        "role": "Executive Secretary",
+        "role": "EA",
         "department": "Executive",
         "managerId": 1,
         "email": "nuntaporns@company.com",
@@ -203,19 +23,9 @@ const DEFAULT_EMPLOYEES = [
         "bio": "Executive Secretary in the Executive department."
     },
     {
-        "id": 21,
-        "name": "NUTTHAWA T.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 25,
-        "email": "nutthawat@company.com",
-        "phone": "+66 821-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 22,
+        "id": 3,
         "name": "PAITOON R.",
-        "role": "Chief Operating Officer (COO)",
+        "role": "CMO",
         "department": "Executive",
         "managerId": 1,
         "email": "paitoonr@company.com",
@@ -223,204 +33,474 @@ const DEFAULT_EMPLOYEES = [
         "bio": "Chief Operating Officer (COO) in the Executive department."
     },
     {
-        "id": 23,
-        "name": "PANITPORN Y.",
-        "role": "VP of Procurement & Logistics",
-        "department": "Procurement & Logistics",
+        "id": 4,
+        "name": "PAIBOON R.",
+        "role": "COO (Acting)",
+        "department": "Executive",
         "managerId": 1,
-        "email": "panitporny@company.com",
-        "phone": "+66 823-234-5678",
-        "bio": "VP of Procurement & Logistics in the Procurement & Logistics department."
+        "email": "paiboon.r.@company.com",
+        "phone": "+66 81-234-5678",
+        "bio": "Chief Executive Officer leading the overall organization strategy."
     },
     {
-        "id": 24,
-        "name": "PHONGSATORN K.",
-        "role": "Director of Finance & Accounting",
-        "department": "Finance & Accounting",
-        "managerId": 18,
-        "email": "phongsatornk@company.com",
-        "phone": "+66 824-234-5678",
-        "bio": "Director of Finance & Accounting in the Finance & Accounting department."
-    },
-    {
-        "id": 25,
-        "name": "PINPAWEE K.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 23,
-        "email": "pinpaweek@company.com",
-        "phone": "+66 825-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 26,
-        "name": "PORNCHANOK . P",
-        "role": "Officer",
-        "department": "Solvent",
-        "managerId": 29,
-        "email": "pornchanokp@company.com",
-        "phone": "+66 826-234-5678",
-        "bio": "Officer in the Solvent department."
-    },
-    {
-        "id": 27,
-        "name": "PORNCHITAR D.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 8,
-        "email": "pornchitard@company.com",
-        "phone": "+66 827-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 28,
-        "name": "RINLITA W.",
-        "role": "Officer",
-        "department": "Energy",
-        "managerId": 41,
-        "email": "rinlitaw@company.com",
-        "phone": "+66 828-234-5678",
-        "bio": "Officer in the Energy department."
-    },
-    {
-        "id": 29,
-        "name": "SARASA W.",
-        "role": "Director of Solvent",
-        "department": "Solvent",
-        "managerId": 1,
-        "email": "sarasaw@company.com",
-        "phone": "+66 829-234-5678",
-        "bio": "Director of Solvent in the Solvent department."
-    },
-    {
-        "id": 30,
-        "name": "SASIPHA S.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 25,
-        "email": "sasiphas@company.com",
-        "phone": "+66 830-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 31,
-        "name": "SUDARA T.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 15,
-        "email": "sudarat@company.com",
-        "phone": "+66 831-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 32,
-        "name": "SUPAWIT J.",
-        "role": "Officer",
-        "department": "Procurement & Logistics",
-        "managerId": 8,
-        "email": "supawitj@company.com",
-        "phone": "+66 832-234-5678",
-        "bio": "Officer in the Procurement & Logistics department."
-    },
-    {
-        "id": 33,
-        "name": "SUTAWAN S.",
-        "role": "Officer",
-        "department": "Finance & Accounting",
-        "managerId": 24,
-        "email": "sutawans@company.com",
-        "phone": "+66 833-234-5678",
-        "bio": "Officer in the Finance & Accounting department."
-    },
-    {
-        "id": 34,
-        "name": "TAWIDA P.",
-        "role": "VP of Corporate Affairs",
-        "department": "Corporate",
-        "managerId": 39,
-        "email": "tawidap@company.com",
-        "phone": "+66 834-234-5678",
-        "bio": "VP of Corporate Affairs in the Corporate department."
-    },
-    {
-        "id": 35,
-        "name": "THARATHIP I.",
-        "role": "Officer",
-        "department": "Corporate",
-        "managerId": 37,
-        "email": "tharathipi@company.com",
-        "phone": "+66 835-234-5678",
-        "bio": "Officer in the Corporate department."
-    },
-    {
-        "id": 36,
-        "name": "THONGPITAK A.",
-        "role": "Director of Sugar & Chemical",
-        "department": "Sugar",
-        "managerId": 5,
-        "email": "thongpitaka@company.com",
-        "phone": "+66 836-234-5678",
-        "bio": "Director of Sugar & Chemical in the Sugar department."
-    },
-    {
-        "id": 37,
-        "name": "VACAN T.",
-        "role": "Officer",
-        "department": "Corporate",
-        "managerId": 34,
-        "email": "vacant@company.com",
-        "phone": "+66 837-234-5678",
-        "bio": "Officer in the Corporate department."
-    },
-    {
-        "id": 38,
-        "name": "WARANPORN R.",
-        "role": "Officer",
-        "department": "Corporate",
-        "managerId": 34,
-        "email": "waranpornr@company.com",
-        "phone": "+66 838-234-5678",
-        "bio": "Officer in the Corporate department."
-    },
-    {
-        "id": 39,
+        "id": 5,
         "name": "WATCHARACHAI S.",
-        "role": "Director of Marketing",
+        "role": "MD MKT",
         "department": "Marketing",
-        "managerId": 22,
+        "managerId": 3,
         "email": "watcharachais@company.com",
         "phone": "+66 839-234-5678",
         "bio": "Director of Marketing in the Marketing department."
     },
     {
-        "id": 40,
+        "id": 6,
+        "name": "NATTAWAN P.",
+        "role": "CST.MKT (Acting)",
+        "department": "Marketing",
+        "managerId": 5,
+        "email": "nattawanp@company.com",
+        "phone": "+66 816-234-5678",
+        "bio": "VP of Human Resources in the HR department."
+    },
+    {
+        "id": 7,
+        "name": "TAWIDA P.",
+        "role": "Manager of MKT (Acting)",
+        "department": "Marketing",
+        "managerId": 6,
+        "email": "tawidap@company.com",
+        "phone": "+66 834-234-5678",
+        "bio": "VP of Corporate Affairs in the Corporate department."
+    },
+    {
+        "id": 8,
+        "name": "PAITOON R.",
+        "role": "DOS (Acting)",
+        "department": "Solvent",
+        "managerId": 3,
+        "email": "paitoonr@company.com",
+        "phone": "+66 822-234-5678",
+        "bio": "Chief Operating Officer (COO) in the Executive department."
+    },
+    {
+        "id": 9,
+        "name": "CHOLANAN S.",
+        "role": "Manager of EN",
+        "department": "Energy",
+        "managerId": 8,
+        "email": "cholanans@company.com",
+        "phone": "+66 805-234-5678",
+        "bio": "Director of Waste & WS/RDF in the WS/RDF department."
+    },
+    {
+        "id": 10,
+        "name": "THONGPITAK A.",
+        "role": "Manager of BC (Acting)",
+        "department": "Sugar",
+        "managerId": 8,
+        "email": "thongpitaka@company.com",
+        "phone": "+66 836-234-5678",
+        "bio": "Director of Sugar & Chemical in the Sugar department."
+    },
+    {
+        "id": 11,
+        "name": "THONGPITAK A.",
+        "role": "Manager of SG (Acting)",
+        "department": "Sugar",
+        "managerId": 8,
+        "email": "thongpitaka@company.com",
+        "phone": "+66 836-234-5678",
+        "bio": "Director of Sugar & Chemical in the Sugar department."
+    },
+    {
+        "id": 12,
+        "name": "SARASA W.",
+        "role": "Manager of SV / CT",
+        "department": "Solvent",
+        "managerId": 8,
+        "email": "sarasaw@company.com",
+        "phone": "+66 829-234-5678",
+        "bio": "Director of Solvent in the Solvent department."
+    },
+    {
+        "id": 13,
+        "name": "CHOLANAN S.",
+        "role": "Manager of WT (Acting)",
+        "department": "Waste Treatment",
+        "managerId": 8,
+        "email": "cholanans@company.com",
+        "phone": "+66 805-234-5678",
+        "bio": "Director of Waste & WS/RDF in the WS/RDF department."
+    },
+    {
+        "id": 14,
+        "name": "CHOLANAN S.",
+        "role": "Manager of WS/RDF (Acting)",
+        "department": "WS/RDF",
+        "managerId": 8,
+        "email": "cholanans@company.com",
+        "phone": "+66 805-234-5678",
+        "bio": "Director of Waste & WS/RDF in the WS/RDF department."
+    },
+    {
+        "id": 15,
+        "name": "NATTAWAN P.",
+        "role": "DOO",
+        "department": "Executive",
+        "managerId": 4,
+        "email": "nattawanp@company.com",
+        "phone": "+66 816-234-5678",
+        "bio": "VP of Human Resources in the HR department."
+    },
+    {
+        "id": 16,
+        "name": "TAWIDA P.",
+        "role": "Manager of COR",
+        "department": "Corporate",
+        "managerId": 15,
+        "email": "tawidap@company.com",
+        "phone": "+66 834-234-5678",
+        "bio": "VP of Corporate Affairs in the Corporate department."
+    },
+    {
+        "id": 17,
+        "name": "PANITPORN Y.",
+        "role": "Manager of Pro& Log",
+        "department": "Procurement & Logistics",
+        "managerId": 15,
+        "email": "panitporny@company.com",
+        "phone": "+66 823-234-5678",
+        "bio": "VP of Procurement & Logistics in the Procurement & Logistics department."
+    },
+    {
+        "id": 18,
+        "name": "PHONGSATORN K.",
+        "role": "Manager of Fin& Acc (Acting)",
+        "department": "Finance & Accounting",
+        "managerId": 15,
+        "email": "phongsatornk@company.com",
+        "phone": "+66 824-234-5678",
+        "bio": "Director of Finance & Accounting in the Finance & Accounting department."
+    },
+    {
+        "id": 19,
+        "name": "NATTAWAN P.",
+        "role": "Manager of HRM&HRD (Acting)",
+        "department": "HR",
+        "managerId": 15,
+        "email": "nattawanp@company.com",
+        "phone": "+66 816-234-5678",
+        "bio": "VP of Human Resources in the HR department."
+    },
+    {
+        "id": 20,
+        "name": "BENJAPORN C.",
+        "role": "Officer",
+        "department": "Waste Treatment",
+        "managerId": 13,
+        "email": "benjapornc@company.com",
+        "phone": "+66 802-234-5678",
+        "bio": "Officer in the Waste Treatment department."
+    },
+    {
+        "id": 21,
+        "name": "CHINDAPHORN S.",
+        "role": "Officer",
+        "department": "WS/RDF",
+        "managerId": 14,
+        "email": "chindaphorns@company.com",
+        "phone": "+66 804-234-5678",
+        "bio": "Officer in the WS/RDF department."
+    },
+    {
+        "id": 22,
+        "name": "EAKKACHON K.",
+        "role": "Officer",
+        "department": "Energy",
+        "managerId": 9,
+        "email": "eakkachonk@company.com",
+        "phone": "+66 807-234-5678",
+        "bio": "Officer in the Energy department."
+    },
+    {
+        "id": 23,
         "name": "คุณ อ้วน",
         "role": "Officer",
         "department": "Energy",
-        "managerId": 5,
+        "managerId": 9,
         "email": "คุณอ้วน@company.com",
         "phone": "+66 840-234-5678",
         "bio": "Officer in the Energy department."
     },
     {
-        "id": 41,
+        "id": 24,
         "name": "คุณตั้น",
         "role": "Officer",
         "department": "Energy",
-        "managerId": 5,
+        "managerId": 9,
         "email": "คุณตั้น@company.com",
         "phone": "+66 841-234-5678",
         "bio": "Officer in the Energy department."
     },
     {
-        "id": 42,
+        "id": 25,
         "name": "คุณเซียง 69",
         "role": "Officer",
         "department": "Energy",
-        "managerId": 5,
+        "managerId": 9,
         "email": "คุณเซียง69@company.com",
         "phone": "+66 842-234-5678",
         "bio": "Officer in the Energy department."
+    },
+    {
+        "id": 26,
+        "name": "RINLITA W.",
+        "role": "Officer",
+        "department": "Energy",
+        "managerId": 24,
+        "email": "rinlitaw@company.com",
+        "phone": "+66 828-234-5678",
+        "bio": "Officer in the Energy department."
+    },
+    {
+        "id": 27,
+        "name": "CHANINATH A.",
+        "role": "Officer",
+        "department": "Solvent",
+        "managerId": 12,
+        "email": "chaninatha@company.com",
+        "phone": "+66 803-234-5678",
+        "bio": "Officer in the Solvent department."
+    },
+    {
+        "id": 28,
+        "name": "DIREC T.",
+        "role": "Officer",
+        "department": "Solvent",
+        "managerId": 30,
+        "email": "direct@company.com",
+        "phone": "+66 806-234-5678",
+        "bio": "Officer in the Solvent department."
+    },
+    {
+        "id": 29,
+        "name": "PORNCHANOK . P",
+        "role": "Officer",
+        "department": "Solvent",
+        "managerId": 12,
+        "email": "pornchanokp@company.com",
+        "phone": "+66 826-234-5678",
+        "bio": "Officer in the Solvent department."
+    },
+    {
+        "id": 30,
+        "name": "JIRANAN K.",
+        "role": "Officer",
+        "department": "Solvent",
+        "managerId": 12,
+        "email": "jiranank@company.com",
+        "phone": "+66 809-234-5678",
+        "bio": "Officer in the Solvent department."
+    },
+    {
+        "id": 31,
+        "name": "KHEMIKA A.",
+        "role": "Officer",
+        "department": "Corporate",
+        "managerId": 16,
+        "email": "khemikaa@company.com",
+        "phone": "+66 812-234-5678",
+        "bio": "Officer in the Corporate department."
+    },
+    {
+        "id": 32,
+        "name": "KOTCHAMON J.",
+        "role": "Officer",
+        "department": "Corporate",
+        "managerId": 16,
+        "email": "kotchamonj@company.com",
+        "phone": "+66 813-234-5678",
+        "bio": "Officer in the Corporate department."
+    },
+    {
+        "id": 33,
+        "name": "THARATHIP I.",
+        "role": "Officer",
+        "department": "Corporate",
+        "managerId": 16,
+        "email": "tharathipi@company.com",
+        "phone": "+66 835-234-5678",
+        "bio": "Officer in the Corporate department."
+    },
+    {
+        "id": 34,
+        "name": "VACAN T.",
+        "role": "Officer",
+        "department": "Corporate",
+        "managerId": 16,
+        "email": "vacant@company.com",
+        "phone": "+66 837-234-5678",
+        "bio": "Officer in the Corporate department."
+    },
+    {
+        "id": 35,
+        "name": "WARANPORN R.",
+        "role": "Officer",
+        "department": "Corporate",
+        "managerId": 16,
+        "email": "waranpornr@company.com",
+        "phone": "+66 838-234-5678",
+        "bio": "Officer in the Corporate department."
+    },
+    {
+        "id": 36,
+        "name": "FUANGLADA M.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 17,
+        "email": "fuangladam@company.com",
+        "phone": "+66 808-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 37,
+        "name": "MIRUNTEE M.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 17,
+        "email": "mirunteem@company.com",
+        "phone": "+66 815-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 38,
+        "name": "NUTTHAWA T.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 39,
+        "email": "nutthawat@company.com",
+        "phone": "+66 821-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 39,
+        "name": "PINPAWEE K.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 17,
+        "email": "pinpaweek@company.com",
+        "phone": "+66 825-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 40,
+        "name": "SASIPHA S.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 39,
+        "email": "sasiphas@company.com",
+        "phone": "+66 830-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 41,
+        "name": "SUDARA T.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 37,
+        "email": "sudarat@company.com",
+        "phone": "+66 831-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 42,
+        "name": "SUPAWIT J.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 36,
+        "email": "supawitj@company.com",
+        "phone": "+66 832-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 43,
+        "name": "PORNCHITAR D.",
+        "role": "Officer",
+        "department": "Procurement & Logistics",
+        "managerId": 36,
+        "email": "pornchitard@company.com",
+        "phone": "+66 827-234-5678",
+        "bio": "Officer in the Procurement & Logistics department."
+    },
+    {
+        "id": 44,
+        "name": "JIRAPA R.",
+        "role": "Officer",
+        "department": "Finance & Accounting",
+        "managerId": 18,
+        "email": "jirapar@company.com",
+        "phone": "+66 810-234-5678",
+        "bio": "Officer in the Finance & Accounting department."
+    },
+    {
+        "id": 45,
+        "name": "JUTAMAS P.",
+        "role": "Officer",
+        "department": "Finance & Accounting",
+        "managerId": 18,
+        "email": "jutamasp@company.com",
+        "phone": "+66 811-234-5678",
+        "bio": "Officer in the Finance & Accounting department."
+    },
+    {
+        "id": 46,
+        "name": "NILIN W.",
+        "role": "Officer",
+        "department": "Finance & Accounting",
+        "managerId": 18,
+        "email": "nilinw@company.com",
+        "phone": "+66 819-234-5678",
+        "bio": "Officer in the Finance & Accounting department."
+    },
+    {
+        "id": 47,
+        "name": "NATTHANIDA L.",
+        "role": "Officer",
+        "department": "Finance & Accounting",
+        "managerId": 45,
+        "email": "natthanidal@company.com",
+        "phone": "+66 817-234-5678",
+        "bio": "Officer in the Finance & Accounting department."
+    },
+    {
+        "id": 48,
+        "name": "SUTAWAN S.",
+        "role": "Officer",
+        "department": "Finance & Accounting",
+        "managerId": 18,
+        "email": "sutawans@company.com",
+        "phone": "+66 833-234-5678",
+        "bio": "Officer in the Finance & Accounting department."
+    },
+    {
+        "id": 49,
+        "name": "KULTHARA W.",
+        "role": "Officer",
+        "department": "HR",
+        "managerId": 19,
+        "email": "kultharaw@company.com",
+        "phone": "+66 814-234-5678",
+        "bio": "Officer in the HR department."
+    },
+    {
+        "id": 50,
+        "name": "NE W.",
+        "role": "Officer",
+        "department": "Overview",
+        "managerId": 1,
+        "email": "new@company.com",
+        "phone": "+66 818-234-5678",
+        "bio": "Officer in the Overview department."
     }
 ];
 
@@ -450,8 +530,8 @@ function init() {
     if (saved) {
         try {
             employees = JSON.parse(saved);
-            // If the saved data contains the old demo data (e.g. Sarah Jenkins), force reset to the new corporate data!
-            if (employees.some(e => e.name === "Sarah Jenkins")) {
+            // If saved data doesn't match the new 51-position structure, force reset it!
+            if (employees.length !== DEFAULT_EMPLOYEES.length || employees.some(e => e.name === "Sarah Jenkins")) {
                 employees = [...DEFAULT_EMPLOYEES];
                 saveData();
             }
