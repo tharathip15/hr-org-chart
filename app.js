@@ -1064,7 +1064,7 @@ function renderTree() {
         let html = `
             <div class="tree-node" data-id="${employee.id}">
                 <div class="node-card-wrapper">
-                    <div class="node-card" draggable="true" data-id="${employee.id}">
+                    <div class="node-card" draggable="false" style="touch-action: none;" data-id="${employee.id}">
                         <div class="card-header">
                             <div class="avatar" style="background-color: ${avatarColor}">${initials}</div>
                             <div class="card-title-group">
@@ -1121,12 +1121,8 @@ function renderTree() {
             card.classList.add("selected-focus");
         });
         
-        // Drag and Drop listeners
-        card.addEventListener("dragstart", handleDragStart);
-        card.addEventListener("dragover", handleDragOver);
-        card.addEventListener("dragleave", handleDragLeave);
-        card.addEventListener("drop", handleDrop);
-        card.addEventListener("dragend", handleDragEnd);
+        // Custom Drag and Drop pointer listeners
+        card.addEventListener("pointerdown", handleCardDragStart);
     });
     
     document.querySelectorAll(".node-toggle-btn").forEach(btn => {
@@ -1631,51 +1627,212 @@ let draggedId = null;
 let dropDraggedId = null;
 let dropTargetId = null;
 
-function handleDragStart(e) {
-    draggedId = parseInt(this.dataset.id);
-    e.dataTransfer.setData("text/plain", draggedId);
-    this.classList.add("dragging");
-    e.dataTransfer.effectAllowed = "move";
+let activeDragCard = null;
+let activeDragClone = null;
+let dragGrabOffsetX = 0;
+let dragGrabOffsetY = 0;
+let currentSnapTargetId = null;
+
+function handleCardDragStart(e) {
+    // Only left click/pointer interaction
+    if (e.button !== 0) return;
+    
+    // Ignore if clicking toggle button or inputs
+    if (e.target.closest(".node-toggle-btn") || e.target.closest("button") || e.target.closest("input") || e.target.closest("a")) return;
+    
+    // Set pointer capture to prevent losing event when cursor leaves element
+    e.currentTarget.setPointerCapture(e.pointerId);
+    
+    const card = e.currentTarget;
+    activeDragCard = card;
+    draggedId = parseInt(card.dataset.id);
+    
+    const cardRect = card.getBoundingClientRect();
+    const viewportRect = viewport.getBoundingClientRect();
+    
+    // Calculate grab offset (distance from mouse to card top-left)
+    dragGrabOffsetX = (e.clientX - cardRect.left) / currentScale;
+    dragGrabOffsetY = (e.clientY - cardRect.top) / currentScale;
+    
+    // Create clone
+    activeDragClone = card.cloneNode(true);
+    activeDragClone.classList.add("dragging-clone");
+    
+    // Style clone
+    activeDragClone.style.position = "absolute";
+    activeDragClone.style.zIndex = "10000";
+    activeDragClone.style.pointerEvents = "none";
+    activeDragClone.style.transformOrigin = "top left";
+    activeDragClone.style.boxShadow = "var(--shadow-lg), 0 0 24px rgba(79, 70, 229, 0.25)";
+    activeDragClone.style.opacity = "0.9";
+    
+    // Remove toggle buttons from clone
+    activeDragClone.querySelectorAll(".node-toggle-btn").forEach(btn => btn.remove());
+    
+    // Add dragging styling to the original card
+    card.classList.add("dragging");
+    
+    canvas.appendChild(activeDragClone);
+    
+    // Position clone initially
+    const canvasRect = canvas.getBoundingClientRect();
+    const initX = (e.clientX - viewportRect.left - panX) / currentScale - dragGrabOffsetX;
+    const initY = (e.clientY - viewportRect.top - panY) / currentScale - dragGrabOffsetY;
+    activeDragClone.style.left = `${initX}px`;
+    activeDragClone.style.top = `${initY}px`;
+    
+    currentSnapTargetId = null;
+    
+    // Add window mouse/pointer listeners
+    window.addEventListener("pointermove", handleCardDragMove);
+    window.addEventListener("pointerup", handleCardDragEnd);
 }
 
-function handleDragOver(e) {
-    e.preventDefault();
-    const targetId = parseInt(this.dataset.id);
+function handleCardDragMove(e) {
+    if (!activeDragCard || !activeDragClone) return;
     
-    // Validate: cannot drop onto itself, its manager, or its descendants
-    if (targetId === draggedId) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
     
-    const emp = employees.find(emp => emp.id === draggedId);
-    if (emp && emp.managerId === targetId) return;
+    // Calculate normal position
+    let canvasX = (e.clientX - viewportRect.left - panX) / currentScale - dragGrabOffsetX;
+    let canvasY = (e.clientY - viewportRect.top - panY) / currentScale - dragGrabOffsetY;
     
-    const descendants = getDescendantIds(draggedId);
-    if (descendants.includes(targetId)) return;
+    const cloneWidth = activeDragClone.offsetWidth;
+    const cloneHeight = activeDragClone.offsetHeight;
     
-    this.classList.add("drag-over");
-    e.dataTransfer.dropEffect = "move";
-}
-
-function handleDragLeave(e) {
-    this.classList.remove("drag-over");
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    this.classList.remove("drag-over");
-    const targetId = parseInt(this.dataset.id);
+    // Center coordinates of clone if drawn at normal position
+    const cloneCenterX = canvasX + cloneWidth / 2;
+    const cloneCenterY = canvasY + cloneHeight / 2;
     
-    // Double-check validation
-    if (targetId === draggedId) return;
-    const descendants = getDescendantIds(draggedId);
-    if (descendants.includes(targetId)) return;
+    // Find closest valid target card
+    let closestTarget = null;
+    let minDistance = Infinity;
+    const snapThreshold = 180; // magnetic range
+    const absoluteSnapThreshold = 70; // actual snap range
     
-    openDropActionModal(draggedId, targetId);
-}
-
-function handleDragEnd(e) {
-    this.classList.remove("dragging");
+    const cards = document.querySelectorAll(".node-card:not(.dragging-clone):not(.dragging)");
+    cards.forEach(targetCard => {
+        const targetId = parseInt(targetCard.dataset.id);
+        
+        // Validation: cannot report to self or descendant
+        if (targetId === draggedId) return;
+        
+        const emp = employees.find(emp => emp.id === draggedId);
+        if (emp && emp.managerId === targetId) return;
+        
+        const descendants = getDescendantIds(draggedId);
+        if (descendants.includes(targetId)) return;
+        
+        // Target coordinates
+        const targetRect = targetCard.getBoundingClientRect();
+        const targetCenterX = (targetRect.left - canvasRect.left + targetRect.width / 2) / currentScale;
+        const targetCenterY = (targetRect.top - canvasRect.top + targetRect.height / 2) / currentScale;
+        
+        const dx = cloneCenterX - targetCenterX;
+        const dy = cloneCenterY - targetCenterY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < minDistance) {
+            minDistance = dist;
+            closestTarget = {
+                id: targetId,
+                element: targetCard,
+                centerX: targetCenterX,
+                centerY: targetCenterY,
+                rect: targetRect,
+                width: targetRect.width / currentScale,
+                height: targetRect.height / currentScale
+            };
+        }
+    });
+    
+    // Clear old drag-over classes
     document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
+    
+    // Clear old preview line
+    const oldPath = svgOverlay.querySelector(".live-preview-path");
+    if (oldPath) oldPath.remove();
+    
+    currentSnapTargetId = null;
+    
+    if (closestTarget && minDistance < snapThreshold) {
+        currentSnapTargetId = closestTarget.id;
+        closestTarget.element.classList.add("drag-over");
+        
+        // Target bottom center anchor
+        const targetX = closestTarget.centerX;
+        const targetY = (closestTarget.rect.top - canvasRect.top + closestTarget.rect.height) / currentScale;
+        
+        // Magnet Snap Effect: If close enough, snap the clone directly below the target card!
+        if (minDistance < absoluteSnapThreshold) {
+            canvasX = targetX - cloneWidth / 2;
+            canvasY = targetY + 35; // 35px below target card
+            
+            // Draw a straight line connecting them
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", `M ${targetX} ${targetY} L ${targetX} ${canvasY}`);
+            path.setAttribute("class", "connection-path highlighted live-preview-path");
+            path.setAttribute("stroke-dasharray", "4,4");
+            svgOverlay.appendChild(path);
+        } else {
+            // Draw a curved bezier line connecting them
+            const cloneX = canvasX + cloneWidth / 2;
+            const cloneY = canvasY;
+            const midY = (targetY + cloneY) / 2;
+            
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", `M ${targetX} ${targetY} C ${targetX} ${midY}, ${cloneX} ${midY}, ${cloneX} ${cloneY}`);
+            path.setAttribute("class", "connection-path highlighted live-preview-path");
+            path.setAttribute("stroke-dasharray", "4,4");
+            svgOverlay.appendChild(path);
+        }
+    }
+    
+    // Position clone
+    activeDragClone.style.left = `${canvasX}px`;
+    activeDragClone.style.top = `${canvasY}px`;
+}
+
+function handleCardDragEnd(e) {
+    // Remove listeners
+    window.removeEventListener("pointermove", handleCardDragMove);
+    window.removeEventListener("pointerup", handleCardDragEnd);
+    
+    if (!activeDragCard) return;
+    
+    // Release pointer capture
+    try {
+        activeDragCard.releasePointerCapture(e.pointerId);
+    } catch(err) {}
+    
+    // Clear live preview line
+    const oldPath = svgOverlay.querySelector(".live-preview-path");
+    if (oldPath) oldPath.remove();
+    
+    // Clear highlights
+    document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
+    activeDragCard.classList.remove("dragging");
+    
+    // Remove clone
+    if (activeDragClone) {
+        activeDragClone.remove();
+        activeDragClone = null;
+    }
+    
+    // Trigger modal drop action
+    const finalTargetId = currentSnapTargetId;
+    const finalDraggedId = draggedId;
+    
+    activeDragCard = null;
     draggedId = null;
+    
+    if (finalDraggedId !== null) {
+        // Check if dropped inside detail drawer or modals
+        if (e.target.closest(".drawer") || e.target.closest(".modal")) return;
+        
+        openDropActionModal(finalDraggedId, finalTargetId);
+    }
 }
 
 function openDropActionModal(dragged, target) {
@@ -1713,7 +1870,7 @@ function openDropActionModal(dragged, target) {
         
         desc.innerHTML = `ต้องการจัดโครงสร้างสำหรับ <strong>${escapeHTML(emp.name)}</strong> ร่วมกับ <strong>${escapeHTML(mgr.name)}</strong> อย่างไร?`;
         optReportToDesc.innerText = `ให้ ${emp.name} ทำงานภายใต้ ${mgr.name} (และเปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department})`;
-        optBecomeManagerDesc.innerText = `ให้ ${emp.name} มาเป็นหัวหน้าของ ${mgr.name} (แทรกสายงานระหว่างหัวหน้าเดิมของ ${mgr.name} กับตัว ${mgr.name})`;
+        optBecomeManagerDesc.innerText = `ให้ ${emp.name} มาเป็นหัวหน้าของ ${mgr.name} (แทรกสายงานระหว่างหัวหน้าเดิม of ${mgr.name} กับตัว ${mgr.name})`;
         optChangeDeptDesc.innerText = `เปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department} เท่านั้น (รักษาสายรายงานผู้จัดการคนเดิม)`;
     } else {
         optReportTo.style.display = "flex";
