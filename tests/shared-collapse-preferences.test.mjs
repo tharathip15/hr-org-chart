@@ -25,6 +25,6 @@ test("local and deployed APIs expose shared preferences", () => {
     assert.equal(existsSync(preferencesApiPath), true);
 
     const preferencesApiSource = readFileSync(preferencesApiPath, "utf8");
-    assert.match(preferencesApiSource, /const DATA_PATH = "preferences\.json"/);
+    assert.match(preferencesApiSource, /\.from\("preferences"\)/);
     assert.match(preferencesApiSource, /collapsedNodeIds/);
 });

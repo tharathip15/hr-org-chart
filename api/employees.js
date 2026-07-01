@@ -1,7 +1,5 @@
-import { get, put } from "@vercel/blob";
+import { supabase } from "./supabase.js";
 
-const DATA_PATH = "employees.json";
-const VERSION_PREFIX = "versions/employees";
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
 export default async function handler(request, response) {
@@ -21,25 +19,23 @@ export default async function handler(request, response) {
 
 async function handleGet(response) {
   try {
-    const blob = await get(DATA_PATH, { access: "private" });
+    const { data, error } = await supabase
+      .from("employees")
+      .select("*")
+      .order("id", { ascending: true });
 
-    if (!blob || blob.statusCode === 404) {
-      response.status(200).json([]);
-      return;
+    if (error) {
+      throw error;
     }
 
-    const text = await new Response(blob.stream).text();
+    const employees = (data || []).map(mapDbToEmployee);
     response.setHeader("Cache-Control", "no-store");
-    response.status(200).json(JSON.parse(text));
+    response.status(200).json(employees);
   } catch (error) {
-    if (isNotFound(error)) {
-      response.status(200).json([]);
-      return;
-    }
-
+    console.error("Failed to load employees from Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to load employees from Blob storage"
+      error: "Failed to load employees from database"
     });
   }
 }
@@ -53,27 +49,72 @@ async function handlePut(request, response) {
       return;
     }
 
-    const payload = JSON.stringify(body);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const payloadIds = body.map(emp => parseInt(emp.id, 10)).filter(Number.isInteger);
 
-    await put(DATA_PATH, payload, {
-      access: "private",
-      allowOverwrite: true,
-      contentType: "application/json"
-    });
+    // 1. Delete employees that are no longer in the payload
+    if (payloadIds.length === 0) {
+      const { error: deleteError } = await supabase
+        .from("employees")
+        .delete()
+        .neq("id", 0);
+      if (deleteError) throw deleteError;
+    } else {
+      const { error: deleteError } = await supabase
+        .from("employees")
+        .delete()
+        .not("id", "in", `(${payloadIds.join(",")})`);
+      if (deleteError) throw deleteError;
+    }
 
-    await put(`${VERSION_PREFIX}-${timestamp}.json`, payload, {
-      access: "private",
-      contentType: "application/json"
-    });
+    // 2. Upsert the current list of employees
+    if (body.length > 0) {
+      const dbRows = body.map(mapEmployeeToDb);
+      const { error: upsertError } = await supabase
+        .from("employees")
+        .upsert(dbRows);
+      if (upsertError) throw upsertError;
+    }
 
     response.status(200).json({ ok: true, count: body.length });
   } catch (error) {
+    console.error("Failed to save employees to Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to save employees to Blob storage"
+      error: "Failed to save employees to database"
     });
   }
+}
+
+function mapDbToEmployee(row) {
+  return {
+    id: row.id,
+    personId: row.person_id,
+    name: row.name,
+    role: row.role,
+    department: row.department,
+    managerId: row.manager_id,
+    email: row.email,
+    phone: row.phone,
+    bio: row.bio,
+    photoUrl: row.photo_url,
+    avatarColor: row.avatar_color
+  };
+}
+
+function mapEmployeeToDb(emp) {
+  return {
+    id: parseInt(emp.id, 10),
+    person_id: emp.personId || "",
+    name: emp.name || "",
+    role: emp.role || "",
+    department: emp.department || "",
+    manager_id: emp.managerId ? parseInt(emp.managerId, 10) : null,
+    email: emp.email || null,
+    phone: emp.phone || null,
+    bio: emp.bio || null,
+    photo_url: emp.photoUrl || null,
+    avatar_color: emp.avatarColor || null
+  };
 }
 
 function readJsonBody(request) {
@@ -98,8 +139,4 @@ function readJsonBody(request) {
 
     request.on("error", reject);
   });
-}
-
-function isNotFound(error) {
-  return error?.status === 404 || error?.statusCode === 404;
 }

@@ -1,6 +1,5 @@
-import { get, put } from "@vercel/blob";
+import { supabase } from "./supabase.js";
 
-const DATA_PATH = "preferences.json";
 const MAX_BODY_SIZE = 256 * 1024;
 
 export default async function handler(request, response) {
@@ -20,25 +19,27 @@ export default async function handler(request, response) {
 
 async function handleGet(response) {
   try {
-    const blob = await get(DATA_PATH, { access: "private" });
+    const { data, error } = await supabase
+      .from("preferences")
+      .select("value")
+      .eq("key", "collapsed_nodes")
+      .single();
 
-    if (!blob || blob.statusCode === 404) {
-      response.status(200).json({ collapsedNodeIds: [] });
-      return;
+    if (error) {
+      if (error.code === "PGRST116") { // PostgREST code for "no rows returned"
+        response.status(200).json({ collapsedNodeIds: [] });
+        return;
+      }
+      throw error;
     }
 
-    const text = await new Response(blob.stream).text();
     response.setHeader("Cache-Control", "no-store");
-    response.status(200).json(normalizePreferences(JSON.parse(text)));
+    response.status(200).json(normalizePreferences(data?.value));
   } catch (error) {
-    if (isNotFound(error)) {
-      response.status(200).json({ collapsedNodeIds: [] });
-      return;
-    }
-
+    console.error("Failed to load preferences from Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to load preferences from Blob storage"
+      error: "Failed to load preferences from database"
     });
   }
 }
@@ -46,19 +47,23 @@ async function handleGet(response) {
 async function handlePut(request, response) {
   try {
     const body = normalizePreferences(await readJsonBody(request));
-    const payload = JSON.stringify(body);
+    
+    const { error } = await supabase
+      .from("preferences")
+      .upsert({
+        key: "collapsed_nodes",
+        value: body,
+        updated_at: new Date().toISOString()
+      });
 
-    await put(DATA_PATH, payload, {
-      access: "private",
-      allowOverwrite: true,
-      contentType: "application/json"
-    });
+    if (error) throw error;
 
     response.status(200).json({ ok: true });
   } catch (error) {
+    console.error("Failed to save preferences to Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to save preferences to Blob storage"
+      error: "Failed to save preferences to database"
     });
   }
 }
@@ -97,8 +102,4 @@ function readJsonBody(request) {
 
     request.on("error", reject);
   });
-}
-
-function isNotFound(error) {
-  return error?.status === 404 || error?.statusCode === 404;
 }
