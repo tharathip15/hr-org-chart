@@ -975,6 +975,39 @@ function setupEventListeners() {
         reader.readAsText(file);
     });
     
+    // Sync Microsoft 365 button
+    const btnSync = document.getElementById("btn-sync-microsoft");
+    if (btnSync) {
+        btnSync.addEventListener("click", async () => {
+            if (!confirm("ต้องการซิงค์ข้อมูลพนักงานกับ Microsoft 365 หรือไม่? ข้อมูลการจัดตำแหน่งและการตั้งค่าปัจจุบันอาจถูกแทนที่ด้วยข้อมูลจาก Azure AD")) return;
+            
+            btnSync.disabled = true;
+            const originalHTML = btnSync.innerHTML;
+            btnSync.innerHTML = `<i data-lucide="refresh-cw" class="spin"></i> Syncing...`;
+            if (window.lucide) window.lucide.createIcons();
+            
+            try {
+                const response = await fetch("/api/sync-microsoft", { method: "POST" });
+                const result = await response.json();
+                
+                if (response.ok && result.ok) {
+                    showNotification(`ซิงค์ข้อมูลพนักงานจำนวน ${result.count} คน จาก Microsoft 365 สำเร็จ`, "success");
+                    await loadData();
+                    renderAll();
+                } else {
+                    throw new Error(result.error || "Sync failed");
+                }
+            } catch (error) {
+                console.error("Microsoft sync failed:", error);
+                showNotification(`เกิดข้อผิดพลาดในการซิงค์: ${error.message}`, "error");
+            } finally {
+                btnSync.disabled = false;
+                btnSync.innerHTML = originalHTML;
+                if (window.lucide) window.lucide.createIcons();
+            }
+        });
+    }
+
     // Add Employee Button
     document.getElementById("btn-add-employee").addEventListener("click", () => {
         openEmployeeForm();
