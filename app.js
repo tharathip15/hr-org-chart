@@ -1197,6 +1197,49 @@ function setupEventListeners() {
         }
         closeDropModal();
     });
+
+    // Opt 4: Hold Position Concurrently (Create copy with same personId)
+    document.getElementById("opt-hold-concurrent").addEventListener("click", async () => {
+        if (dropDraggedId === null) return;
+        const emp = employees.find(e => e.id === dropDraggedId);
+        if (!emp) return;
+
+        const newId = employees.length > 0 ? Math.max(...employees.map(e => e.id)) + 1 : 1;
+        let targetDept = emp.department;
+        let managerId = null;
+        let mgrName = "ระดับสูงสุด (Top Level)";
+
+        if (dropTargetId !== null) {
+            const mgr = employees.find(e => e.id === dropTargetId);
+            if (mgr) {
+                managerId = dropTargetId;
+                targetDept = mgr.department;
+                mgrName = mgr.name;
+            }
+        }
+
+        const newEmployee = {
+            id: newId,
+            personId: emp.personId || createPersonId(emp.name, newId),
+            name: emp.name,
+            role: `ควบ: ${emp.role}`,
+            department: targetDept,
+            managerId: managerId,
+            email: emp.email || "",
+            phone: emp.phone || "",
+            bio: emp.bio || "",
+            photoUrl: emp.photoUrl || "",
+            avatarColor: emp.avatarColor || getDeptColor(targetDept)
+        };
+
+        employees.push(newEmployee);
+
+        await saveData();
+        renderAll();
+
+        showNotification(`เพิ่มตำแหน่งควบงานให้ ${emp.name} ภายใต้ ${mgrName} สำเร็จ`, "success");
+        closeDropModal();
+    });
 }
 
 // Update the canvas scale and pan position
@@ -2581,10 +2624,12 @@ function openDropActionModal(dragged, target) {
     const optReportTo = document.getElementById("opt-report-to");
     const optBecomeManager = document.getElementById("opt-become-manager");
     const optChangeDept = document.getElementById("opt-change-dept");
+    const optHoldConcurrent = document.getElementById("opt-hold-concurrent");
     
     const optReportToDesc = document.getElementById("opt-report-to-desc");
     const optBecomeManagerDesc = document.getElementById("opt-become-manager-desc");
     const optChangeDeptDesc = document.getElementById("opt-change-dept-desc");
+    const optHoldConcurrentDesc = document.getElementById("opt-hold-concurrent-desc");
     
     const deptGroup = document.getElementById("dept-select-group");
     deptGroup.style.display = "none";
@@ -2596,25 +2641,31 @@ function openDropActionModal(dragged, target) {
         optReportTo.style.display = "flex";
         optBecomeManager.style.display = "flex";
         optChangeDept.style.display = "flex";
+        optHoldConcurrent.style.display = "flex";
         
         optReportTo.querySelector("strong").innerText = "รายงานตรงต่อ (ต่อล่าง)";
         optBecomeManager.querySelector("strong").innerText = "เป็นหัวหน้างานของ (ต่อบน)";
         optChangeDept.querySelector("strong").innerText = "ย้ายแผนกอย่างเดียว";
+        optHoldConcurrent.querySelector("strong").innerText = "ควบตำแหน่ง (เพิ่มตำแหน่งใหม่)";
         
         desc.innerHTML = `ต้องการจัดโครงสร้างสำหรับ <strong>${escapeHTML(emp.name)}</strong> ร่วมกับ <strong>${escapeHTML(mgr.name)}</strong> อย่างไร?`;
         optReportToDesc.innerText = `ให้ ${emp.name} ทำงานภายใต้ ${mgr.name} (และเปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department})`;
         optBecomeManagerDesc.innerText = `ให้ ${emp.name} มาเป็นหัวหน้าของ ${mgr.name} (แทรกสายงานระหว่างหัวหน้าเดิม of ${mgr.name} กับตัว ${mgr.name})`;
         optChangeDeptDesc.innerText = `เปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department} เท่านั้น (รักษาสายรายงานผู้จัดการคนเดิม)`;
+        optHoldConcurrentDesc.innerText = `เพิ่มตำแหน่งงานควบใหม่ของ ${emp.name} ภายใต้ ${mgr.name} (ตำแหน่งเดิมยังอยู่ที่เดิม)`;
     } else {
         optReportTo.style.display = "flex";
         optBecomeManager.style.display = "none";
         optChangeDept.style.display = "flex";
+        optHoldConcurrent.style.display = "flex";
         
         optReportTo.querySelector("strong").innerText = "ตั้งเป็นระดับสูงสุด (Top Level)";
         optChangeDept.querySelector("strong").innerText = "ย้ายแผนกของพนักงาน";
+        optHoldConcurrent.querySelector("strong").innerText = "ควบตำแหน่ง (ระดับสูงสุด)";
         
         optReportToDesc.innerText = `ให้ ${emp.name} รายงานตรงต่อตนเอง (ไม่ขึ้นตรงกับใคร)`;
         optChangeDeptDesc.innerText = `เปลี่ยนแผนกใหม่ของ ${emp.name}`;
+        optHoldConcurrentDesc.innerText = `เพิ่มตำแหน่งงานควบใหม่ของ ${emp.name} ในระดับสูงสุด (ตำแหน่งเดิมยังอยู่ที่เดิม)`;
         
         desc.innerHTML = `จัดวางพนักงาน <strong>${escapeHTML(emp.name)}</strong> ในแคนวาสพื้นหลัง`;
     }
