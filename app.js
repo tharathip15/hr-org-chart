@@ -523,26 +523,15 @@ const viewport = document.getElementById("chart-viewport");
 const canvas = document.getElementById("chart-canvas");
 const svgOverlay = document.getElementById("svg-overlay");
 const treeContainer = document.getElementById("tree-container");
+const EMPLOYEES_API_URL = "/api/employees";
+const PREFERENCES_API_URL = "/api/preferences";
+const PHOTO_MAX_SIZE = 256;
+const PHOTO_QUALITY = 0.82;
 
 // Load data initially
-function init() {
-    const saved = localStorage.getItem("hr_employees");
-    if (saved) {
-        try {
-            employees = JSON.parse(saved);
-            // If saved data doesn't match the new 51-position structure, force reset it!
-            if (employees.length !== DEFAULT_EMPLOYEES.length || employees.some(e => e.name === "Sarah Jenkins")) {
-                employees = [...DEFAULT_EMPLOYEES];
-                saveData();
-            }
-        } catch (e) {
-            employees = [...DEFAULT_EMPLOYEES];
-            saveData();
-        }
-    } else {
-        employees = [...DEFAULT_EMPLOYEES];
-        saveData();
-    }
+async function init() {
+    await loadData();
+    await loadPreferences();
     
     setupEventListeners();
     renderAll();
@@ -553,9 +542,306 @@ function init() {
     }, 150);
 }
 
-// Save to LocalStorage
-function saveData() {
+// Load data from the server database. LocalStorage is only a fallback for file:// previews.
+async function loadData() {
+    try {
+        const response = await fetch(EMPLOYEES_API_URL);
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+        }
+
+        const savedEmployees = await response.json();
+        employees = Array.isArray(savedEmployees) && savedEmployees.length > 0
+            ? savedEmployees
+            : [...DEFAULT_EMPLOYEES];
+
+        const didNormalizeProfiles = normalizeEmployeeProfiles();
+
+        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles) {
+            await saveData();
+        }
+        return;
+    } catch (error) {
+        console.warn("Database API unavailable; falling back to localStorage.", error);
+    }
+
+    const saved = localStorage.getItem("hr_employees");
+    if (saved) {
+        try {
+            employees = JSON.parse(saved);
+            normalizeEmployeeProfiles();
+            return;
+        } catch (error) {
+            console.warn("Failed to parse localStorage backup.", error);
+        }
+    }
+
+    employees = [...DEFAULT_EMPLOYEES];
+    normalizeEmployeeProfiles();
+    saveLocalBackup();
+}
+
+// Save to server database, with a local browser backup as a fallback copy.
+async function saveData() {
+    saveLocalBackup();
+
+    try {
+        const response = await fetch(EMPLOYEES_API_URL, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            keepalive: true,
+            body: JSON.stringify(employees)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+        }
+    } catch (error) {
+        console.error("Failed to save data to database.", error);
+        showNotification("Database save failed. A browser backup was kept.", "error");
+    }
+}
+
+function saveLocalBackup() {
     localStorage.setItem("hr_employees", JSON.stringify(employees));
+}
+
+function sanitizeCollapsedNodeIds(value) {
+    if (!Array.isArray(value)) return [];
+
+    const validIds = new Set(employees.map(emp => emp.id));
+    return [...new Set(value.map(id => parseInt(id, 10)))]
+        .filter(id => Number.isInteger(id) && validIds.has(id));
+}
+
+function applyPreferences(preferences) {
+    collapsedNodes = new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIds));
+}
+
+function getPreferencesPayload() {
+    return {
+        collapsedNodeIds: [...collapsedNodes]
+            .filter(id => Number.isInteger(id))
+            .sort((a, b) => a - b)
+    };
+}
+
+async function loadPreferences() {
+    try {
+        const response = await fetch(PREFERENCES_API_URL);
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+        }
+
+        applyPreferences(await response.json());
+        return;
+    } catch (error) {
+        console.warn("Preferences API unavailable; falling back to localStorage.", error);
+    }
+
+    const saved = localStorage.getItem("hr_org_preferences");
+    if (saved) {
+        try {
+            applyPreferences(JSON.parse(saved));
+            return;
+        } catch (error) {
+            console.warn("Failed to parse localStorage preferences backup.", error);
+        }
+    }
+
+    applyPreferences({});
+}
+
+async function savePreferences() {
+    const preferences = getPreferencesPayload();
+    localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
+
+    try {
+        const response = await fetch(PREFERENCES_API_URL, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            keepalive: true,
+            body: JSON.stringify(preferences)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+        }
+    } catch (error) {
+        console.error("Failed to save shared view preferences.", error);
+    }
+}
+
+function normalizePersonKey(name) {
+    return (name || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+}
+
+function createPersonId(name, fallbackId) {
+    const slug = normalizePersonKey(name)
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40) || "employee";
+    return `person-${slug}-${fallbackId}`;
+}
+
+function normalizeEmployeeProfiles() {
+    let changed = false;
+    const personIdByName = new Map();
+
+    employees.forEach(emp => {
+        const key = normalizePersonKey(emp.name);
+        if (!emp.personId) {
+            if (!personIdByName.has(key)) {
+                personIdByName.set(key, createPersonId(emp.name, emp.id));
+            }
+            emp.personId = personIdByName.get(key);
+            changed = true;
+        } else if (key && !personIdByName.has(key)) {
+            personIdByName.set(key, emp.personId);
+        }
+    });
+
+    const profileByPersonId = new Map();
+    employees.forEach(emp => {
+        const current = profileByPersonId.get(emp.personId);
+        if (!current || profileCompletenessScore(emp) > profileCompletenessScore(current)) {
+            profileByPersonId.set(emp.personId, emp);
+        }
+    });
+
+    employees.forEach(emp => {
+        const profile = profileByPersonId.get(emp.personId);
+        if (!profile) return;
+        ["name", "email", "phone", "bio", "photoUrl"].forEach(field => {
+            const nextValue = profile[field] || "";
+            if ((emp[field] || "") !== nextValue) {
+                emp[field] = nextValue;
+                changed = true;
+            }
+        });
+    });
+
+    return changed;
+}
+
+function profileCompletenessScore(emp) {
+    return ["photoUrl", "email", "phone", "bio", "name"]
+        .reduce((score, field) => score + ((emp[field] || "").trim ? (emp[field] || "").trim().length > 0 : Boolean(emp[field])), 0);
+}
+
+function samePerson(a, b) {
+    if (!a || !b) return false;
+    if (a.personId && b.personId) return a.personId === b.personId;
+    return normalizePersonKey(a.name) === normalizePersonKey(b.name);
+}
+
+function getPersonProfile(personId) {
+    return employees.find(emp => emp.personId === personId) || null;
+}
+
+function getUniquePersonProfiles() {
+    const profiles = new Map();
+    employees.forEach(emp => {
+        if (!profiles.has(emp.personId)) {
+            profiles.set(emp.personId, emp);
+            return;
+        }
+        if (profileCompletenessScore(emp) > profileCompletenessScore(profiles.get(emp.personId))) {
+            profiles.set(emp.personId, emp);
+        }
+    });
+
+    return [...profiles.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getPersonPositionCount(personId) {
+    return employees.filter(emp => emp.personId === personId).length;
+}
+
+function getPersonOptionLabel(profile) {
+    const count = getPersonPositionCount(profile.personId);
+    const suffix = count > 1 ? `${count} positions` : `${count} position`;
+    return `${profile.name} (${suffix})`;
+}
+
+function findPersonProfileFromInput(value) {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    return getUniquePersonProfiles().find(profile =>
+        getPersonOptionLabel(profile) === trimmed ||
+        profile.name === trimmed ||
+        profile.personId === trimmed
+    ) || null;
+}
+
+function syncPersonProfile(personId, profileFields) {
+    employees.forEach(emp => {
+        if (emp.personId !== personId) return;
+        emp.name = profileFields.name;
+        emp.email = profileFields.email;
+        emp.phone = profileFields.phone;
+        emp.bio = profileFields.bio;
+        emp.photoUrl = profileFields.photoUrl;
+    });
+}
+
+function getAvatarHTML(emp, className = "avatar", extraStyle = "") {
+    if (emp?.photoUrl) {
+        return `
+            <div class="${className} avatar-photo" style="${extraStyle}">
+                <img src="${escapeHTML(emp.photoUrl)}" alt="${escapeHTML(emp.name || "Employee")}">
+            </div>
+        `;
+    }
+
+    const color = emp?.avatarColor || getDeptColor(emp?.department);
+    return `<div class="${className}" style="background-color: ${color}; ${extraStyle}">${getInitials(emp?.name || "")}</div>`;
+}
+
+function setPhotoPreview(photoUrl, name = "") {
+    const preview = document.getElementById("form-photo-preview");
+    if (!preview) return;
+
+    if (photoUrl) {
+        preview.innerHTML = `<img src="${escapeHTML(photoUrl)}" alt="${escapeHTML(name || "Employee photo")}">`;
+        preview.classList.add("has-photo");
+    } else {
+        preview.innerHTML = `<i data-lucide="camera"></i>`;
+        preview.classList.remove("has-photo");
+        lucide.createIcons();
+    }
+}
+
+function resizeImageFile(file) {
+    return new Promise((resolve, reject) => {
+        if (!file.type.startsWith("image/")) {
+            reject(new Error("Please choose an image file."));
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const image = new Image();
+            image.onload = () => {
+                const scale = Math.min(1, PHOTO_MAX_SIZE / Math.max(image.width, image.height));
+                const width = Math.max(1, Math.round(image.width * scale));
+                const height = Math.max(1, Math.round(image.height * scale));
+                const canvasEl = document.createElement("canvas");
+                canvasEl.width = width;
+                canvasEl.height = height;
+                const ctx = canvasEl.getContext("2d");
+                ctx.drawImage(image, 0, 0, width, height);
+                resolve(canvasEl.toDataURL("image/jpeg", PHOTO_QUALITY));
+            };
+            image.onerror = () => reject(new Error("Could not read the selected image."));
+            image.src = reader.result;
+        };
+        reader.onerror = () => reject(new Error("Could not read the selected image."));
+        reader.readAsDataURL(file);
+    });
 }
 
 // Set up UI and canvas event listeners
@@ -668,9 +954,11 @@ function setupEventListeners() {
                 if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name && parsed[0].department) {
                     if (confirm(`Are you sure you want to import this backup? It will overwrite your current chart with ${parsed.length} employees.`)) {
                         employees = parsed;
+                        normalizeEmployeeProfiles();
                         collapsedNodes.clear();
                         selectedDept = "All";
                         saveData();
+                        savePreferences();
                         renderAll();
                         fitToScreen();
                         showNotification("Backup imported successfully!", "success");
@@ -715,9 +1003,7 @@ function setupEventListeners() {
         } else {
             searchResults.innerHTML = matches.map(emp => `
                 <div class="search-result-item" data-id="${emp.id}">
-                    <div class="avatar" style="background-color: ${emp.avatarColor || getDeptColor(emp.department)}; width: 32px; height: 32px; font-size: 11px;">
-                        ${getInitials(emp.name)}
-                    </div>
+                    ${getAvatarHTML(emp, "avatar", "width: 32px; height: 32px; font-size: 11px;")}
                     <div class="search-result-info">
                         <h4>${escapeHTML(emp.name)}</h4>
                         <p>${escapeHTML(emp.role)} • ${escapeHTML(emp.department)}</p>
@@ -747,6 +1033,38 @@ function setupEventListeners() {
     
     // Form submission
     document.getElementById("employee-form").addEventListener("submit", handleFormSubmit);
+    document.getElementById("btn-photo-trigger").addEventListener("click", () => {
+        document.getElementById("form-photo-input").click();
+    });
+    
+    document.getElementById("form-photo-input").addEventListener("change", async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const resizedPhoto = await resizeImageFile(file);
+            document.getElementById("form-photo-data").value = resizedPhoto;
+            setPhotoPreview(resizedPhoto, document.getElementById("form-name").value.trim());
+            showNotification("Photo added to employee profile", "success");
+        } catch (error) {
+            showNotification(error.message || "Could not upload photo", "error");
+        } finally {
+            e.target.value = "";
+        }
+    });
+    
+    document.getElementById("btn-remove-photo").addEventListener("click", () => {
+        document.getElementById("form-photo-data").value = "";
+        setPhotoPreview("", document.getElementById("form-name").value.trim());
+    });
+    
+    document.getElementById("form-person-link").addEventListener("change", () => {
+        applySelectedPersonProfile();
+    });
+    
+    document.getElementById("form-person-link").addEventListener("input", () => {
+        applySelectedPersonProfile();
+    });
     
     // Close buttons for drawers/modals
     document.getElementById("close-detail-drawer").addEventListener("click", closeDetailDrawer);
@@ -909,16 +1227,16 @@ function zoom(factor) {
 
 // Helper: get bounding box of all employee cards in canvas-local coordinates
 function getTreeContentBounds() {
-    const cards = document.querySelectorAll(".node-card");
-    if (cards.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0 };
+    const contentElements = document.querySelectorAll(".node-card, .overview-frame");
+    if (contentElements.length === 0) return { minX: 0, maxX: 0, minY: 0, maxY: 0, width: 0, height: 0 };
     
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
     
-    cards.forEach(card => {
-        const r = getCanvasLocalRect(card);
+    contentElements.forEach(element => {
+        const r = getCanvasLocalRect(element);
         if (r.width === 0 || r.height === 0) return;
         minX = Math.min(minX, r.x);
         maxX = Math.max(maxX, r.x + r.width);
@@ -1014,6 +1332,7 @@ function toggleNode(id) {
         collapsedNodes.add(id);
     }
     
+    savePreferences();
     renderAll();
 }
 
@@ -1099,10 +1418,207 @@ function selectDepartment(dept) {
     fitToScreen();
 }
 
+function getRootsForDepartment(dept) {
+    if (dept === "All") {
+        const validIds = new Set(employees.map(e => e.id));
+        const roots = employees.filter(e => e.managerId === null || !validIds.has(e.managerId));
+        return roots.length > 0 || employees.length === 0 ? roots : [employees[0]];
+    }
+
+    const deptEmployees = employees.filter(e => e.department === dept);
+    const deptEmployeeIds = new Set(deptEmployees.map(e => e.id));
+    const roots = deptEmployees.filter(e => e.managerId === null || !deptEmployeeIds.has(e.managerId));
+    return roots.length > 0 || deptEmployees.length === 0 ? roots : [deptEmployees[0]];
+}
+
+function buildReportsMap(dept) {
+    const reportsMap = {};
+
+    employees.forEach(emp => {
+        if (emp.managerId === null) return;
+
+        if (!reportsMap[emp.managerId]) {
+            reportsMap[emp.managerId] = [];
+        }
+
+        if (dept === "All" || emp.department === dept) {
+            reportsMap[emp.managerId].push(emp);
+        }
+    });
+
+    Object.values(reportsMap).forEach(reports => {
+        reports.sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    return reportsMap;
+}
+
+function overviewRoleIncludes(emp, roleText) {
+    return (emp?.role || "").toLowerCase().includes(roleText.toLowerCase());
+}
+
+function overviewMatchesAnyRole(emp, roleTexts) {
+    return roleTexts.some(roleText => overviewRoleIncludes(emp, roleText));
+}
+
+function buildOverviewFrame(label, className, reports, reportsMap) {
+    if (reports.length === 0) return "";
+
+    return `
+        <div class="overview-frame ${className} overview-child-group">
+            <span class="overview-frame-label">${label}</span>
+            ${reports.map(report => buildOverviewNodeHTML(report, reportsMap)).join("")}
+        </div>
+    `;
+}
+
+function buildOverviewChildrenHTML(employee, reports, reportsMap) {
+    if (overviewRoleIncludes(employee, "CEO")) {
+        const frontReports = reports.filter(report => overviewRoleIncludes(report, "CMO"));
+        const operationReports = reports.filter(report => overviewRoleIncludes(report, "COO"));
+        const groupedIds = new Set([...frontReports, ...operationReports].map(report => report.id));
+        const otherReports = reports.filter(report => !groupedIds.has(report.id));
+
+        return [
+            buildOverviewFrame("Front", "overview-front-frame", frontReports, reportsMap),
+            buildOverviewFrame("Operation", "overview-operation-frame", operationReports, reportsMap),
+            ...otherReports.map(report => buildOverviewNodeHTML(report, reportsMap))
+        ].join("");
+    }
+
+    if (overviewRoleIncludes(employee, "DOS")) {
+        const directRoles = ["Manager of EN", "Manager of BC", "Manager of SG"];
+        const specialRoles = ["Manager of SV", "Manager of WT", "Manager of WS/RDF"];
+        const directReports = reports.filter(report => overviewMatchesAnyRole(report, directRoles));
+        const specialReports = reports.filter(report => overviewMatchesAnyRole(report, specialRoles));
+        const groupedIds = new Set([...directReports, ...specialReports].map(report => report.id));
+        const otherReports = reports.filter(report => !groupedIds.has(report.id));
+
+        return [
+            ...otherReports.map(report => buildOverviewNodeHTML(report, reportsMap)),
+            buildOverviewFrame("Direct", "overview-direct-frame", directReports, reportsMap),
+            buildOverviewFrame("Special", "overview-special-frame", specialReports, reportsMap)
+        ].join("");
+    }
+
+    return reports.map(report => buildOverviewNodeHTML(report, reportsMap)).join("");
+}
+
+function buildNodeHTML(employee, reportsMap, options = {}) {
+    const reports = reportsMap[employee.id] || [];
+    const hasReports = reports.length > 0;
+    const deptClass = getDeptClass(employee.department);
+    const dualRoleCount = employees.filter(e => samePerson(e, employee)).length;
+    const isDualRole = dualRoleCount > 1;
+    
+    let html = `
+        <div class="tree-node" data-id="${employee.id}">
+            <div class="node-card-wrapper">
+                <div class="node-card" draggable="false" style="touch-action: none;" data-id="${employee.id}">
+                    <div class="card-header">
+                        ${getAvatarHTML(employee)}
+                        <div class="card-title-group">
+                            <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
+                                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
+                                ${isDualRole ? `<span class="dual-role-badge" title="เธกเธตเธซเธฅเธฒเธขเธ•เธณเนเธซเธเนเธเธเธฒเธ (Dual Role)" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ''}
+                            </div>
+                            <div class="card-role">${escapeHTML(employee.role)}</div>
+                        </div>
+                    </div>
+                    <div class="card-department-badge ${deptClass}">
+                        ${escapeHTML(employee.department)}
+                    </div>
+    `;
+    
+    if (hasReports) {
+        const isCollapsed = collapsedNodes.has(employee.id);
+        html += `
+            <button class="node-toggle-btn ${isCollapsed ? 'collapsed' : ''}" data-id="${employee.id}">
+                <i data-lucide="${isCollapsed ? 'chevron-down' : 'chevron-up'}"></i>
+            </button>
+        `;
+    }
+    
+    html += `
+                </div>
+            </div>
+    `;
+    
+    if (hasReports) {
+        const isCollapsed = collapsedNodes.has(employee.id);
+        const childrenHTML = options.overview
+            ? buildOverviewChildrenHTML(employee, reports, reportsMap)
+            : reports.map(report => buildNodeHTML(report, reportsMap, options)).join("");
+
+        html += `
+            <div class="node-children ${isCollapsed ? 'collapsed' : ''}">
+                ${childrenHTML}
+            </div>
+        `;
+    }
+    
+    html += `</div>`;
+    return html;
+}
+
+function buildOverviewNodeHTML(employee, reportsMap) {
+    return buildNodeHTML(employee, reportsMap, { overview: true });
+}
+
+function wireTreeInteractions() {
+    lucide.createIcons();
+    
+    document.querySelectorAll(".node-card").forEach(card => {
+        card.addEventListener("click", () => {
+            const id = parseInt(card.dataset.id);
+            showEmployeeDetails(id);
+            
+            document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
+            card.classList.add("selected-focus");
+        });
+        
+        card.addEventListener("pointerdown", handleCardDragStart);
+    });
+    
+    document.querySelectorAll(".node-toggle-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const id = parseInt(btn.dataset.id);
+            toggleNode(id);
+        });
+    });
+}
+
+function scheduleConnectionDraw() {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            drawConnections();
+            setTimeout(() => drawConnections(), 300);
+        });
+    });
+}
+
+function renderOverview() {
+    const roots = getRootsForDepartment("All");
+    const reportsMap = buildReportsMap("All");
+    treeContainer.innerHTML = roots.map(root => buildOverviewNodeHTML(root, reportsMap)).join("");
+    wireTreeInteractions();
+    scheduleConnectionDraw();
+}
+
 // Render dynamic DOM tree structure
 function renderTree() {
     treeContainer.innerHTML = "";
-    
+    svgOverlay.innerHTML = "";
+
+    if (selectedDept === "All") {
+        treeContainer.classList.add("overview-mode");
+        renderOverview();
+        return;
+    }
+
+    treeContainer.classList.remove("overview-mode");
+
     // Identify Roots
     let roots = [];
     
@@ -1152,12 +1668,10 @@ function renderTree() {
     function buildNodeHTML(employee) {
         const reports = reportsMap[employee.id] || [];
         const hasReports = reports.length > 0;
-        const initials = getInitials(employee.name);
         const deptClass = getDeptClass(employee.department);
-        const avatarColor = employee.avatarColor || getDeptColor(employee.department);
         
         // Check for multiple positions
-        const dualRoleCount = employees.filter(e => e.name.toLowerCase() === employee.name.toLowerCase()).length;
+        const dualRoleCount = employees.filter(e => samePerson(e, employee)).length;
         const isDualRole = dualRoleCount > 1;
         
         let html = `
@@ -1165,7 +1679,7 @@ function renderTree() {
                 <div class="node-card-wrapper">
                     <div class="node-card" draggable="false" style="touch-action: none;" data-id="${employee.id}">
                         <div class="card-header">
-                            <div class="avatar" style="background-color: ${avatarColor}">${initials}</div>
+                            ${getAvatarHTML(employee)}
                             <div class="card-title-group">
                                 <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
                                     <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
@@ -1264,12 +1778,12 @@ function updateCanvasBounds() {
     const minWidth = 20000;
     const minHeight = 10000;
     const padding = 600;
-    const cards = document.querySelectorAll(".node-card");
+    const contentElements = document.querySelectorAll(".node-card, .overview-frame");
     let maxX = minWidth;
     let maxY = minHeight;
 
-    cards.forEach(card => {
-        const r = getCanvasLocalRect(card);
+    contentElements.forEach(element => {
+        const r = getCanvasLocalRect(element);
         if (r.width === 0 || r.height === 0) return;
         maxX = Math.max(maxX, r.x + r.width);
         maxY = Math.max(maxY, r.y + r.height);
@@ -1281,6 +1795,13 @@ function updateCanvasBounds() {
     svgOverlay.setAttribute("width", width);
     svgOverlay.setAttribute("height", height);
     svgOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+}
+
+function getConnectionChildNodes(childrenContainer) {
+    return [
+        ...childrenContainer.querySelectorAll(":scope > .tree-node"),
+        ...childrenContainer.querySelectorAll(":scope > .overview-child-group > .tree-node")
+    ];
 }
 
 // Generate connection lines in the SVG overlay using orthogonal routing
@@ -1305,7 +1826,7 @@ function drawConnections() {
         const startY = pLocal.y + pLocal.height;
         const childAnchors = [];
 
-        childrenContainer.querySelectorAll(":scope > .tree-node").forEach(childNode => {
+        getConnectionChildNodes(childrenContainer).forEach(childNode => {
             const childId = parseInt(childNode.dataset.id);
             const childCardWrapper = childNode.querySelector(":scope > .node-card-wrapper");
             const childCard = childCardWrapper?.querySelector(`.node-card[data-id="${childId}"]`);
@@ -1370,7 +1891,7 @@ function showEmployeeDetails(id) {
     const manager = emp.managerId ? employees.find(e => e.id === emp.managerId) : null;
     const managerHTML = manager ? `
         <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${manager.id})">
-            <div class="avatar-sm" style="background-color: ${manager.avatarColor || getDeptColor(manager.department)}">${getInitials(manager.name)}</div>
+            ${getAvatarHTML(manager, "avatar-sm")}
             <div class="mini-profile-info">
                 <h5>${escapeHTML(manager.name)}</h5>
                 <p>${escapeHTML(manager.role)} • ${escapeHTML(manager.department)}</p>
@@ -1387,7 +1908,7 @@ function showEmployeeDetails(id) {
             <div class="reports-list">
                 ${reports.map(rep => `
                     <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${rep.id})">
-                        <div class="avatar-sm" style="background-color: ${rep.avatarColor || getDeptColor(rep.department)}">${getInitials(rep.name)}</div>
+                        ${getAvatarHTML(rep, "avatar-sm")}
                         <div class="mini-profile-info">
                             <h5>${escapeHTML(rep.name)}</h5>
                             <p>${escapeHTML(rep.role)} • ${escapeHTML(rep.department)}</p>
@@ -1398,8 +1919,8 @@ function showEmployeeDetails(id) {
         `;
     }
     
-    // Find sibling positions for the same person (Option 3 dual role display)
-    const siblingPositions = employees.filter(e => e.name.toLowerCase() === emp.name.toLowerCase() && e.id !== emp.id);
+    // Find sibling positions for the same person (dual-position profile)
+    const siblingPositions = employees.filter(e => samePerson(e, emp) && e.id !== emp.id);
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
         siblingsHTML = `
@@ -1410,7 +1931,7 @@ function showEmployeeDetails(id) {
                         const mgr = pos.managerId ? employees.find(e => e.id === pos.managerId) : null;
                         return `
                             <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${pos.id})">
-                                <div class="avatar-sm" style="background-color: ${pos.avatarColor || getDeptColor(pos.department)}">${getInitials(pos.name)}</div>
+                                ${getAvatarHTML(pos, "avatar-sm")}
                                 <div class="mini-profile-info">
                                     <h5>${escapeHTML(pos.role)}</h5>
                                     <p>${escapeHTML(pos.department)} • หัวหน้า: ${mgr ? escapeHTML(mgr.name) : 'ระดับสูงสุด (Top Level)'}</p>
@@ -1424,13 +1945,11 @@ function showEmployeeDetails(id) {
     }
     
     const body = document.getElementById("detail-drawer-body");
-    const initials = getInitials(emp.name);
     const deptClass = getDeptClass(emp.department);
-    const avatarColor = emp.avatarColor || getDeptColor(emp.department);
     
     body.innerHTML = `
         <div class="profile-card-large">
-            <div class="avatar-lg" style="background-color: ${avatarColor}">${initials}</div>
+            ${getAvatarHTML(emp, "avatar-lg")}
             <div class="profile-name">${escapeHTML(emp.name)}</div>
             <div class="profile-role">${escapeHTML(emp.role)}</div>
             <div class="card-department-badge ${deptClass}">${escapeHTML(emp.department)}</div>
@@ -1487,6 +2006,27 @@ function closeDetailDrawer() {
 
 /* Modals: CRUD Form management */
 
+function populatePersonDatalist() {
+    const personList = document.getElementById("person-list");
+    personList.innerHTML = getUniquePersonProfiles()
+        .map(profile => `<option value="${escapeHTML(getPersonOptionLabel(profile))}">`)
+        .join("");
+}
+
+function applySelectedPersonProfile() {
+    const linkInput = document.getElementById("form-person-link");
+    const profile = findPersonProfileFromInput(linkInput.value);
+    if (!profile) return;
+
+    document.getElementById("form-person-id").value = profile.personId;
+    document.getElementById("form-name").value = profile.name || "";
+    document.getElementById("form-email").value = profile.email || "";
+    document.getElementById("form-phone").value = profile.phone || "";
+    document.getElementById("form-bio").value = profile.bio || "";
+    document.getElementById("form-photo-data").value = profile.photoUrl || "";
+    setPhotoPreview(profile.photoUrl || "", profile.name || "");
+}
+
 function openEmployeeForm(editId = null) {
     const modal = document.getElementById("form-modal");
     const overlay = document.getElementById("form-modal-overlay");
@@ -1496,6 +2036,10 @@ function openEmployeeForm(editId = null) {
     // Clear and reset form
     form.reset();
     document.getElementById("form-employee-id").value = "";
+    document.getElementById("form-person-id").value = "";
+    document.getElementById("form-photo-data").value = "";
+    setPhotoPreview("");
+    populatePersonDatalist();
     
     // Populate Managers Datalist
     const managerInput = document.getElementById("form-manager");
@@ -1510,6 +2054,10 @@ function openEmployeeForm(editId = null) {
         
         const emp = employees.find(e => e.id === editId);
         if (emp) {
+            document.getElementById("form-person-id").value = emp.personId || "";
+            document.getElementById("form-person-link").value = emp.personId ? getPersonOptionLabel(getPersonProfile(emp.personId) || emp) : "";
+            document.getElementById("form-photo-data").value = emp.photoUrl || "";
+            setPhotoPreview(emp.photoUrl || "", emp.name);
             document.getElementById("form-name").value = emp.name;
             document.getElementById("form-role").value = emp.role;
             document.getElementById("form-department").value = emp.department;
@@ -1562,10 +2110,11 @@ function closeFormModal() {
     document.getElementById("form-modal").classList.remove("active");
 }
 
-function handleFormSubmit(e) {
+async function handleFormSubmit(e) {
     e.preventDefault();
     
     const idVal = document.getElementById("form-employee-id").value;
+    const selectedPersonProfile = findPersonProfileFromInput(document.getElementById("form-person-link").value);
     const name = document.getElementById("form-name").value.trim();
     const role = document.getElementById("form-role").value.trim();
     const department = document.getElementById("form-department").value.trim();
@@ -1573,6 +2122,7 @@ function handleFormSubmit(e) {
     const email = document.getElementById("form-email").value.trim();
     const phone = document.getElementById("form-phone").value.trim();
     const bio = document.getElementById("form-bio").value.trim();
+    const photoUrl = document.getElementById("form-photo-data").value;
     let managerId = null;
     
     if (managerInputVal) {
@@ -1613,39 +2163,36 @@ function handleFormSubmit(e) {
         const id = parseInt(idVal);
         const empIndex = employees.findIndex(e => e.id === id);
         if (empIndex > -1) {
-            const oldName = employees[empIndex].name;
+            const currentPersonId = employees[empIndex].personId || createPersonId(employees[empIndex].name, id);
+            const nextPersonId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || currentPersonId;
             
             // Update fields
-            employees[empIndex].name = name;
+            employees[empIndex].personId = nextPersonId;
             employees[empIndex].role = role;
             employees[empIndex].department = department;
             employees[empIndex].managerId = managerId;
+            employees[empIndex].name = name;
             employees[empIndex].email = email;
             employees[empIndex].phone = phone;
             employees[empIndex].bio = bio;
+            employees[empIndex].photoUrl = photoUrl;
             
             // Department color update check (if changed, keep or randomize)
             if (employees[empIndex].department.toLowerCase() !== department.toLowerCase()) {
                 employees[empIndex].avatarColor = getDeptColor(department);
             }
             
-            // Sync other entries with the same old name
-            employees.forEach(e => {
-                if (e.id !== id && e.name === oldName) {
-                    e.name = name; // Sync updated name
-                    e.email = email;
-                    e.phone = phone;
-                    e.bio = bio;
-                }
-            });
+            syncPersonProfile(nextPersonId, { name, email, phone, bio, photoUrl });
             
             showNotification(`Updated profile for ${name}`, "success");
         }
     } else {
         // Add Mode
         const newId = employees.length > 0 ? Math.max(...employees.map(e => e.id)) + 1 : 1;
+        const personId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || createPersonId(name, newId);
         const newEmployee = {
             id: newId,
+            personId,
             name,
             role,
             department,
@@ -1653,14 +2200,16 @@ function handleFormSubmit(e) {
             email,
             phone,
             bio,
+            photoUrl,
             avatarColor: getDeptColor(department)
         };
         
         employees.push(newEmployee);
+        syncPersonProfile(personId, { name, email, phone, bio, photoUrl });
         showNotification(`Added ${name} to organization`, "success");
     }
     
-    saveData();
+    await saveData();
     closeFormModal();
     renderAll();
     
@@ -1694,6 +2243,7 @@ function deleteEmployee(id) {
     collapsedNodes.delete(id);
     
     saveData();
+    savePreferences();
     renderAll();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
 }

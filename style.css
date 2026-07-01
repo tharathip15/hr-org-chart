@@ -528,6 +528,78 @@ body {
     display: none;
 }
 
+/* Grouped Overview Layout */
+.tree-container.overview-mode {
+    padding: 90px 100px 180px;
+}
+
+.overview-mode .node-children {
+    gap: 56px;
+}
+
+.overview-frame {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 40px;
+    padding: 44px 36px 58px;
+    border: 2px solid rgba(100, 116, 139, 0.68);
+    border-radius: 56px;
+    background: rgba(255, 255, 255, 0.34);
+    pointer-events: none;
+}
+
+.overview-frame .node-card-wrapper {
+    pointer-events: auto;
+}
+
+.overview-frame-label {
+    position: absolute;
+    left: 50%;
+    bottom: -8px;
+    transform: translateX(-50%);
+    background: var(--bg-primary);
+    padding: 0 14px;
+    font-family: Georgia, serif;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+    color: #334155;
+    white-space: nowrap;
+}
+
+.overview-front-frame {
+    border-color: rgba(88, 119, 92, 0.74);
+}
+
+.overview-operation-frame {
+    border-color: rgba(80, 111, 139, 0.74);
+}
+
+.overview-direct-frame,
+.overview-special-frame {
+    border-style: dotted;
+    border-radius: 20px;
+    padding: 34px 28px 46px;
+    gap: 34px;
+}
+
+.overview-direct-frame {
+    border-color: rgba(100, 116, 139, 0.58);
+}
+
+.overview-special-frame {
+    border-color: rgba(79, 70, 229, 0.42);
+}
+
+.overview-direct-frame .overview-frame-label,
+.overview-special-frame .overview-frame-label {
+    font-size: 18px;
+    bottom: -7px;
+    padding: 0 10px;
+}
+
 /* Employee Cards Styling */
 .node-card {
     background-color: var(--bg-secondary);
@@ -592,6 +664,7 @@ body {
     color: white;
     box-shadow: var(--shadow-sm);
     flex-shrink: 0;
+    overflow: hidden;
 }
 
 .card-title-group {
@@ -773,6 +846,79 @@ body {
     gap: 16px;
 }
 
+.profile-form-top {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-tertiary);
+}
+
+.photo-picker {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    padding: 0;
+}
+
+.form-photo-preview {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--accent-light), #ffffff);
+    border: 1px solid var(--border-color);
+    color: var(--accent-primary);
+    overflow: hidden;
+    flex-shrink: 0;
+    box-shadow: var(--shadow-sm);
+}
+
+.form-photo-preview i {
+    width: 22px;
+    height: 22px;
+}
+
+.form-photo-preview img,
+.avatar-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.photo-picker-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.photo-picker-copy strong {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.photo-picker-copy small {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.btn-sm {
+    height: 34px;
+    padding: 0 12px;
+    font-size: 12px;
+}
+
 .form-group {
     display: flex;
     flex-direction: column;
@@ -864,6 +1010,7 @@ body {
     font-size: 32px;
     color: white;
     box-shadow: var(--shadow-md);
+    overflow: hidden;
 }
 
 .profile-name {
@@ -972,6 +1119,8 @@ body {
     font-weight: 700;
     font-size: 12px;
     color: white;
+    overflow: hidden;
+    flex-shrink: 0;
 }
 
 .mini-profile-info h5 {

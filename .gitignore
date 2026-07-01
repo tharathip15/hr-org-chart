@@ -1,0 +1,4 @@
+.vercel
+.env*
+node_modules/
+hr_org_chart.sqlite3
