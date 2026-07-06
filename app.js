@@ -1219,14 +1219,23 @@ function setupEventListeners() {
     
     // Export Backup data
     document.getElementById("btn-export-data").addEventListener("click", () => {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(employees, null, 2));
+        const backupData = {
+            version: "1.0",
+            employees: employees,
+            positions: positions,
+            annotations: annotations,
+            preferences: {
+                collapsedNodeIds: [...collapsedNodes]
+            }
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
-        downloadAnchor.setAttribute("download", "hr_org_chart_backup.json");
+        downloadAnchor.setAttribute("download", "hr_org_chart_unified_backup.json");
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
         downloadAnchor.remove();
-        showNotification("Backup file downloaded successfully", "success");
+        showNotification("Unified backup file downloaded successfully", "success");
     });
     
     // Import Backup data trigger
@@ -1240,27 +1249,51 @@ function setupEventListeners() {
         if (!file) return;
         
         const reader = new FileReader();
-        reader.onload = (event) => {
+        reader.onload = async (event) => {
             try {
                 const parsed = JSON.parse(event.target.result);
-                if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name && parsed[0].department) {
+                
+                // Check if it's the new unified backup format
+                if (parsed && parsed.version && Array.isArray(parsed.employees) && Array.isArray(parsed.positions)) {
+                    if (confirm(`Are you sure you want to import this unified backup? It will restore all ${parsed.employees.length} employees, ${parsed.positions.length} positions, annotations, and layouts.`)) {
+                        employees = parsed.employees;
+                        positions = parsed.positions;
+                        annotations = parsed.annotations || [];
+                        collapsedNodes = new Set(sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || []));
+                        selectedDept = "All";
+                        
+                        await saveData();
+                        await savePositions();
+                        await saveAnnotations();
+                        await savePreferences();
+                        
+                        renderAll();
+                        fitToScreen();
+                        showNotification("Unified backup imported successfully!", "success");
+                    }
+                } 
+                // Fallback: Check if it's the old format (just an array of employees)
+                else if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name && parsed[0].department) {
                     if (confirm(`Are you sure you want to import this backup? It will overwrite your current chart with ${parsed.length} employees.`)) {
                         employees = parsed;
                         normalizeEmployeeProfiles();
                         positions = derivePositionsFromEmployees();
                         collapsedNodes.clear();
                         selectedDept = "All";
-                        saveData();
-                        savePositions();
-                        savePreferences();
+                        
+                        await saveData();
+                        await savePositions();
+                        await savePreferences();
+                        
                         renderAll();
                         fitToScreen();
-                        showNotification("Backup imported successfully!", "success");
+                        showNotification("Legacy backup imported successfully!", "success");
                     }
                 } else {
-                    showNotification("Invalid backup file structure", "error");
+                    showNotification("Invalid backup file format", "error");
                 }
             } catch (err) {
+                console.error(err);
                 showNotification("Failed to parse JSON backup file", "error");
             }
             // Clear input so same file can be uploaded again
