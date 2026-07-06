@@ -798,8 +798,8 @@ async function loadPositions() {
                         });
                         assignedEmployeeIds.add(employee.id);
                         positionsChanged = true;
-                        console.log(`Auto-created new position for employee ${employee.name}`);
                     }
+                }
             });
 
             // 2. Self-heal and correct manager position IDs (e.g. dual position managers)
