@@ -551,6 +551,45 @@ function hideLoader() {
     }
 }
 
+let activeSyncOperations = 0;
+
+function setSyncStatus(status) {
+    const container = document.getElementById("sync-status");
+    if (!container) return;
+    
+    let icon = "cloud";
+    let text = "Saved to Cloud";
+    let iconClass = "success";
+    
+    if (status === "saving") {
+        activeSyncOperations++;
+        icon = "refresh-cw";
+        text = "Saving...";
+        iconClass = "loading";
+    } else if (status === "success") {
+        activeSyncOperations = Math.max(0, activeSyncOperations - 1);
+        if (activeSyncOperations > 0) {
+            return;
+        }
+        icon = "cloud";
+        text = "Saved to Cloud";
+        iconClass = "success";
+    } else if (status === "error") {
+        activeSyncOperations = Math.max(0, activeSyncOperations - 1);
+        icon = "cloud-off";
+        text = "Sync Error";
+        iconClass = "error";
+    }
+    
+    container.innerHTML = `
+        <i data-lucide="${icon}" class="sync-icon ${iconClass}"></i>
+        <span class="sync-text">${text}</span>
+    `;
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+}
+
 // Load data initially
 async function init() {
     setLoaderProgress(15, "กำลังจัดเตรียมสภาพแวดล้อม...");
@@ -626,21 +665,23 @@ async function loadData() {
 
 // Save to server database, with a local browser backup as a fallback copy.
 async function saveData() {
+    setSyncStatus("saving");
     saveLocalBackup();
 
     try {
         const response = await fetch(EMPLOYEES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-
             body: JSON.stringify(employees)
         });
 
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        setSyncStatus("success");
     } catch (error) {
         console.error("Failed to save data to database.", error);
+        setSyncStatus("error");
         showNotification("Database save failed. A browser backup was kept.", "error");
     }
 }
@@ -866,6 +907,7 @@ async function loadPositions() {
 }
 
 async function savePositions() {
+    setSyncStatus("saving");
     positions = normalizePositionsList(positions);
     saveLocalPositionsBackup();
 
@@ -888,8 +930,10 @@ async function savePositions() {
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        setSyncStatus("success");
     } catch (error) {
         console.error("Failed to save positions to database.", error);
+        setSyncStatus("error");
         showNotification("Position save failed. A browser backup was kept.", "error");
     }
 }
@@ -941,6 +985,7 @@ async function loadPreferences() {
 }
 
 async function savePreferences() {
+    setSyncStatus("saving");
     const preferences = getPreferencesPayload();
     try {
         localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
@@ -952,15 +997,16 @@ async function savePreferences() {
         const response = await fetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-
             body: JSON.stringify(preferences)
         });
 
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        setSyncStatus("success");
     } catch (error) {
         console.error("Failed to save shared view preferences.", error);
+        setSyncStatus("error");
     }
 }
 
@@ -3377,19 +3423,25 @@ async function loadAnnotations() {
 }
 
 async function saveAnnotations() {
+    setSyncStatus("saving");
     try {
         localStorage.setItem("hr_org_annotations", JSON.stringify(annotations));
     } catch (error) {
         console.warn("Failed to write annotations to localStorage:", error);
     }
     try {
-        await fetch(ANNOTATIONS_API_URL, {
+        const response = await fetch(ANNOTATIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(annotations)
         });
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+        }
+        setSyncStatus("success");
     } catch (err) {
         console.error("Failed to save annotations to database", err);
+        setSyncStatus("error");
     }
 }
 

@@ -60,7 +60,7 @@
                 <div class="stats-grid">
                     <div class="stat-card">
                         <span class="stat-value" id="total-headcount">0</span>
-                        <span class="stat-label">Total Headcount</span>
+                        <span class="stat-label">Positions</span>
                     </div>
                     <div class="stat-card">
                         <span class="stat-value" id="total-departments">0</span>
@@ -68,6 +68,7 @@
                     </div>
                 </div>
             </div>
+
 
             <div class="sidebar-section">
                 <h3>Departments</h3>
@@ -97,7 +98,16 @@
                     <div class="search-results-dropdown" id="search-results"></div>
                 </div>
 
+                <!-- Auto-save Sync Status Indicator -->
+                <div class="sync-status" id="sync-status">
+                    <i data-lucide="cloud" class="sync-icon success"></i>
+                    <span class="sync-text">Saved to Cloud</span>
+                </div>
+
                 <div class="actions-group">
+                    <button class="btn btn-secondary" id="btn-manage-positions" style="margin-right: 8px;">
+                        <i data-lucide="briefcase-business"></i> Positions
+                    </button>
                     <button class="btn btn-secondary" id="btn-sync-microsoft" style="margin-right: 8px;">
                         <i data-lucide="refresh-cw"></i> Sync Microsoft 365
                     </button>
@@ -155,6 +165,72 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Position Management Modal -->
+    <div class="modal-overlay" id="position-modal-overlay"></div>
+    <div class="modal position-modal" id="position-modal">
+        <div class="modal-header">
+            <h3>Manage Positions</h3>
+            <button class="close-btn" id="close-position-modal"><i data-lucide="x"></i></button>
+        </div>
+        <div class="position-modal-body">
+            <form id="position-form" class="position-form">
+                <input type="hidden" id="form-position-id">
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-position-title">Position Title <span class="required">*</span></label>
+                        <input type="text" id="form-position-title" required placeholder="e.g. Senior Officer">
+                    </div>
+                    <div class="form-group">
+                        <label for="form-position-department">Department <span class="required">*</span></label>
+                        <input type="text" id="form-position-department" list="position-department-list" required placeholder="e.g. Corporate">
+                        <datalist id="position-department-list"></datalist>
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-position-manager">Reports To Position</label>
+                        <input type="text" id="form-position-manager" list="position-manager-list" placeholder="None (Top Level)">
+                        <datalist id="position-manager-list"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="form-position-employee">Assigned Employee</label>
+                        <input type="text" id="form-position-employee" list="position-employee-list" placeholder="Leave empty for vacant">
+                        <datalist id="position-employee-list"></datalist>
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-position-layout">Subordinate Layout Style (รูปแบบการจัดวางลูกน้อง)</label>
+                        <select id="form-position-layout" style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+                            <option value="horizontal">Horizontal (แนวนอน)</option>
+                            <option value="vertical">Staircase / Vertical (ขั้นบันได / แนวตั้ง)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-position-notes">Notes</label>
+                        <textarea id="form-position-notes" rows="2" placeholder="Optional notes for this planned seat..."></textarea>
+                    </div>
+                </div>
+                <div class="position-form-actions">
+                    <button type="button" class="btn btn-secondary" id="btn-reset-position-form">New Position</button>
+                    <button type="button" class="btn btn-danger" id="btn-delete-position">Delete</button>
+                    <button type="submit" class="btn btn-primary" id="btn-submit-position">Save Position</button>
+                </div>
+            </form>
+            <div class="positions-list-panel">
+                <div class="positions-list-header">
+                    <h4>Position Plan</h4>
+                    <span id="positions-summary">0 positions</span>
+                </div>
+                <div class="positions-list" id="positions-list"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Employee Detail Drawer (Slide over from right) -->
@@ -262,6 +338,6 @@
     <!-- Notification system -->
     <div class="notification-container" id="notification-container"></div>
 
-    <script src="app.js?v=3.4"></script>
+    <script src="app.js?v=3.5"></script>
 </body>
 </html>
