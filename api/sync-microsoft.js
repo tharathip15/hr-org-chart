@@ -184,7 +184,26 @@ export default async function handler(request, response) {
         .insert(dbRows);
 
       if (insertError) {
-        throw new Error(`Supabase insert failed: ${insertError.message}`);
+        // Fallback: if columns x or y are missing in database, retry insert without coordinates
+        const isMissingColumns = insertError.message && (
+          insertError.message.includes("column") || 
+          insertError.message.includes("schema cache")
+        );
+        if (isMissingColumns) {
+          console.warn("x/y columns missing in Supabase, retrying insert without coordinates...");
+          const fallbackRows = dbRows.map(row => {
+            const copy = { ...row };
+            delete copy.x;
+            delete copy.y;
+            return copy;
+          });
+          const { error: retryError } = await supabase
+            .from("employees")
+            .insert(fallbackRows);
+          if (retryError) throw new Error(`Supabase insert failed: ${retryError.message}`);
+        } else {
+          throw new Error(`Supabase insert failed: ${insertError.message}`);
+        }
       }
     }
 
