@@ -563,6 +563,7 @@ async function init() {
     
     setLoaderProgress(70, "กำลังดาวน์โหลดค่ากำหนดการแสดงผล...");
     await loadPreferences();
+    await loadAnnotations();
     
     await new Promise(resolve => setTimeout(resolve, 250));
     
@@ -1175,7 +1176,7 @@ function setupEventListeners() {
         }
     });
     
-
+    setupAnnotationListeners();
 }
 
 // Update the canvas scale and pan position
@@ -2346,6 +2347,7 @@ function handleCardDragEnd(e) {
 }
 
 // Run application on load
+// Run application on load
 window.addEventListener("DOMContentLoaded", () => {
     init();
     
@@ -2354,3 +2356,354 @@ window.addEventListener("DOMContentLoaded", () => {
     });
     treeResizeObserver.observe(treeContainer);
 });
+
+/* Canvas Annotations (Frames & Free Texts) Logic */
+
+let annotations = [];
+let annotationHistory = [];
+let annotationRedoHistory = [];
+
+const ANNOTATIONS_API_URL = "/api/annotations";
+
+async function loadAnnotations() {
+    try {
+        const response = await fetch(ANNOTATIONS_API_URL);
+        if (response.ok) {
+            annotations = await response.json();
+            if (!Array.isArray(annotations)) annotations = [];
+        }
+    } catch (err) {
+        console.warn("Failed to load annotations from database, falling back to local storage", err);
+        const local = localStorage.getItem("hr_org_annotations");
+        if (local) {
+            try {
+                annotations = JSON.parse(local);
+            } catch (e) {
+                annotations = [];
+            }
+        }
+    }
+    renderAnnotations();
+}
+
+async function saveAnnotations() {
+    localStorage.setItem("hr_org_annotations", JSON.stringify(annotations));
+    try {
+        await fetch(ANNOTATIONS_API_URL, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(annotations)
+        });
+    } catch (err) {
+        console.error("Failed to save annotations to database", err);
+    }
+}
+
+function pushAnnotationHistory() {
+    annotationHistory.push(JSON.stringify(annotations));
+    annotationRedoHistory = []; // clear redo on new action
+    updateAnnotationToolbarButtons();
+}
+
+function undoAnnotation() {
+    if (annotationHistory.length === 0) return;
+    const currentState = JSON.stringify(annotations);
+    annotationRedoHistory.push(currentState);
+    
+    const prev = annotationHistory.pop();
+    annotations = JSON.parse(prev);
+    renderAnnotations();
+    saveAnnotations();
+    updateAnnotationToolbarButtons();
+}
+
+function redoAnnotation() {
+    if (annotationRedoHistory.length === 0) return;
+    const currentState = JSON.stringify(annotations);
+    annotationHistory.push(currentState);
+    
+    const next = annotationRedoHistory.pop();
+    annotations = JSON.parse(next);
+    renderAnnotations();
+    saveAnnotations();
+    updateAnnotationToolbarButtons();
+}
+
+function updateAnnotationToolbarButtons() {
+    const btnUndo = document.getElementById("tool-undo");
+    const btnRedo = document.getElementById("tool-redo");
+    if (btnUndo) btnUndo.disabled = annotationHistory.length === 0;
+    if (btnRedo) btnRedo.disabled = annotationRedoHistory.length === 0;
+}
+
+// Global active drag vars for annotations
+let activeDragAnnotation = null;
+let annotDragOffsetX = 0;
+let annotDragOffsetY = 0;
+let activeResizeAnnotation = null;
+let annotResizeStartW = 0;
+let annotResizeStartH = 0;
+let annotResizeStartX = 0;
+let annotResizeStartY = 0;
+
+function renderAnnotations() {
+    const container = document.getElementById("annotations-container");
+    if (!container) return;
+    
+    container.innerHTML = "";
+    
+    annotations.forEach(annot => {
+        if (annot.type === "frame") {
+            const el = document.createElement("div");
+            el.className = "annotation-card";
+            el.dataset.id = annot.id;
+            el.style.left = `${annot.x}px`;
+            el.style.top = `${annot.y}px`;
+            el.style.width = `${annot.width || 240}px`;
+            el.style.height = `${annot.height || 160}px`;
+            
+            el.innerHTML = `
+                <div class="annotation-header">
+                    <div class="annotation-title" contenteditable="true" spellcheck="false">${escapeHTML(annot.text || "กรอบข้อความ")}</div>
+                    <button class="annotation-delete-btn" title="ลบ">&times;</button>
+                </div>
+                <div class="annotation-content"></div>
+                <div class="annotation-resize-handle"></div>
+            `;
+            
+            // Edit title
+            const titleEl = el.querySelector(".annotation-title");
+            titleEl.addEventListener("blur", () => {
+                const text = titleEl.innerText.trim();
+                if (text !== annot.text) {
+                    pushAnnotationHistory();
+                    annot.text = text;
+                    saveAnnotations();
+                }
+            });
+            titleEl.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    titleEl.blur();
+                }
+            });
+            
+            // Delete btn
+            el.querySelector(".annotation-delete-btn").addEventListener("click", (e) => {
+                e.stopPropagation();
+                deleteAnnotation(annot.id);
+            });
+            
+            // Drag listeners
+            el.addEventListener("pointerdown", (e) => {
+                if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']")) return;
+                e.stopPropagation();
+                startDragAnnotation(e, annot, el);
+            });
+            
+            // Resize listener
+            el.querySelector(".annotation-resize-handle").addEventListener("pointerdown", (e) => {
+                e.stopPropagation();
+                startResizeAnnotation(e, annot, el);
+            });
+            
+            container.appendChild(el);
+        } else if (annot.type === "text") {
+            const wrapper = document.createElement("div");
+            wrapper.className = "annotation-text-wrapper";
+            wrapper.dataset.id = annot.id;
+            wrapper.style.left = `${annot.x}px`;
+            wrapper.style.top = `${annot.y}px`;
+            
+            const txt = document.createElement("div");
+            txt.className = "annotation-text";
+            txt.contentEditable = "true";
+            txt.spellcheck = false;
+            txt.innerText = annot.text || "ดับเบิ้ลคลิกแก้ไขข้อความ";
+            
+            const del = document.createElement("button");
+            del.className = "annotation-text-delete-btn";
+            del.innerHTML = "&times;";
+            del.title = "ลบ";
+            
+            wrapper.appendChild(txt);
+            wrapper.appendChild(del);
+            
+            // Edit text
+            txt.addEventListener("blur", () => {
+                const text = txt.innerText.trim();
+                if (text !== annot.text) {
+                    pushAnnotationHistory();
+                    annot.text = text;
+                    saveAnnotations();
+                }
+            });
+            txt.addEventListener("keydown", (e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    txt.blur();
+                }
+            });
+            
+            // Delete btn
+            del.addEventListener("click", (e) => {
+                e.stopPropagation();
+                deleteAnnotation(annot.id);
+            });
+            
+            // Drag listeners
+            wrapper.addEventListener("pointerdown", (e) => {
+                if (e.target === txt && document.activeElement === txt) return; // allow typing selection
+                e.stopPropagation();
+                startDragAnnotation(e, annot, wrapper);
+            });
+            
+            container.appendChild(wrapper);
+        }
+    });
+}
+
+function startDragAnnotation(e, annot, el) {
+    if (e.button !== 0) return;
+    el.setPointerCapture(e.pointerId);
+    activeDragAnnotation = { annot, el };
+    
+    annotDragOffsetX = (e.clientX / currentScale) - annot.x;
+    annotDragOffsetY = (e.clientY / currentScale) - annot.y;
+    
+    window.addEventListener("pointermove", handleDragAnnotationMove);
+    window.addEventListener("pointerup", handleDragAnnotationEnd);
+}
+
+function handleDragAnnotationMove(e) {
+    if (!activeDragAnnotation) return;
+    const { annot, el } = activeDragAnnotation;
+    
+    const newX = Math.round(e.clientX / currentScale - annotDragOffsetX);
+    const newY = Math.round(e.clientY / currentScale - annotDragOffsetY);
+    
+    annot.x = newX;
+    annot.y = newY;
+    el.style.left = `${newX}px`;
+    el.style.top = `${newY}px`;
+}
+
+function handleDragAnnotationEnd(e) {
+    if (!activeDragAnnotation) return;
+    const { el } = activeDragAnnotation;
+    try {
+        el.releasePointerCapture(e.pointerId);
+    } catch(err) {}
+    
+    pushAnnotationHistory();
+    saveAnnotations();
+    activeDragAnnotation = null;
+    window.removeEventListener("pointermove", handleDragAnnotationMove);
+    window.removeEventListener("pointerup", handleDragAnnotationEnd);
+}
+
+function startResizeAnnotation(e, annot, el) {
+    if (e.button !== 0) return;
+    el.setPointerCapture(e.pointerId);
+    activeResizeAnnotation = { annot, el };
+    
+    annotResizeStartW = annot.width || 240;
+    annotResizeStartH = annot.height || 160;
+    annotResizeStartX = e.clientX;
+    annotResizeStartY = e.clientY;
+    
+    window.addEventListener("pointermove", handleResizeAnnotationMove);
+    window.addEventListener("pointerup", handleResizeAnnotationEnd);
+}
+
+function handleResizeAnnotationMove(e) {
+    if (!activeResizeAnnotation) return;
+    const { annot, el } = activeResizeAnnotation;
+    
+    const deltaX = (e.clientX - annotResizeStartX) / currentScale;
+    const deltaY = (e.clientY - annotResizeStartY) / currentScale;
+    
+    const newW = Math.max(120, Math.round(annotResizeStartW + deltaX));
+    const newH = Math.max(80, Math.round(annotResizeStartH + deltaY));
+    
+    annot.width = newW;
+    annot.height = newH;
+    el.style.width = `${newW}px`;
+    el.style.height = `${newH}px`;
+}
+
+function handleResizeAnnotationEnd(e) {
+    if (!activeResizeAnnotation) return;
+    const { el } = activeResizeAnnotation;
+    try {
+        el.releasePointerCapture(e.pointerId);
+    } catch(err) {}
+    
+    pushAnnotationHistory();
+    saveAnnotations();
+    activeResizeAnnotation = null;
+    window.removeEventListener("pointermove", handleResizeAnnotationMove);
+    window.removeEventListener("pointerup", handleResizeAnnotationEnd);
+}
+
+function deleteAnnotation(id) {
+    pushAnnotationHistory();
+    annotations = annotations.filter(a => a.id !== id);
+    renderAnnotations();
+    saveAnnotations();
+}
+
+function setupAnnotationListeners() {
+    // Toolbar buttons
+    document.getElementById("tool-add-frame").addEventListener("click", () => {
+        pushAnnotationHistory();
+        const id = `annot-${Date.now()}`;
+        // Position it centered in current viewport
+        const rect = viewport.getBoundingClientRect();
+        const centerX = (rect.width / 2 - panX) / currentScale - 120;
+        const centerY = (rect.height / 2 - panY) / currentScale - 80;
+        
+        annotations.push({
+            id,
+            type: "frame",
+            x: Math.round(centerX),
+            y: Math.round(centerY),
+            width: 240,
+            height: 160,
+            text: "กรอบระบุกลุ่มงาน"
+        });
+        renderAnnotations();
+        saveAnnotations();
+    });
+    
+    document.getElementById("tool-add-text").addEventListener("click", () => {
+        pushAnnotationHistory();
+        const id = `annot-${Date.now()}`;
+        const rect = viewport.getBoundingClientRect();
+        const centerX = (rect.width / 2 - panX) / currentScale - 80;
+        const centerY = (rect.height / 2 - panY) / currentScale - 20;
+        
+        annotations.push({
+            id,
+            type: "text",
+            x: Math.round(centerX),
+            y: Math.round(centerY),
+            text: "พิมพ์คำอธิบาย..."
+        });
+        renderAnnotations();
+        saveAnnotations();
+    });
+    
+    document.getElementById("tool-undo").addEventListener("click", undoAnnotation);
+    document.getElementById("tool-redo").addEventListener("click", redoAnnotation);
+    
+    document.getElementById("tool-clear").addEventListener("click", () => {
+        if (annotations.length === 0) return;
+        if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบกรอบและข้อความวาดเขียนทั้งหมดบนแผนผังนี้?")) {
+            pushAnnotationHistory();
+            annotations = [];
+            renderAnnotations();
+            saveAnnotations();
+        }
+    });
+}

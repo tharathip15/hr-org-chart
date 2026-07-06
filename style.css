@@ -1463,4 +1463,197 @@ body {
     50% { opacity: 1; }
 }
 
+/* Annotation Drawing Toolbar */
+.annotation-toolbar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 6px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    box-shadow: var(--shadow-md);
+    z-index: 100;
+    backdrop-filter: blur(8px);
+}
+
+.annotation-toolbar .tool-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.annotation-toolbar .tool-btn:hover {
+    background-color: var(--accent-light);
+    color: var(--accent-primary);
+}
+
+.annotation-toolbar .tool-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.annotation-toolbar .tool-separator {
+    width: 1px;
+    height: 20px;
+    background-color: var(--border-color);
+    margin: 0 4px;
+}
+
+.annotation-toolbar .tool-danger:hover {
+    background-color: #fee2e2;
+    color: #ef4444;
+}
+
+/* Annotation Canvas Elements */
+.annotation-card {
+    position: absolute;
+    border: 2px dashed var(--accent-primary);
+    border-radius: var(--radius-lg);
+    padding: 12px;
+    background-color: rgba(79, 70, 229, 0.04);
+    pointer-events: auto;
+    cursor: move;
+    z-index: 5;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 120px;
+    min-height: 80px;
+    transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.annotation-card.selected {
+    border-style: solid;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25);
+}
+
+.annotation-card .annotation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    user-select: none;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.annotation-card:hover .annotation-header,
+.annotation-card.selected .annotation-header {
+    opacity: 1;
+}
+
+.annotation-card .annotation-title {
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--text-primary);
+    cursor: text;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    outline: none;
+    border: 1px solid transparent;
+    font-family: 'Outfit', sans-serif;
+}
+
+.annotation-card .annotation-title:focus {
+    background-color: var(--bg-primary);
+    border-color: var(--border-color);
+}
+
+.annotation-card .annotation-delete-btn {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.annotation-card .annotation-content {
+    flex-grow: 1;
+    min-height: 20px;
+}
+
+.annotation-card .annotation-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, var(--text-tertiary) 50%);
+    border-bottom-right-radius: var(--radius-lg);
+}
+
+/* Text Annotation */
+.annotation-text-wrapper {
+    position: absolute;
+    pointer-events: auto;
+    z-index: 5;
+}
+
+.annotation-text {
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-primary);
+    cursor: move;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    border: 1px dashed transparent;
+    outline: none;
+    font-family: 'Outfit', sans-serif;
+    transition: border-color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.annotation-text-wrapper:hover .annotation-text {
+    border-color: var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
+.annotation-text:focus {
+    border: 1px solid var(--accent-primary) !important;
+    background-color: var(--bg-primary) !important;
+    box-shadow: var(--shadow-sm);
+}
+
+.annotation-text-delete-btn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    background-color: #ef4444;
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow-sm);
+    z-index: 10;
+}
+
+.annotation-text-wrapper:hover .annotation-text-delete-btn {
+    display: flex;
+}
+
+
 
