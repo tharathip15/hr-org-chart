@@ -800,6 +800,20 @@ async function loadPositions() {
                         positionsChanged = true;
                         console.log(`Auto-created new position for employee ${employee.name}`);
                     }
+            });
+
+            // 2. Self-heal and correct manager position IDs (e.g. dual position managers)
+            positions.forEach(position => {
+                if (position.employeeId) {
+                    const employee = employees.find(e => e.id === position.employeeId);
+                    if (employee && employee.managerId) {
+                        const correctManagerPosId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
+                        if (correctManagerPosId !== position.managerId) {
+                            console.log(`Self-healed position ${position.title} manager from ${position.managerId} to ${correctManagerPosId}`);
+                            position.managerId = correctManagerPosId;
+                            positionsChanged = true;
+                        }
+                    }
                 }
             });
 
