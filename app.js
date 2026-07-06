@@ -2508,7 +2508,7 @@ function renderAnnotations() {
             
             // Drag listeners
             el.addEventListener("pointerdown", (e) => {
-                if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']")) return;
+                if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']") || e.target.closest(".annotation-delete-btn")) return;
                 e.stopPropagation();
                 startDragAnnotation(e, annot, el);
             });
@@ -2565,6 +2565,7 @@ function renderAnnotations() {
             
             // Drag listeners
             wrapper.addEventListener("pointerdown", (e) => {
+                if (e.target.closest(".annotation-text-delete-btn")) return;
                 if (e.target === txt && document.activeElement === txt) return; // allow typing selection
                 e.stopPropagation();
                 startDragAnnotation(e, annot, wrapper);
