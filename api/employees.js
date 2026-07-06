@@ -97,7 +97,9 @@ function mapDbToEmployee(row) {
     phone: row.phone,
     bio: row.bio,
     photoUrl: row.photo_url,
-    avatarColor: row.avatar_color
+    avatarColor: row.avatar_color,
+    x: row.x,
+    y: row.y
   };
 }
 
@@ -113,7 +115,9 @@ function mapEmployeeToDb(emp) {
     phone: emp.phone || null,
     bio: emp.bio || null,
     photo_url: emp.photoUrl || null,
-    avatar_color: emp.avatarColor || null
+    avatar_color: emp.avatarColor || null,
+    x: emp.x !== undefined && emp.x !== null ? parseInt(emp.x, 10) : null,
+    y: emp.y !== undefined && emp.y !== null ? parseInt(emp.y, 10) : null
   };
 }
 

@@ -614,6 +614,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    pointer-events: auto;
 }
 
 .node-card:hover {
@@ -1226,4 +1227,240 @@ body {
     display: inline-block;
     animation: spin 1.5s linear infinite;
 }
+
+/* ==========================================================================
+   Beautiful App Loader Overlay
+   ========================================================================== */
+
+/* App Loader Main Container */
+.app-loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.6s;
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Backdrop with glassmorphic blur and light tint */
+.loader-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(248, 250, 252, 0.85); /* Matches var(--bg-primary) with alpha */
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: -1;
+}
+
+/* Beautiful loading card container */
+.loader-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    padding: 40px 48px;
+    border-radius: 24px;
+    box-shadow: 0 20px 50px -12px rgba(15, 23, 42, 0.08), var(--shadow-glow);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    max-width: 400px;
+    width: 90%;
+    text-align: center;
+    transform: scale(1);
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Shrink when fading out for a premium transition */
+.app-loader.fade-out {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.app-loader.fade-out .loader-card {
+    transform: scale(0.94);
+}
+
+/* Visual elements wrapping */
+.loader-visual {
+    position: relative;
+    width: 110px;
+    height: 110px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Double loading rings */
+.loader-spinner-outer {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border: 4px solid var(--bg-tertiary);
+    border-top: 4px solid var(--accent-primary);
+    border-radius: 50%;
+    animation: loader-spin-clockwise 1.6s cubic-bezier(0.5, 0.1, 0.4, 0.9) infinite;
+}
+
+.loader-spinner-inner {
+    position: absolute;
+    width: 78%;
+    height: 78%;
+    border: 3px solid transparent;
+    border-bottom: 3px solid var(--border-focus);
+    border-left: 3px solid var(--border-focus);
+    border-radius: 50%;
+    opacity: 0.7;
+    animation: loader-spin-counter 1.3s cubic-bezier(0.5, 0.1, 0.4, 0.9) infinite;
+}
+
+/* Central logo sphere */
+.loader-logo-container {
+    position: absolute;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-secondary);
+    border-radius: 50%;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border-color);
+}
+
+.loader-logo-svg {
+    width: 26px;
+    height: 26px;
+    color: var(--accent-primary);
+}
+
+/* Org-chart node animation */
+.logo-node-top {
+    transform-origin: 32px 18px;
+    animation: pulse-node-glow 2s ease-in-out infinite;
+}
+.logo-node-left {
+    transform-origin: 18px 44px;
+    animation: pulse-node-glow 2s ease-in-out infinite;
+    animation-delay: 0.3s;
+}
+.logo-node-right {
+    transform-origin: 46px 44px;
+    animation: pulse-node-glow 2s ease-in-out infinite;
+    animation-delay: 0.6s;
+}
+
+.logo-path-left, .logo-path-right {
+    stroke-dasharray: 40;
+    stroke-dashoffset: 40;
+    animation: draw-line-logo 2.5s ease-in-out infinite alternate;
+}
+.logo-path-right {
+    animation-delay: 0.4s;
+}
+
+/* App branding and text styles */
+.loader-text-group {
+    margin-bottom: 24px;
+}
+
+.loader-app-name {
+    font-family: 'Outfit', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--text-primary), var(--accent-primary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.loader-status-container {
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.loader-status {
+    font-size: 14px;
+    color: var(--text-secondary);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    animation: pulse-text-opacity 2s ease-in-out infinite;
+}
+
+/* Linear progress bar styles */
+.loader-progress-container {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    background: var(--bg-tertiary);
+    padding: 8px 16px;
+    border-radius: var(--radius-full);
+    border: 1px solid var(--border-color);
+}
+
+.loader-progress-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(15, 23, 42, 0.06);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+}
+
+.loader-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-primary), #818cf8);
+    border-radius: var(--radius-full);
+    width: 0%;
+    transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.loader-percent {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 36px;
+    text-align: right;
+    font-family: 'Outfit', sans-serif;
+}
+
+/* Core loader animations */
+@keyframes loader-spin-clockwise {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes loader-spin-counter {
+    0% { transform: rotate(360deg); }
+    100% { transform: rotate(0deg); }
+}
+
+@keyframes pulse-node-glow {
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0px rgba(79, 70, 229, 0)); }
+    50% { transform: scale(1.2); filter: drop-shadow(0 0 6px rgba(79, 70, 229, 0.6)); }
+}
+
+@keyframes draw-line-logo {
+    0% { stroke-dashoffset: 40; }
+    50%, 100% { stroke-dashoffset: 0; }
+}
+
+@keyframes pulse-text-opacity {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
 
