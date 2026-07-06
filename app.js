@@ -655,19 +655,18 @@ function compressBase64Image(base64Str) {
 }
 
 async function compressAllEmployeePhotos() {
-    let changed = false;
-    for (let i = 0; i < employees.length; i++) {
-        const emp = employees[i];
+    const promises = employees.map(async (emp) => {
         if (emp.photoUrl && emp.photoUrl.startsWith("data:image/") && emp.photoUrl.length > 50000) {
-            console.log(`Self-healing and compressing photo for ${emp.name} (length: ${emp.photoUrl.length})...`);
             const compressed = await compressBase64Image(emp.photoUrl);
             if (compressed !== emp.photoUrl) {
                 emp.photoUrl = compressed;
-                changed = true;
+                return true;
             }
         }
-    }
-    return changed;
+        return false;
+    });
+    const results = await Promise.all(promises);
+    return results.some(r => r === true);
 }
 
 // Load data from the server database. LocalStorage is only a fallback for file:// previews.
