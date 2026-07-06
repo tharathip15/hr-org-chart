@@ -1047,6 +1047,21 @@ function setupEventListeners() {
         });
     }
 
+    // Auto-Arrange Layout Button
+    const btnAutoLayout = document.getElementById("btn-auto-layout");
+    if (btnAutoLayout) {
+        btnAutoLayout.addEventListener("click", () => {
+            if (confirm("ต้องการจัดระเบียบแผนผังและพิกัดการ์ดทั้งหมดโดยอัตโนมัติหรือไม่? (พิกัดการจัดวางที่คุณลากเองจะถูกรีเซ็ตให้เรียงกันอย่างเป็นระเบียบ)")) {
+                employees.forEach(emp => {
+                    emp.x = null;
+                    emp.y = null;
+                });
+                renderTree();
+                showNotification("จัดตำแหน่งการ์ดทั้งหมดและดึงกลับมาใกล้กันเรียบร้อยแล้ว", "success");
+            }
+        });
+    }
+
     // Add Employee Button
     document.getElementById("btn-add-employee").addEventListener("click", () => {
         openEmployeeForm();
