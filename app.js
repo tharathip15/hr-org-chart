@@ -1576,7 +1576,7 @@ function renderTree() {
     }
 
     // 3. Ensure all employees have coordinates. Run auto-layout if any are missing.
-    const needsLayout = employees.some(e => e.x === null || e.y === null);
+    const needsLayout = employees.some(e => e.x == null || e.y == null);
     if (needsLayout) {
         calculateInitialCoordinates();
         saveData(); // Save coordinates asynchronously
