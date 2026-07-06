@@ -1928,30 +1928,6 @@ function updateCanvasBounds() {
     svgOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
 }
 
-function getConnectionChildNodes(childrenContainer) {
-    return [
-        ...childrenContainer.querySelectorAll(":scope > .tree-node"),
-        ...childrenContainer.querySelectorAll(":scope > .overview-child-group > .tree-node")
-    ];
-}
-
-            const pathParts = [
-                `M ${startX} ${startY}`,
-                `L ${startX} ${busY}`,
-                `L ${child.x} ${busY}`,
-                `L ${child.x} ${child.y}`
-            ];
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", pathParts.join(" "));
-            path.setAttribute("class", "connection-path");
-            
-            if (highlightedConnections.has(`${parentId}-${child.id}`)) {
-                path.classList.add("highlighted");
-            }
-            svgOverlay.appendChild(path);
-        });
-    });
-}
 
 // Window resize handler to redraw connections
 window.addEventListener("resize", () => {
