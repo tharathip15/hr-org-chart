@@ -643,7 +643,11 @@ async function saveData() {
 }
 
 function saveLocalBackup() {
-    localStorage.setItem("hr_employees", JSON.stringify(employees));
+    try {
+        localStorage.setItem("hr_employees", JSON.stringify(employees));
+    } catch (error) {
+        console.warn("Failed to write to localStorage (quota exceeded or private mode):", error);
+    }
 }
 
 function sanitizeCollapsedNodeIds(value) {
@@ -694,7 +698,11 @@ async function loadPreferences() {
 
 async function savePreferences() {
     const preferences = getPreferencesPayload();
-    localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
+    try {
+        localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
+    } catch (error) {
+        console.warn("Failed to write preferences to localStorage:", error);
+    }
 
     try {
         const response = await fetch(PREFERENCES_API_URL, {
@@ -928,7 +936,7 @@ function setupEventListeners() {
         // Left click only
         if (e.button !== 0) return;
         // Don't drag if clicking buttons, input fields or profile cards
-        if (e.target.closest(".node-card") || e.target.closest("button") || e.target.closest("input") || e.target.closest(".drawer") || e.target.closest(".modal")) return;
+        if (e.target.closest(".node-card") || e.target.closest("button") || e.target.closest("input") || e.target.closest(".drawer") || e.target.closest(".modal") || e.target.closest(".annotation-card") || e.target.closest(".annotation-text-wrapper")) return;
         
         isDragging = true;
         viewport.style.cursor = "grabbing";
@@ -2387,7 +2395,11 @@ async function loadAnnotations() {
 }
 
 async function saveAnnotations() {
-    localStorage.setItem("hr_org_annotations", JSON.stringify(annotations));
+    try {
+        localStorage.setItem("hr_org_annotations", JSON.stringify(annotations));
+    } catch (error) {
+        console.warn("Failed to write annotations to localStorage:", error);
+    }
     try {
         await fetch(ANNOTATIONS_API_URL, {
             method: "PUT",
