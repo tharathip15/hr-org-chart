@@ -664,6 +664,22 @@ function normalizePosition(position, fallbackId) {
     const title = (position?.title || position?.role || "Open Position").trim();
     const department = (position?.department || "Unassigned").trim();
 
+    let layoutStyle = "horizontal";
+    let isManual = false;
+    let notesText = (position?.notes || "").trim();
+
+    // Check if notes contains layout style JSON
+    if (notesText.startsWith("{") && notesText.endsWith("}")) {
+        try {
+            const parsed = JSON.parse(notesText);
+            layoutStyle = parsed.layoutStyle || "horizontal";
+            isManual = !!parsed.isManual;
+            notesText = parsed.text || "";
+        } catch (e) {
+            // Not valid JSON, keep as is
+        }
+    }
+
     return {
         id,
         title,
@@ -672,7 +688,9 @@ function normalizePosition(position, fallbackId) {
         employeeId: toNullableInteger(position?.employeeId ?? position?.employee_id),
         x: toNullableInteger(position?.x),
         y: toNullableInteger(position?.y),
-        notes: (position?.notes || "").trim()
+        layoutStyle,
+        isManual: isManual || (position?.isManual === true),
+        notes: notesText
     };
 }
 
@@ -745,6 +763,49 @@ async function loadPositions() {
         if (!Array.isArray(savedPositions) || positions.length === 0) {
             positions = derivePositionsFromEmployees();
             await savePositions();
+        } else {
+            // Auto-align employees who don't have positions (e.g. newly synced from Microsoft AD)
+            let positionsChanged = false;
+            const assignedEmployeeIds = new Set(positions.map(p => p.employeeId).filter(id => id !== null));
+            
+            employees.forEach(employee => {
+                if (!assignedEmployeeIds.has(employee.id)) {
+                    // 1. Try to find a vacant position that matches the employee's role and department
+                    const matchedVacant = positions.find(p => 
+                        p.employeeId === null && 
+                        p.title.toLowerCase().trim() === employee.role.toLowerCase().trim() && 
+                        p.department.toLowerCase().trim() === employee.department.toLowerCase().trim()
+                    );
+                    
+                    if (matchedVacant) {
+                        matchedVacant.employeeId = employee.id;
+                        assignedEmployeeIds.add(employee.id);
+                        positionsChanged = true;
+                        console.log(`Auto-assigned employee ${employee.name} to matching vacant position ${matchedVacant.title}`);
+                    } else {
+                        // 2. Create a new position for the employee
+                        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, { department: employee.department });
+                        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
+                        positions.push({
+                            id: getNextPositionId(),
+                            title: employee.role,
+                            department: employee.department,
+                            managerId: newPositionManagerId,
+                            employeeId: employee.id,
+                            x: positionAutoPos.x,
+                            y: positionAutoPos.y,
+                            notes: ""
+                        });
+                        assignedEmployeeIds.add(employee.id);
+                        positionsChanged = true;
+                        console.log(`Auto-created new position for employee ${employee.name}`);
+                    }
+                }
+            });
+
+            if (positionsChanged) {
+                await savePositions();
+            }
         }
         return;
     } catch (error) {
@@ -769,11 +830,20 @@ async function savePositions() {
     positions = normalizePositionsList(positions);
     saveLocalPositionsBackup();
 
+    const payload = positions.map(p => ({
+        ...p,
+        notes: JSON.stringify({
+            layoutStyle: p.layoutStyle || "horizontal",
+            isManual: !!p.isManual,
+            text: p.notes || ""
+        })
+    }));
+
     try {
         const response = await fetch(POSITIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(positions)
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
@@ -1202,6 +1272,7 @@ function setupEventListeners() {
                 positions.forEach(position => {
                     position.x = null;
                     position.y = null;
+                    position.isManual = false;
                 });
                 renderTree();
                 savePositions();
@@ -1824,12 +1895,8 @@ function renderTree() {
         visiblePositions = visiblePositions.filter(position => position.department === selectedDept);
     }
 
-    // 3. Ensure all positions have coordinates. Run auto-layout if any are missing.
-    const needsLayout = visiblePositions.some(position => position.x == null || position.y == null);
-    if (needsLayout) {
-        calculateInitialCoordinates();
-        savePositions(); // Save coordinates asynchronously
-    }
+    // 3. Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes
+    calculateInitialCoordinates();
 
     // 4. Render cards flat with absolute positioning
     const html = visiblePositions.map(position => getPositionCardHTML(position)).join("");
@@ -1895,19 +1962,48 @@ function drawConnections() {
         const cLocal = getCanvasLocalRect(childCard);
         if (pLocal.width === 0 || pLocal.height === 0 || cLocal.width === 0 || cLocal.height === 0) return;
 
-        const startX = pLocal.x + pLocal.width / 2;
-        const startY = pLocal.y + pLocal.height;
-        const endX = cLocal.x + cLocal.width / 2;
-        const endY = cLocal.y;
+        const parentPosition = positions.find(p => p.id === position.managerId);
+        const isVerticalLayout = parentPosition && parentPosition.layoutStyle === "vertical";
 
-        const busY = startY + (endY - startY) / 2;
+        let pathParts;
+        if (isVerticalLayout) {
+            const startX = pLocal.x + pLocal.width / 2;
+            const startY = pLocal.y + pLocal.height;
+            const endX = cLocal.x; // connect to the left edge of the child card
+            const endY = cLocal.y + cLocal.height / 2; // vertical center of the child card
 
-        const pathParts = [
-            `M ${startX} ${startY}`,
-            `L ${startX} ${busY}`,
-            `L ${endX} ${busY}`,
-            `L ${endX} ${endY}`
-        ];
+            pathParts = [
+                `M ${startX} ${startY}`,
+                `L ${startX} ${endY}`,
+                `L ${endX} ${endY}`
+            ];
+        } else {
+            const startX = pLocal.x + pLocal.width / 2;
+            const startY = pLocal.y + pLocal.height;
+            const endX = cLocal.x + cLocal.width / 2;
+            const endY = cLocal.y;
+
+            // Calculate the minimum Y among all visible children of this manager to keep the horizontal bus line at the sibling level
+            const childrenPositions = positions.filter(p => p.managerId === position.managerId && visibleCardIds.has(p.id));
+            const childYs = childrenPositions.map(p => {
+                const card = document.querySelector(`.node-card[data-id="${p.id}"]`);
+                if (card) {
+                    const rect = getCanvasLocalRect(card);
+                    return rect.y;
+                }
+                return p.y;
+            }).filter(y => y !== undefined && y !== null);
+            
+            const minChildY = childYs.length > 0 ? Math.min(...childYs) : endY;
+            const busY = startY + Math.max(20, (minChildY - startY) / 2);
+
+            pathParts = [
+                `M ${startX} ${startY}`,
+                `L ${startX} ${busY}`,
+                `L ${endX} ${busY}`,
+                `L ${endX} ${endY}`
+            ];
+        }
 
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", pathParts.join(" "));
@@ -1921,17 +2017,55 @@ function drawConnections() {
 }
 
 function calculateInitialCoordinates() {
-    const validIds = new Set(positions.map(position => position.id));
-    const roots = positions.filter(position => position.managerId === null || !validIds.has(position.managerId));
-    
-    const reportsMap = {};
-    positions.forEach(position => {
-        if (position.managerId !== null) {
-            // Treat manager as having no reporting children if collapsed
-            if (!collapsedNodes.has(position.managerId)) {
-                if (!reportsMap[position.managerId]) reportsMap[position.managerId] = [];
-                reportsMap[position.managerId].push(position);
+    // 1. Determine which positions are currently visible (active)
+    const hiddenIds = new Set();
+    function markHidden(mgrId) {
+        positions.forEach(pos => {
+            if (pos.managerId === mgrId) {
+                hiddenIds.add(pos.id);
+                markHidden(pos.id);
             }
+        });
+    }
+    collapsedNodes.forEach(id => markHidden(id));
+    
+    let activePositions = positions.filter(pos => !hiddenIds.has(pos.id));
+    if (selectedDept !== "All") {
+        activePositions = activePositions.filter(pos => pos.department === selectedDept);
+    }
+
+    if (activePositions.length === 0) return;
+
+    const activeIds = new Set(activePositions.map(p => p.id));
+    
+    // 2. Find roots within active positions
+    const roots = activePositions.filter(position => position.managerId === null || !activeIds.has(position.managerId));
+    
+    // Dynamic spacing based on active positions count
+    const totalCount = activePositions.length;
+    let xSpacing = 260;    // default sibling width allocated (220 width + 40 gap)
+    let ySpacing = 220;    // default vertical gap (100 height + 120 gap)
+    let rootSpacing = 150; // default horizontal gap between independent root trees
+
+    if (totalCount <= 8) {
+        xSpacing = 236;    // 220 width + 16 gap
+        ySpacing = 160;    // 100 height + 60 gap
+        rootSpacing = 80;
+    } else if (totalCount <= 20) {
+        xSpacing = 250;    // 220 width + 30 gap
+        ySpacing = 190;    // 100 height + 90 gap
+        rootSpacing = 120;
+    } else if (totalCount > 40) {
+        xSpacing = 280;    // 220 width + 60 gap
+        ySpacing = 245;    // 100 height + 145 gap
+        rootSpacing = 200;
+    }
+
+    const reportsMap = {};
+    activePositions.forEach(position => {
+        if (position.managerId !== null && activeIds.has(position.managerId)) {
+            if (!reportsMap[position.managerId]) reportsMap[position.managerId] = [];
+            reportsMap[position.managerId].push(position);
         }
     });
     for (let key in reportsMap) {
@@ -1939,26 +2073,50 @@ function calculateInitialCoordinates() {
     }
 
     const subtreeWidths = {};
+    const subtreeHeights = {};
     const visitedWidths = new Set();
-    function computeWidths(positionId) {
+    
+    function computeWidthsAndHeights(positionId) {
         if (visitedWidths.has(positionId)) return 0;
         visitedWidths.add(positionId);
 
         const children = reportsMap[positionId] || [];
+        const position = positions.find(p => p.id === positionId);
+        
         if (children.length === 0) {
-            subtreeWidths[positionId] = 260;
-            return 260;
+            subtreeWidths[positionId] = xSpacing;
+            subtreeHeights[positionId] = 120; // default height for a leaf node
+            return xSpacing;
         }
-        let width = 0;
-        children.forEach(child => {
-            width += computeWidths(child.id);
-        });
-        subtreeWidths[positionId] = Math.max(260, width);
-        return subtreeWidths[positionId];
-    }
-    roots.forEach(root => computeWidths(root.id));
 
-    const ySpacing = 220;
+        const isVertical = position && position.layoutStyle === "vertical";
+        
+        if (isVertical) {
+            // Children are stacked vertically, so width is just xSpacing
+            subtreeWidths[positionId] = xSpacing;
+            
+            let totalHeight = 120; // height for parent itself
+            children.forEach(child => {
+                computeWidthsAndHeights(child.id);
+                totalHeight += (subtreeHeights[child.id] || 120);
+            });
+            subtreeHeights[positionId] = totalHeight;
+            return xSpacing;
+        } else {
+            // Horizontal layout (default)
+            let width = 0;
+            let maxHeight = 0;
+            children.forEach(child => {
+                width += computeWidthsAndHeights(child.id);
+                maxHeight = Math.max(maxHeight, subtreeHeights[child.id] || 120);
+            });
+            subtreeWidths[positionId] = Math.max(xSpacing, width);
+            subtreeHeights[positionId] = ySpacing + maxHeight;
+            return subtreeWidths[positionId];
+        }
+    }
+    roots.forEach(root => computeWidthsAndHeights(root.id));
+
     const assignedCoords = new Set();
 
     function assignCoords(position, xStart, y) {
@@ -1966,23 +2124,42 @@ function calculateInitialCoordinates() {
         assignedCoords.add(position.id);
 
         const children = reportsMap[position.id] || [];
-        const w = subtreeWidths[position.id] || 260;
-        const myX = xStart + w / 2;
+        const w = subtreeWidths[position.id] || xSpacing;
 
-        position.x = Math.round(myX - 110);
-        position.y = Math.round(y);
+        // If this position was manually dragged, keep its custom coordinates and adjust childXStart
+        if (position.isManual && position.x !== undefined && position.x !== null && position.y !== undefined && position.y !== null) {
+            xStart = position.x + 110 - w / 2;
+        } else {
+            const myX = xStart + w / 2;
+            position.x = Math.round(myX - 110);
+            position.y = Math.round(y);
+        }
         
-        let childXStart = xStart;
-        children.forEach(child => {
-            assignCoords(child, childXStart, y + ySpacing);
-            childXStart += (subtreeWidths[child.id] || 260);
-        });
+        const isVertical = position.layoutStyle === "vertical";
+        
+        if (isVertical) {
+            // Stack children vertically under the parent
+            let currentChildY = position.y + 120; // Start below the parent
+            children.forEach(child => {
+                // Place child shifted horizontally to the right
+                const childXStart = position.x + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
+                assignCoords(child, childXStart, currentChildY);
+                currentChildY += (subtreeHeights[child.id] || 120);
+            });
+        } else {
+            // Standard horizontal sibling layout
+            let childXStart = xStart;
+            children.forEach(child => {
+                assignCoords(child, childXStart, position.y + ySpacing);
+                childXStart += (subtreeWidths[child.id] || xSpacing);
+            });
+        }
     }
 
     let currentXStart = 200;
     roots.forEach(root => {
         assignCoords(root, currentXStart, 150);
-        currentXStart += (subtreeWidths[root.id] || 260) + 150;
+        currentXStart += (subtreeWidths[root.id] || xSpacing) + rootSpacing;
     });
 }
 
@@ -2330,10 +2507,18 @@ function getPrimaryPositionForEmployee(employeeId) {
     return positions.find(position => position.employeeId === employeeId) || null;
 }
 
-function getPositionManagerIdFromEmployeeManager(managerEmployeeId) {
+function getPositionManagerIdFromEmployeeManager(managerEmployeeId, childPosition = null) {
     if (!managerEmployeeId) return null;
-    const managerPosition = getPrimaryPositionForEmployee(managerEmployeeId);
-    return managerPosition ? managerPosition.id : null;
+    const managerPositions = positions.filter(p => p.employeeId === managerEmployeeId);
+    if (managerPositions.length === 0) return null;
+    if (managerPositions.length === 1) return managerPositions[0].id;
+    
+    if (childPosition && childPosition.department) {
+        const matchingPos = managerPositions.find(p => p.department === childPosition.department);
+        if (matchingPos) return matchingPos.id;
+    }
+    
+    return managerPositions[0].id;
 }
 
 function syncAssignedPositionFromEmployee(employee, previousPositionManagerId = undefined) {
@@ -2342,7 +2527,7 @@ function syncAssignedPositionFromEmployee(employee, previousPositionManagerId = 
     const position = getPrimaryPositionForEmployee(employee.id);
     if (!position) return;
 
-    const nextManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId);
+    const nextManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
     const managerChanged = previousPositionManagerId !== undefined && previousPositionManagerId !== nextManagerId;
 
     position.title = employee.role;
@@ -2449,6 +2634,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-id").value = position.id;
     document.getElementById("form-position-title").value = getPositionTitle(position);
     document.getElementById("form-position-department").value = getPositionDepartment(position);
+    document.getElementById("form-position-layout").value = position.layoutStyle || "horizontal";
     document.getElementById("form-position-notes").value = position.notes || "";
     document.getElementById("btn-delete-position").disabled = false;
 
@@ -2525,6 +2711,7 @@ async function handlePositionFormSubmit(e) {
     const department = document.getElementById("form-position-department").value.trim();
     const managerInputVal = document.getElementById("form-position-manager").value.trim();
     const employeeInputVal = document.getElementById("form-position-employee").value.trim();
+    const layoutStyle = document.getElementById("form-position-layout").value;
     const notes = document.getElementById("form-position-notes").value.trim();
 
     if (!title || !department) {
@@ -2574,6 +2761,7 @@ async function handlePositionFormSubmit(e) {
             department,
             managerId,
             employeeId,
+            layoutStyle,
             notes
         };
 
@@ -2603,11 +2791,28 @@ async function handlePositionFormSubmit(e) {
             department,
             managerId,
             employeeId,
+            layoutStyle,
             x: autoPos.x,
             y: autoPos.y,
             notes
         });
         showNotification(`Added position: ${title}`, "success");
+    }
+
+    // Sync the employee's manager ID if this position has an assigned employee
+    if (employeeId) {
+        const empIndex = employees.findIndex(e => e.id === employeeId);
+        if (empIndex > -1) {
+            let nextEmployeeManagerId = null;
+            if (managerId) {
+                const mgrPos = positions.find(p => p.id === managerId);
+                if (mgrPos && mgrPos.employeeId) {
+                    nextEmployeeManagerId = mgrPos.employeeId;
+                }
+            }
+            employees[empIndex].managerId = nextEmployeeManagerId;
+            await saveData();
+        }
     }
 
     await savePositions();
@@ -2799,7 +3004,7 @@ async function handleFormSubmit(e) {
         };
         
         employees.push(newEmployee);
-        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(managerId);
+        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(managerId, { department: department });
         const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
         positions.push({
             id: getNextPositionId(),
@@ -3007,11 +3212,34 @@ function handleCardDragMove(e) {
     const newX = Math.round(e.clientX / currentScale - dragGrabOffsetX);
     const newY = Math.round(e.clientY / currentScale - dragGrabOffsetY);
 
-    position.x = newX;
-    position.y = newY;
+    // Magnetic snap (ดูดล็อคเป็นขั้นๆ) - Snap to other positions' X and Y if within 25px
+    const SNAP_THRESHOLD = 25;
+    let snappedX = newX;
+    let snappedY = newY;
 
-    activeDragCard.style.left = `${newX}px`;
-    activeDragCard.style.top = `${newY}px`;
+    const otherPositions = positions.filter(p => p.id !== draggedId && p.x !== undefined && p.x !== null && p.y !== undefined && p.y !== null);
+
+    // Check X snap
+    for (let other of otherPositions) {
+        if (Math.abs(newX - other.x) < SNAP_THRESHOLD) {
+            snappedX = other.x;
+            break;
+        }
+    }
+
+    // Check Y snap
+    for (let other of otherPositions) {
+        if (Math.abs(newY - other.y) < SNAP_THRESHOLD) {
+            snappedY = other.y;
+            break;
+        }
+    }
+
+    position.x = snappedX;
+    position.y = snappedY;
+
+    activeDragCard.style.left = `${snappedX}px`;
+    activeDragCard.style.top = `${snappedY}px`;
 
     drawConnections();
 }
@@ -3020,7 +3248,11 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointermove", handleCardDragMove);
     window.removeEventListener("pointerup", handleCardDragEnd);
     
-    if (activeDragCard) {
+    if (activeDragCard && draggedId !== null) {
+        const position = positions.find(p => p.id === draggedId);
+        if (position) {
+            position.isManual = true;
+        }
         try {
             activeDragCard.releasePointerCapture(e.pointerId);
         } catch (err) {}

@@ -6,15 +6,15 @@ const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 
 test("app supports free-form canvas coordinates calculation", () => {
     assert.match(appSource, /function calculateInitialCoordinates\(\)/);
-    assert.match(appSource, /subtreeWidths\[empId\] = Math\.max\(260, width\)/);
+    assert.match(appSource, /subtreeWidths\[positionId\] = Math\.max\(/);
 });
 
-test("app renders visible employees with absolute CSS positioning", () => {
-    assert.match(appSource, /position: absolute; left: \$\{employee\.x\}px; top: \$\{employee\.y\}px;/);
+test("app renders visible positions with absolute CSS positioning", () => {
+    assert.match(appSource, /position: absolute; left: \$\{position\.x\}px; top: \$\{position\.y\}px;/);
 });
 
-test("app updates employee coordinates on drag move", () => {
+test("app updates position coordinates on drag move", () => {
     assert.match(appSource, /function handleCardDragMove\(e\)/);
-    assert.match(appSource, /emp\.x = newX;/);
-    assert.match(appSource, /emp\.y = newY;/);
+    assert.match(appSource, /position\.x = snappedX;/);
+    assert.match(appSource, /position\.y = snappedY;/);
 });
