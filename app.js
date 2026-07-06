@@ -2423,7 +2423,6 @@ let dropDraggedId = null;
 let dropTargetId = null;
 
 let activeDragCard = null;
-let activeDragCard = null;
 let dragGrabOffsetX = 0;
 let dragGrabOffsetY = 0;
 
