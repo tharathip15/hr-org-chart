@@ -624,6 +624,52 @@ async function init() {
     }, 350);
 }
 
+function compressBase64Image(base64Str) {
+    return new Promise((resolve) => {
+        if (!base64Str || !base64Str.startsWith("data:image/") || base64Str.length < 50000) {
+            resolve(base64Str);
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const scale = Math.min(1, PHOTO_MAX_SIZE / Math.max(img.width, img.height));
+                const width = Math.max(1, Math.round(img.width * scale));
+                const height = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement("canvas");
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL("image/jpeg", PHOTO_QUALITY));
+            } catch (err) {
+                console.warn("Failed to compress image on canvas, using original", err);
+                resolve(base64Str);
+            }
+        };
+        img.onerror = () => {
+            resolve(base64Str);
+        };
+        img.src = base64Str;
+    });
+}
+
+async function compressAllEmployeePhotos() {
+    let changed = false;
+    for (let i = 0; i < employees.length; i++) {
+        const emp = employees[i];
+        if (emp.photoUrl && emp.photoUrl.startsWith("data:image/") && emp.photoUrl.length > 50000) {
+            console.log(`Self-healing and compressing photo for ${emp.name} (length: ${emp.photoUrl.length})...`);
+            const compressed = await compressBase64Image(emp.photoUrl);
+            if (compressed !== emp.photoUrl) {
+                emp.photoUrl = compressed;
+                changed = true;
+            }
+        }
+    }
+    return changed;
+}
+
 // Load data from the server database. LocalStorage is only a fallback for file:// previews.
 async function loadData() {
     try {
@@ -639,7 +685,10 @@ async function loadData() {
 
         const didNormalizeProfiles = normalizeEmployeeProfiles();
 
-        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles) {
+        // Self-heal and compress any oversized profile pictures to prevent Vercel 413 Payload Too Large
+        const photoCompressed = await compressAllEmployeePhotos();
+
+        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles || photoCompressed) {
             await saveData();
         }
         return;
@@ -1308,6 +1357,9 @@ function setupEventListeners() {
                         collapsedNodes = new Set(sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || []));
                         selectedDept = "All";
                         
+                        // Compress photos on import to prevent 413 Payload Too Large
+                        await compressAllEmployeePhotos();
+                        
                         await saveData();
                         await savePositions();
                         await saveAnnotations();
@@ -1326,6 +1378,9 @@ function setupEventListeners() {
                         positions = derivePositionsFromEmployees();
                         collapsedNodes.clear();
                         selectedDept = "All";
+                        
+                        // Compress photos on import to prevent 413 Payload Too Large
+                        await compressAllEmployeePhotos();
                         
                         await saveData();
                         await savePositions();
