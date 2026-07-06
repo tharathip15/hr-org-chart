@@ -72,7 +72,29 @@ async function handlePut(request, response) {
       const { error: upsertError } = await supabase
         .from("employees")
         .upsert(dbRows);
-      if (upsertError) throw upsertError;
+      
+      if (upsertError) {
+        // Fallback: if columns x or y are missing in database, retry upsert without coordinates
+        const isMissingColumns = upsertError.message && (
+          upsertError.message.includes("column") || 
+          upsertError.message.includes("schema cache")
+        );
+        if (isMissingColumns) {
+          console.warn("x/y columns missing in Supabase, retrying upsert without coordinates...");
+          const fallbackRows = dbRows.map(row => {
+            const copy = { ...row };
+            delete copy.x;
+            delete copy.y;
+            return copy;
+          });
+          const { error: retryError } = await supabase
+            .from("employees")
+            .upsert(fallbackRows);
+          if (retryError) throw retryError;
+        } else {
+          throw upsertError;
+        }
+      }
     }
 
     response.status(200).json({ ok: true, count: body.length });
