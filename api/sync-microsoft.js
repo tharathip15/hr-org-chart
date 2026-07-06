@@ -39,7 +39,7 @@ export default async function handler(request, response) {
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
 
-    // 2. Fetch Users & Managers (excluding SharePoint-dependent aboutMe field)
+    // 2. Fetch Users & Managers from Microsoft Graph
     console.log("Fetching users from Microsoft Graph...");
     let url = "https://graph.microsoft.com/v1.0/users?$select=id,displayName,jobTitle,department,mail,mobilePhone,userPrincipalName&$expand=manager($select=id)&$top=999";
     let allUsers = [];
@@ -55,25 +55,94 @@ export default async function handler(request, response) {
       url = data["@odata.nextLink"] || null;
     }
 
-    // 3. Filter real people (jobTitle is not null and not empty)
+    // 3. Filter real people
     const realPeople = allUsers.filter(u => u.jobTitle && u.jobTitle.trim() !== "");
-    console.log(`Found ${realPeople.length} real people to sync.`);
+    console.log(`Found ${realPeople.length} real people in Microsoft AD.`);
 
-    // 4. Fetch photos in parallel batches (concurrency of 10)
+    // 4. Fetch profile photos
     console.log("Fetching profile photos...");
     const photosMap = await fetchPhotosForUsers(realPeople, accessToken);
 
-    // 5. Map GUIDs to sequential IDs (1, 2, 3...)
-    const guidToSeqId = new Map(realPeople.map((u, idx) => [u.id, idx + 1]));
+    // 5. Fetch existing database records to perform non-destructive merge
+    console.log("Fetching existing employees from database...");
+    const { data: existingEmployees, error: fetchError } = await supabase
+      .from("employees")
+      .select("*");
 
-    const dbRows = realPeople.map((u, idx) => {
-      const seqId = idx + 1;
+    if (fetchError) {
+      throw new Error(`Failed to fetch existing employees: ${fetchError.message}`);
+    }
+
+    const existingMap = new Map();
+    (existingEmployees || []).forEach(e => {
+      if (e.email) existingMap.set(e.email.toLowerCase(), e);
+      if (e.person_id) existingMap.set(e.person_id.toLowerCase(), e);
+    });
+
+    // 6. Map and merge users
+    const dbRows = [];
+    const newAdUsers = [];
+
+    realPeople.forEach(u => {
+      const emailKey = (u.mail || u.userPrincipalName || "").toLowerCase();
+      const guidKey = u.id.toLowerCase();
+      const existing = existingMap.get(emailKey) || existingMap.get(guidKey);
+
+      const photoBase64 = photosMap.get(u.id) || (existing ? existing.photo_url : null);
+
+      if (existing) {
+        // PRESERVE: id, manager_id, x, y, bio
+        dbRows.push({
+          id: existing.id,
+          person_id: u.id,
+          name: u.displayName.trim().toUpperCase(),
+          role: u.jobTitle.trim(),
+          department: u.department ? u.department.trim() : "General",
+          manager_id: existing.manager_id,
+          email: u.mail || u.userPrincipalName || null,
+          phone: u.mobilePhone || null,
+          bio: existing.bio,
+          photo_url: photoBase64,
+          avatar_color: existing.avatar_color || getDeptColor(u.department || "General"),
+          x: existing.x,
+          y: existing.y
+        });
+      } else {
+        // Collect new AD users to assign IDs and manager mappings later
+        newAdUsers.push({
+          user: u,
+          photoUrl: photoBase64
+        });
+      }
+    });
+
+    // Determine currently used sequential IDs
+    const usedIds = new Set(dbRows.map(r => r.id));
+    (existingEmployees || []).forEach(e => usedIds.add(e.id));
+
+    // Assign sequential IDs to new AD users
+    let nextId = 1;
+    newAdUsers.forEach(item => {
+      while (usedIds.has(nextId)) {
+        nextId++;
+      }
+      item.seqId = nextId;
+      usedIds.add(nextId);
+    });
+
+    // Build GUID -> Sequential ID map for all synced AD users
+    const guidToSeqId = new Map();
+    dbRows.forEach(r => guidToSeqId.set(r.person_id, r.id));
+    newAdUsers.forEach(item => guidToSeqId.set(item.user.id, item.seqId));
+
+    // Process new AD users mapping managers from AD GUID
+    newAdUsers.forEach(item => {
+      const u = item.user;
       const managerGuid = u.manager ? u.manager.id : null;
       const managerSeqId = managerGuid ? guidToSeqId.get(managerGuid) : null;
-      const photoBase64 = photosMap.get(u.id) || null;
 
-      return {
-        id: seqId,
+      dbRows.push({
+        id: item.seqId,
         person_id: u.id,
         name: u.displayName.trim().toUpperCase(),
         role: u.jobTitle.trim(),
@@ -81,14 +150,25 @@ export default async function handler(request, response) {
         manager_id: managerSeqId || null,
         email: u.mail || u.userPrincipalName || null,
         phone: u.mobilePhone || null,
-        bio: null, // aboutMe is not fetched, default to null
-        photo_url: photoBase64,
-        avatar_color: getDeptColor(u.department || "General")
-      };
+        bio: null,
+        photo_url: item.photoUrl,
+        avatar_color: getDeptColor(u.department || "General"),
+        x: null,
+        y: null
+      });
     });
 
-    // 6. Replace data in Supabase (delete all then insert all)
-    console.log("Replacing data in Supabase database...");
+    // 7. Retain manual employees (non-AD records)
+    const adPersonIds = new Set(realPeople.map(u => u.id.toLowerCase()));
+    const manualEmployees = (existingEmployees || []).filter(
+      e => !e.person_id || !adPersonIds.has(e.person_id.toLowerCase())
+    );
+
+    dbRows.push(...manualEmployees);
+    console.log(`Merged results: ${dbRows.length} total employees (${manualEmployees.length} manual, ${dbRows.length - manualEmployees.length} from AD).`);
+
+    // 8. Re-insert to Supabase
+    console.log("Replacing database rows...");
     const { error: deleteError } = await supabase
       .from("employees")
       .delete()

@@ -528,18 +528,57 @@ const PREFERENCES_API_URL = "/api/preferences";
 const PHOTO_MAX_SIZE = 256;
 const PHOTO_QUALITY = 0.82;
 
+// Loader helper functions
+function setLoaderProgress(percent, statusText) {
+    const progressBar = document.getElementById("loader-progress-bar");
+    const loaderPercent = document.getElementById("loader-percent");
+    const loaderStatus = document.getElementById("loader-status");
+    
+    if (progressBar) progressBar.style.width = `${percent}%`;
+    if (loaderPercent) loaderPercent.innerText = `${percent}%`;
+    if (loaderStatus && statusText) loaderStatus.innerText = statusText;
+}
+
+function hideLoader() {
+    const loader = document.getElementById("app-loader");
+    if (loader) {
+        loader.classList.add("fade-out");
+        setTimeout(() => {
+            loader.style.display = "none";
+        }, 600); // matches CSS fade-out transition duration
+    }
+}
+
 // Load data initially
 async function init() {
+    setLoaderProgress(15, "กำลังจัดเตรียมสภาพแวดล้อม...");
+    
+    // Let elements fade in and spin rings start rotating smoothly
+    await new Promise(resolve => setTimeout(resolve, 350));
+    
+    setLoaderProgress(40, "กำลังดึงข้อมูลบุคลากรจากฐานข้อมูล...");
     await loadData();
+    
+    await new Promise(resolve => setTimeout(resolve, 250));
+    
+    setLoaderProgress(70, "กำลังดาวน์โหลดค่ากำหนดการแสดงผล...");
     await loadPreferences();
     
+    await new Promise(resolve => setTimeout(resolve, 250));
+    
+    setLoaderProgress(90, "กำลังเรนเดอร์แผนผังโครงสร้างองค์กร...");
     setupEventListeners();
     renderAll();
     
-    // Smooth fade-in and fit to screen
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    setLoaderProgress(100, "เสร็จสิ้น!");
+    
+    // Fade out and fit layout smoothly
     setTimeout(() => {
         fitToScreen();
-    }, 150);
+        hideLoader();
+    }, 350);
 }
 
 // Load data from the server database. LocalStorage is only a fallback for file:// previews.
@@ -1665,172 +1704,188 @@ function wireTreeInteractions() {
     });
 }
 
-function scheduleConnectionDraw() {
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            drawConnections();
-            setTimeout(() => drawConnections(), 300);
-        });
-    });
-}
-
-function renderOverview() {
-    const roots = getRootsForDepartment("All");
-    const reportsMap = buildReportsMap("All");
-    treeContainer.innerHTML = roots.map(root => buildOverviewNodeHTML(root, reportsMap)).join("");
-    wireTreeInteractions();
-    scheduleConnectionDraw();
-}
-
-// Render dynamic DOM tree structure
 function renderTree() {
     treeContainer.innerHTML = "";
     svgOverlay.innerHTML = "";
 
-    if (selectedDept === "All") {
-        treeContainer.classList.add("overview-mode");
-        renderOverview();
-        return;
+    // 1. Calculate hidden IDs due to collapsed nodes
+    const hiddenIds = new Set();
+    function markHidden(mgrId) {
+        employees.forEach(emp => {
+            if (emp.managerId === mgrId) {
+                hiddenIds.add(emp.id);
+                markHidden(emp.id);
+            }
+        });
+    }
+    collapsedNodes.forEach(id => markHidden(id));
+
+    // 2. Filter visible employees (and by department if selectedDept is not "All")
+    let visibleEmployees = employees.filter(emp => !hiddenIds.has(emp.id));
+    if (selectedDept !== "All") {
+        visibleEmployees = visibleEmployees.filter(emp => emp.department === selectedDept);
     }
 
-    treeContainer.classList.remove("overview-mode");
+    // 3. Ensure all employees have coordinates. Run auto-layout if any are missing.
+    const needsLayout = employees.some(e => e.x === null || e.y === null);
+    if (needsLayout) {
+        calculateInitialCoordinates();
+        saveData(); // Save coordinates asynchronously
+    }
 
-    // Identify Roots
-    let roots = [];
-    
-    if (selectedDept === "All") {
-        // Global roots: Employees whose managerId is null or invalid
-        const validIds = new Set(employees.map(e => e.id));
-        roots = employees.filter(e => e.managerId === null || !validIds.has(e.managerId));
-        
-        // If there's no root (e.g. data corrupted), make the first employee the root
-        if (roots.length === 0 && employees.length > 0) {
-            roots = [employees[0]];
-        }
-    } else {
-        // Department focused view
-        // Find highest-ranking employee(s) in the selected department.
-        // A highest-ranking employee is one in this department whose manager is NOT in this department (or null)
-        const deptEmployees = employees.filter(e => e.department === selectedDept);
-        const deptEmployeeIds = new Set(deptEmployees.map(e => e.id));
-        
-        roots = deptEmployees.filter(e => e.managerId === null || !deptEmployeeIds.has(e.managerId));
-        
-        if (roots.length === 0 && deptEmployees.length > 0) {
-            roots = [deptEmployees[0]];
-        }
-    }
-    
-    // Build reports mapping
-    const reportsMap = {};
-    employees.forEach(emp => {
-        if (emp.managerId !== null) {
-            if (!reportsMap[emp.managerId]) {
-                reportsMap[emp.managerId] = [];
-            }
-            // In department mode, we only render children who belong to the same department
-            if (selectedDept === "All" || emp.department === selectedDept) {
-                reportsMap[emp.managerId].push(emp);
-            }
-        }
-    });
-    
-    // Sort reports alphabetically by name for consistent layout
-    for (let key in reportsMap) {
-        reportsMap[key].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    
-    // Recursive Tree builder function
-    function buildNodeHTML(employee) {
-        const reports = reportsMap[employee.id] || [];
-        const hasReports = reports.length > 0;
+    // 4. Render cards flat with absolute positioning
+    const html = visibleEmployees.map(employee => {
         const deptClass = getDeptClass(employee.department);
-        
-        // Check for multiple positions
         const dualRoleCount = employees.filter(e => samePerson(e, employee)).length;
         const isDualRole = dualRoleCount > 1;
+        const hasReports = employees.some(e => e.managerId === employee.id);
         
-        let html = `
-            <div class="tree-node" data-id="${employee.id}">
-                <div class="node-card-wrapper">
-                    <div class="node-card" draggable="false" style="touch-action: none;" data-id="${employee.id}">
-                        <div class="card-header">
-                            ${getAvatarHTML(employee)}
-                            <div class="card-title-group">
-                                <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
-                                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
-                                    ${isDualRole ? `<span class="dual-role-badge" title="มีหลายตำแหน่งงาน (Dual Role)" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ''}
-                                </div>
-                                <div class="card-role">${escapeHTML(employee.role)}</div>
-                            </div>
+        let cardHtml = `
+            <div class="node-card absolute-card" data-id="${employee.id}" style="position: absolute; left: ${employee.x}px; top: ${employee.y}px; touch-action: none;">
+                <div class="card-header">
+                    ${getAvatarHTML(employee)}
+                    <div class="card-title-group">
+                        <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
+                            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
+                            ${isDualRole ? `<span class="dual-role-badge" title="มีหลายตำแหน่งงาน (Dual Role)" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ''}
                         </div>
-                        <div class="card-department-badge ${deptClass}">
-                            ${escapeHTML(employee.department)}
-                        </div>
+                        <div class="card-role">${escapeHTML(employee.role)}</div>
+                    </div>
+                </div>
+                <div class="card-department-badge ${deptClass}">
+                    ${escapeHTML(employee.department)}
+                </div>
         `;
-        
+
         if (hasReports) {
             const isCollapsed = collapsedNodes.has(employee.id);
-            html += `
+            cardHtml += `
                 <button class="node-toggle-btn ${isCollapsed ? 'collapsed' : ''}" data-id="${employee.id}">
                     <i data-lucide="${isCollapsed ? 'chevron-down' : 'chevron-up'}"></i>
                 </button>
             `;
         }
+
+        cardHtml += `</div>`;
+        return cardHtml;
+    }).join("");
+
+    treeContainer.innerHTML = html;
+    wireTreeInteractions();
+    scheduleConnectionDraw();
+}
+
+function drawConnections() {
+    svgOverlay.innerHTML = "";
+    updateCanvasBounds();
+
+    const visibleCards = document.querySelectorAll(".node-card");
+    const visibleCardIds = new Set();
+    visibleCards.forEach(card => visibleCardIds.add(parseInt(card.dataset.id)));
+
+    employees.forEach(emp => {
+        if (!visibleCardIds.has(emp.id) || !emp.managerId || !visibleCardIds.has(emp.managerId)) return;
+
+        const childCard = document.querySelector(`.node-card[data-id="${emp.id}"]`);
+        const parentCard = document.querySelector(`.node-card[data-id="${emp.managerId}"]`);
+        if (!childCard || !parentCard) return;
+
+        const pLocal = getCanvasLocalRect(parentCard);
+        const cLocal = getCanvasLocalRect(childCard);
+        if (pLocal.width === 0 || pLocal.height === 0 || cLocal.width === 0 || cLocal.height === 0) return;
+
+        const startX = pLocal.x + pLocal.width / 2;
+        const startY = pLocal.y + pLocal.height;
+        const endX = cLocal.x + cLocal.width / 2;
+        const endY = cLocal.y;
+
+        const busY = startY + (endY - startY) / 2;
+
+        const pathParts = [
+            `M ${startX} ${startY}`,
+            `L ${startX} ${busY}`,
+            `L ${endX} ${busY}`,
+            `L ${endX} ${endY}`
+        ];
+
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", pathParts.join(" "));
+        path.setAttribute("class", "connection-path");
         
-        html += `
-                    </div>
-                </div>
-        `;
-        
-        if (hasReports) {
-            const isCollapsed = collapsedNodes.has(employee.id);
-            html += `
-                <div class="node-children ${isCollapsed ? 'collapsed' : ''}">
-                    ${reports.map(report => buildNodeHTML(report)).join("")}
-                </div>
-            `;
+        if (highlightedConnections.has(`${emp.managerId}-${emp.id}`)) {
+            path.setAttribute("class", "connection-path highlighted");
         }
-        
-        html += `</div>`;
-        return html;
+        svgOverlay.appendChild(path);
+    });
+}
+
+function calculateInitialCoordinates() {
+    const validIds = new Set(employees.map(e => e.id));
+    const roots = employees.filter(e => e.managerId === null || !validIds.has(e.managerId));
+    
+    const reportsMap = {};
+    employees.forEach(emp => {
+        if (emp.managerId !== null) {
+            if (!reportsMap[emp.managerId]) reportsMap[emp.managerId] = [];
+            reportsMap[emp.managerId].push(emp);
+        }
+    });
+    for (let key in reportsMap) {
+        reportsMap[key].sort((a, b) => a.name.localeCompare(b.name));
     }
-    
-    // Render the tree structures side by side if multiple roots
-    const treeHTML = roots.map(root => buildNodeHTML(root)).join("");
-    treeContainer.innerHTML = treeHTML;
-    
-    // Wire up events dynamically
-    lucide.createIcons();
-    
-    document.querySelectorAll(".node-card").forEach(card => {
-        card.addEventListener("click", (e) => {
-            const id = parseInt(card.dataset.id);
-            showEmployeeDetails(id);
-            
-            // Highlight active card
-            document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
-            card.classList.add("selected-focus");
+
+    const subtreeWidths = {};
+    const visitedWidths = new Set();
+    function computeWidths(empId) {
+        if (visitedWidths.has(empId)) return 0;
+        visitedWidths.add(empId);
+
+        const children = reportsMap[empId] || [];
+        if (children.length === 0) {
+            subtreeWidths[empId] = 260;
+            return 260;
+        }
+        let width = 0;
+        children.forEach(child => {
+            width += computeWidths(child.id);
         });
+        subtreeWidths[empId] = Math.max(260, width);
+        return subtreeWidths[empId];
+    }
+    roots.forEach(root => computeWidths(root.id));
+
+    const ySpacing = 220;
+    const assignedCoords = new Set();
+
+    function assignCoords(emp, xStart, y) {
+        if (assignedCoords.has(emp.id)) return;
+        assignedCoords.add(emp.id);
+
+        const children = reportsMap[emp.id] || [];
+        const w = subtreeWidths[emp.id] || 260;
+        const myX = xStart + w / 2;
         
-        // Custom Drag and Drop pointer listeners
-        card.addEventListener("pointerdown", handleCardDragStart);
-    });
-    
-    document.querySelectorAll(".node-toggle-btn").forEach(btn => {
-        btn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const id = parseInt(btn.dataset.id);
-            toggleNode(id);
+        emp.x = Math.round(myX - 110);
+        emp.y = Math.round(y);
+        
+        let childXStart = xStart;
+        children.forEach(child => {
+            assignCoords(child, childXStart, y + ySpacing);
+            childXStart += (subtreeWidths[child.id] || 260);
         });
+    }
+
+    let currentXStart = 200;
+    roots.forEach(root => {
+        assignCoords(root, currentXStart, 150);
+        currentXStart += (subtreeWidths[root.id] || 260) + 150;
     });
-    
-    // Recalculate connection lines after layout renders
-    // Two rAFs ensure DOM paint has started; fallback timeout handles icon/font delays
+}
+
+function scheduleConnectionDraw() {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             drawConnections();
-            // Extra fallback in case icons/fonts cause layout shifts
             setTimeout(() => drawConnections(), 300);
         });
     });
@@ -1880,51 +1935,6 @@ function getConnectionChildNodes(childrenContainer) {
     ];
 }
 
-// Generate connection lines in the SVG overlay using orthogonal routing
-function drawConnections() {
-    svgOverlay.innerHTML = "";
-    updateCanvasBounds();
-
-    const nodes = document.querySelectorAll(".tree-node");
-
-    nodes.forEach(node => {
-        const parentId = parseInt(node.dataset.id);
-        const parentCardWrapper = node.querySelector(":scope > .node-card-wrapper");
-        const parentCard = parentCardWrapper?.querySelector(`.node-card[data-id="${parentId}"]`);
-        const childrenContainer = node.querySelector(":scope > .node-children");
-
-        if (!parentCard || !childrenContainer || childrenContainer.classList.contains("collapsed")) return;
-
-        const pLocal = getCanvasLocalRect(parentCard);
-        if (pLocal.width === 0 || pLocal.height === 0) return;
-
-        const startX = pLocal.x + pLocal.width / 2;
-        const startY = pLocal.y + pLocal.height;
-        const childAnchors = [];
-
-        getConnectionChildNodes(childrenContainer).forEach(childNode => {
-            const childId = parseInt(childNode.dataset.id);
-            const childCardWrapper = childNode.querySelector(":scope > .node-card-wrapper");
-            const childCard = childCardWrapper?.querySelector(`.node-card[data-id="${childId}"]`);
-            if (!childCard) return;
-
-            const cLocal = getCanvasLocalRect(childCard);
-            if (cLocal.width === 0 || cLocal.height === 0) return;
-
-            childAnchors.push({
-                id: childId,
-                x: cLocal.x + cLocal.width / 2,
-                y: cLocal.y
-            });
-        });
-
-        if (childAnchors.length === 0) return;
-
-        // Bus line sits halfway between parent bottom and first child top
-        const firstChildY = Math.min(...childAnchors.map(c => c.y));
-        const busY = startY + Math.max(16, Math.round((firstChildY - startY) / 2));
-
-        childAnchors.forEach(child => {
             const pathParts = [
                 `M ${startX} ${startY}`,
                 `L ${startX} ${busY}`,
@@ -2437,289 +2447,69 @@ let dropDraggedId = null;
 let dropTargetId = null;
 
 let activeDragCard = null;
-let activeDragClone = null;
+let activeDragCard = null;
 let dragGrabOffsetX = 0;
 let dragGrabOffsetY = 0;
-let currentSnapTargetId = null;
 
 function handleCardDragStart(e) {
-    // Only left click/pointer interaction
     if (e.button !== 0) return;
-    
-    // Ignore if clicking toggle button or inputs
     if (e.target.closest(".node-toggle-btn") || e.target.closest("button") || e.target.closest("input") || e.target.closest("a")) return;
-    
-    // Set pointer capture to prevent losing event when cursor leaves element
-    e.currentTarget.setPointerCapture(e.pointerId);
     
     const card = e.currentTarget;
     activeDragCard = card;
     draggedId = parseInt(card.dataset.id);
     
-    const cardRect = card.getBoundingClientRect();
-    const viewportRect = viewport.getBoundingClientRect();
-    
-    // Calculate grab offset (distance from mouse to card top-left)
-    dragGrabOffsetX = (e.clientX - cardRect.left) / currentScale;
-    dragGrabOffsetY = (e.clientY - cardRect.top) / currentScale;
-    
-    // Create clone
-    activeDragClone = card.cloneNode(true);
-    activeDragClone.classList.add("dragging-clone");
-    
-    // Style clone
-    activeDragClone.style.position = "absolute";
-    activeDragClone.style.zIndex = "10000";
-    activeDragClone.style.pointerEvents = "none";
-    activeDragClone.style.transformOrigin = "top left";
-    activeDragClone.style.boxShadow = "var(--shadow-lg), 0 0 24px rgba(79, 70, 229, 0.25)";
-    activeDragClone.style.opacity = "0.9";
-    
-    // Remove toggle buttons from clone
-    activeDragClone.querySelectorAll(".node-toggle-btn").forEach(btn => btn.remove());
-    
-    // Add dragging styling to the original card
+    const emp = employees.find(emp => emp.id === draggedId);
+    if (!emp) return;
+
+    card.setPointerCapture(e.pointerId);
     card.classList.add("dragging");
-    
-    canvas.appendChild(activeDragClone);
-    
-    // Position clone initially
-    const canvasRect = canvas.getBoundingClientRect();
-    const initX = (e.clientX - viewportRect.left - panX) / currentScale - dragGrabOffsetX;
-    const initY = (e.clientY - viewportRect.top - panY) / currentScale - dragGrabOffsetY;
-    activeDragClone.style.left = `${initX}px`;
-    activeDragClone.style.top = `${initY}px`;
-    
-    currentSnapTargetId = null;
-    
-    // Add window mouse/pointer listeners
+
+    dragGrabOffsetX = (e.clientX / currentScale) - emp.x;
+    dragGrabOffsetY = (e.clientY / currentScale) - emp.y;
+
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
 }
 
 function handleCardDragMove(e) {
-    if (!activeDragCard || !activeDragClone) return;
+    if (!activeDragCard || draggedId === null) return;
     
-    const viewportRect = viewport.getBoundingClientRect();
-    const canvasRect = canvas.getBoundingClientRect();
-    
-    // Calculate normal position
-    let canvasX = (e.clientX - viewportRect.left - panX) / currentScale - dragGrabOffsetX;
-    let canvasY = (e.clientY - viewportRect.top - panY) / currentScale - dragGrabOffsetY;
-    
-    const cloneWidth = activeDragClone.offsetWidth;
-    const cloneHeight = activeDragClone.offsetHeight;
-    
-    // Center coordinates of clone if drawn at normal position
-    const cloneCenterX = canvasX + cloneWidth / 2;
-    const cloneCenterY = canvasY + cloneHeight / 2;
-    
-    // Find closest valid target card
-    let closestTarget = null;
-    let minDistance = Infinity;
-    const snapThreshold = 180; // magnetic range
-    const absoluteSnapThreshold = 70; // actual snap range
-    
-    const cards = document.querySelectorAll(".node-card:not(.dragging-clone):not(.dragging)");
-    cards.forEach(targetCard => {
-        const targetId = parseInt(targetCard.dataset.id);
-        
-        // Validation: cannot report to self or descendant
-        if (targetId === draggedId) return;
-        
-        const emp = employees.find(emp => emp.id === draggedId);
-        if (emp && emp.managerId === targetId) return;
-        
-        const descendants = getDescendantIds(draggedId);
-        if (descendants.includes(targetId)) return;
-        
-        // Target coordinates
-        const targetRect = targetCard.getBoundingClientRect();
-        const targetCenterX = (targetRect.left - canvasRect.left + targetRect.width / 2) / currentScale;
-        const targetCenterY = (targetRect.top - canvasRect.top + targetRect.height / 2) / currentScale;
-        
-        const dx = cloneCenterX - targetCenterX;
-        const dy = cloneCenterY - targetCenterY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        
-        if (dist < minDistance) {
-            minDistance = dist;
-            closestTarget = {
-                id: targetId,
-                element: targetCard,
-                centerX: targetCenterX,
-                centerY: targetCenterY,
-                rect: targetRect,
-                width: targetRect.width / currentScale,
-                height: targetRect.height / currentScale
-            };
-        }
-    });
-    
-    // Clear old drag-over classes
-    document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
-    
-    // Clear old preview line
-    const oldPath = svgOverlay.querySelector(".live-preview-path");
-    if (oldPath) oldPath.remove();
-    
-    currentSnapTargetId = null;
-    
-    if (closestTarget && minDistance < snapThreshold) {
-        currentSnapTargetId = closestTarget.id;
-        closestTarget.element.classList.add("drag-over");
-        
-        // Target bottom center anchor
-        const targetX = closestTarget.centerX;
-        const targetY = (closestTarget.rect.top - canvasRect.top + closestTarget.rect.height) / currentScale;
-        
-        // Magnet Snap Effect: If close enough, snap the clone directly below the target card!
-        if (minDistance < absoluteSnapThreshold) {
-            canvasX = targetX - cloneWidth / 2;
-            canvasY = targetY + 35; // 35px below target card
-            
-            // Draw a straight line connecting them
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", `M ${targetX} ${targetY} L ${targetX} ${canvasY}`);
-            path.setAttribute("class", "connection-path highlighted live-preview-path");
-            path.setAttribute("stroke-dasharray", "4,4");
-            svgOverlay.appendChild(path);
-        } else {
-            // Draw a curved bezier line connecting them
-            const cloneX = canvasX + cloneWidth / 2;
-            const cloneY = canvasY;
-            const midY = (targetY + cloneY) / 2;
-            
-            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-            path.setAttribute("d", `M ${targetX} ${targetY} C ${targetX} ${midY}, ${cloneX} ${midY}, ${cloneX} ${cloneY}`);
-            path.setAttribute("class", "connection-path highlighted live-preview-path");
-            path.setAttribute("stroke-dasharray", "4,4");
-            svgOverlay.appendChild(path);
-        }
-    }
-    
-    // Position clone
-    activeDragClone.style.left = `${canvasX}px`;
-    activeDragClone.style.top = `${canvasY}px`;
+    const emp = employees.find(emp => emp.id === draggedId);
+    if (!emp) return;
+
+    const newX = Math.round(e.clientX / currentScale - dragGrabOffsetX);
+    const newY = Math.round(e.clientY / currentScale - dragGrabOffsetY);
+
+    emp.x = newX;
+    emp.y = newY;
+
+    activeDragCard.style.left = `${newX}px`;
+    activeDragCard.style.top = `${newY}px`;
+
+    drawConnections();
 }
 
 function handleCardDragEnd(e) {
-    // Remove listeners
     window.removeEventListener("pointermove", handleCardDragMove);
     window.removeEventListener("pointerup", handleCardDragEnd);
     
-    if (!activeDragCard) return;
-    
-    // Release pointer capture
-    try {
-        activeDragCard.releasePointerCapture(e.pointerId);
-    } catch(err) {}
-    
-    // Clear live preview line
-    const oldPath = svgOverlay.querySelector(".live-preview-path");
-    if (oldPath) oldPath.remove();
-    
-    // Clear highlights
-    document.querySelectorAll(".node-card").forEach(c => c.classList.remove("drag-over"));
-    activeDragCard.classList.remove("dragging");
-    
-    // Remove clone
-    if (activeDragClone) {
-        activeDragClone.remove();
-        activeDragClone = null;
+    if (activeDragCard) {
+        try {
+            activeDragCard.releasePointerCapture(e.pointerId);
+        } catch (err) {}
+        activeDragCard.classList.remove("dragging");
+        activeDragCard = null;
     }
     
-    // Trigger modal drop action
-    const finalTargetId = currentSnapTargetId;
-    const finalDraggedId = draggedId;
-    
-    activeDragCard = null;
     draggedId = null;
-    
-    if (finalDraggedId !== null) {
-        // Check if dropped inside detail drawer or modals
-        if (e.target.closest(".drawer") || e.target.closest(".modal")) return;
-        
-        openDropActionModal(finalDraggedId, finalTargetId);
-    }
-}
-
-function openDropActionModal(dragged, target) {
-    dropDraggedId = dragged;
-    dropTargetId = target;
-    const emp = employees.find(e => e.id === dropDraggedId);
-    if (!emp) return;
-    
-    const modal = document.getElementById("drop-action-modal");
-    const overlay = document.getElementById("drop-modal-overlay");
-    const desc = document.getElementById("drop-modal-desc");
-    
-    const optReportTo = document.getElementById("opt-report-to");
-    const optBecomeManager = document.getElementById("opt-become-manager");
-    const optChangeDept = document.getElementById("opt-change-dept");
-    const optHoldConcurrent = document.getElementById("opt-hold-concurrent");
-    
-    const optReportToDesc = document.getElementById("opt-report-to-desc");
-    const optBecomeManagerDesc = document.getElementById("opt-become-manager-desc");
-    const optChangeDeptDesc = document.getElementById("opt-change-dept-desc");
-    const optHoldConcurrentDesc = document.getElementById("opt-hold-concurrent-desc");
-    
-    const deptGroup = document.getElementById("dept-select-group");
-    deptGroup.style.display = "none";
-    
-    if (target !== null) {
-        const mgr = employees.find(e => e.id === target);
-        if (!mgr) return;
-        
-        optReportTo.style.display = "flex";
-        optBecomeManager.style.display = "flex";
-        optChangeDept.style.display = "flex";
-        optHoldConcurrent.style.display = "flex";
-        
-        optReportTo.querySelector("strong").innerText = "รายงานตรงต่อ (ต่อล่าง)";
-        optBecomeManager.querySelector("strong").innerText = "เป็นหัวหน้างานของ (ต่อบน)";
-        optChangeDept.querySelector("strong").innerText = "ย้ายแผนกอย่างเดียว";
-        optHoldConcurrent.querySelector("strong").innerText = "ควบตำแหน่ง (เพิ่มตำแหน่งใหม่)";
-        
-        desc.innerHTML = `ต้องการจัดโครงสร้างสำหรับ <strong>${escapeHTML(emp.name)}</strong> ร่วมกับ <strong>${escapeHTML(mgr.name)}</strong> อย่างไร?`;
-        optReportToDesc.innerText = `ให้ ${emp.name} ทำงานภายใต้ ${mgr.name} (และเปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department})`;
-        optBecomeManagerDesc.innerText = `ให้ ${emp.name} มาเป็นหัวหน้าของ ${mgr.name} (แทรกสายงานระหว่างหัวหน้าเดิม of ${mgr.name} กับตัว ${mgr.name})`;
-        optChangeDeptDesc.innerText = `เปลี่ยนแผนกของ ${emp.name} เป็นแผนก ${mgr.department} เท่านั้น (รักษาสายรายงานผู้จัดการคนเดิม)`;
-        optHoldConcurrentDesc.innerText = `เพิ่มตำแหน่งงานควบใหม่ของ ${emp.name} ภายใต้ ${mgr.name} (ตำแหน่งเดิมยังอยู่ที่เดิม)`;
-    } else {
-        optReportTo.style.display = "flex";
-        optBecomeManager.style.display = "none";
-        optChangeDept.style.display = "flex";
-        optHoldConcurrent.style.display = "flex";
-        
-        optReportTo.querySelector("strong").innerText = "ตั้งเป็นระดับสูงสุด (Top Level)";
-        optChangeDept.querySelector("strong").innerText = "ย้ายแผนกของพนักงาน";
-        optHoldConcurrent.querySelector("strong").innerText = "ควบตำแหน่ง (ระดับสูงสุด)";
-        
-        optReportToDesc.innerText = `ให้ ${emp.name} รายงานตรงต่อตนเอง (ไม่ขึ้นตรงกับใคร)`;
-        optChangeDeptDesc.innerText = `เปลี่ยนแผนกใหม่ของ ${emp.name}`;
-        optHoldConcurrentDesc.innerText = `เพิ่มตำแหน่งงานควบใหม่ของ ${emp.name} ในระดับสูงสุด (ตำแหน่งเดิมยังอยู่ที่เดิม)`;
-        
-        desc.innerHTML = `จัดวางพนักงาน <strong>${escapeHTML(emp.name)}</strong> ในแคนวาสพื้นหลัง`;
-    }
-    
-    overlay.classList.add("active");
-    modal.classList.add("active");
-}
-
-function closeDropModal() {
-    document.getElementById("drop-modal-overlay").classList.remove("active");
-    document.getElementById("drop-action-modal").classList.remove("active");
-    dropDraggedId = null;
-    dropTargetId = null;
+    saveData();
 }
 
 // Run application on load
 window.addEventListener("DOMContentLoaded", () => {
     init();
     
-    // Use ResizeObserver to redraw connections whenever the tree container resizes
-    // (e.g., after icons load, font swaps, or collapse/expand animations)
     const treeResizeObserver = new ResizeObserver(() => {
         drawConnections();
     });

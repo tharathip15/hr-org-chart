@@ -13,6 +13,38 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Beautiful App Loader Overlay -->
+    <div id="app-loader" class="app-loader">
+        <div class="loader-backdrop"></div>
+        <div class="loader-card">
+            <div class="loader-visual">
+                <div class="loader-spinner-outer"></div>
+                <div class="loader-spinner-inner"></div>
+                <div class="loader-logo-container">
+                    <svg class="loader-logo-svg" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M32 18 L18 44" stroke="var(--accent-primary)" stroke-width="3" stroke-linecap="round" class="logo-path-left" />
+                        <path d="M32 18 L46 44" stroke="var(--accent-primary)" stroke-width="3" stroke-linecap="round" class="logo-path-right" />
+                        <circle cx="32" cy="18" r="7" fill="var(--accent-primary)" class="logo-node-top" />
+                        <circle cx="18" cy="44" r="5" fill="var(--accent-primary)" class="logo-node-left" />
+                        <circle cx="46" cy="44" r="5" fill="var(--accent-primary)" class="logo-node-right" />
+                    </svg>
+                </div>
+            </div>
+            <div class="loader-text-group">
+                <h2 class="loader-app-name">HR Org Chart</h2>
+                <div class="loader-status-container">
+                    <span class="loader-status" id="loader-status">กำลังเริ่มต้นระบบ...</span>
+                </div>
+            </div>
+            <div class="loader-progress-container">
+                <div class="loader-progress-track">
+                    <div class="loader-progress-bar" id="loader-progress-bar" style="width: 0%"></div>
+                </div>
+                <span class="loader-percent" id="loader-percent">0%</span>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container">
         <!-- Sidebar -->
         <aside class="sidebar">
@@ -210,61 +242,6 @@
                 <button type="submit" class="btn btn-primary" id="btn-submit-form">Save Employee</button>
             </div>
         </form>
-    </div>
-
-    <!-- Drop Action Selection Modal -->
-    <div class="modal-overlay" id="drop-modal-overlay"></div>
-    <div class="modal" id="drop-action-modal" style="width: 440px;">
-        <div class="modal-header">
-            <h3>ปรับโครงสร้างสายรายงาน</h3>
-            <button class="close-btn" id="close-drop-modal"><i data-lucide="x"></i></button>
-        </div>
-        <div class="modal-body" style="padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-            <div id="drop-modal-desc" style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
-                ต้องการจัดวางพนักงานคนนี้อย่างไร?
-            </div>
-            
-            <div class="drop-options-list" style="display: flex; flex-direction: column; gap: 12px;">
-                <button class="btn btn-secondary btn-block" id="opt-report-to" style="justify-content: flex-start; text-align: left; padding: 14px 18px; border-radius: var(--radius-md); height: auto;">
-                    <i data-lucide="corner-right-down" style="color: var(--accent-primary); width: 24px; height: 24px; flex-shrink: 0;"></i>
-                    <div style="margin-left: 12px;">
-                        <strong style="display: block; font-size: 14px; color: var(--text-primary);">รายงานตรงต่อ (ต่อล่าง)</strong>
-                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-top: 2px; display: block;" id="opt-report-to-desc">เป็นลูกน้องของ...</span>
-                    </div>
-                </button>
-                
-                <button class="btn btn-secondary btn-block" id="opt-become-manager" style="justify-content: flex-start; text-align: left; padding: 14px 18px; border-radius: var(--radius-md); height: auto;">
-                    <i data-lucide="corner-right-up" style="color: #10b981; width: 24px; height: 24px; flex-shrink: 0;"></i>
-                    <div style="margin-left: 12px;">
-                        <strong style="display: block; font-size: 14px; color: var(--text-primary);">เป็นหัวหน้างานของ (ต่อบน)</strong>
-                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-top: 2px; display: block;" id="opt-become-manager-desc">เป็นหัวหน้าของ...</span>
-                    </div>
-                </button>
-                
-                <button class="btn btn-secondary btn-block" id="opt-change-dept" style="justify-content: flex-start; text-align: left; padding: 14px 18px; border-radius: var(--radius-md); height: auto;">
-                    <i data-lucide="folder-sync" style="color: #f59e0b; width: 24px; height: 24px; flex-shrink: 0;"></i>
-                    <div style="margin-left: 12px;">
-                        <strong style="display: block; font-size: 14px; color: var(--text-primary);">ย้ายแผนกอย่างเดียว</strong>
-                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-top: 2px; display: block;" id="opt-change-dept-desc">เปลี่ยนไปแผนก...</span>
-                    </div>
-                </button>
-
-                <button class="btn btn-secondary btn-block" id="opt-hold-concurrent" style="justify-content: flex-start; text-align: left; padding: 14px 18px; border-radius: var(--radius-md); height: auto;">
-                    <i data-lucide="copy" style="color: #8b5cf6; width: 24px; height: 24px; flex-shrink: 0;"></i>
-                    <div style="margin-left: 12px;">
-                        <strong style="display: block; font-size: 14px; color: var(--text-primary);">ควบตำแหน่ง (เพิ่มตำแหน่งใหม่)</strong>
-                        <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-top: 2px; display: block;" id="opt-hold-concurrent-desc">เพิ่มตำแหน่งควบงานโดยไม่ย้ายตำแหน่งเดิม</span>
-                    </div>
-                </button>
-            </div>
-            
-            <div class="form-group" id="dept-select-group" style="display: none; border-top: 1px solid var(--border-color); padding-top: 16px;">
-                <label for="drop-new-dept" style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; display: block;">เลือกแผนกใหม่:</label>
-                <input type="text" id="drop-new-dept" list="drop-department-list" placeholder="พิมพ์ชื่อแผนก..." style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
-                <datalist id="drop-department-list"></datalist>
-                <button class="btn btn-primary" id="btn-save-new-dept" style="margin-top: 12px; width: 100%;">บันทึกการย้ายแผนก</button>
-            </div>
-        </div>
     </div>
 
     <!-- Notification system -->

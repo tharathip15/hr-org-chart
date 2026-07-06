@@ -8,7 +8,7 @@ const preferencesApiPath = new URL("../api/preferences.js", import.meta.url);
 
 test("app loads shared collapsed node preferences before rendering", () => {
     assert.match(appSource, /const PREFERENCES_API_URL = "\/api\/preferences"/);
-    assert.match(appSource, /await loadData\(\);\s*await loadPreferences\(\);/s);
+    assert.match(appSource, /await loadData\(\);[\s\S]*?await loadPreferences\(\);/);
     assert.match(appSource, /function applyPreferences\(preferences\)/);
     assert.match(appSource, /collapsedNodes = new Set\(sanitizeCollapsedNodeIds\(preferences\?\.collapsedNodeIds\)\)/);
 });
