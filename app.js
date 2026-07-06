@@ -742,6 +742,23 @@ function derivePositionsFromEmployees() {
     }, employee.id));
 }
 
+function isTransitivelyReportingTo(positionId, targetManagerEmployeeId) {
+    let current = positions.find(p => p.id === positionId);
+    while (current && current.managerId !== null) {
+        const parent = positions.find(p => p.id === current.managerId);
+        if (!parent) break;
+        if (parent.employeeId === targetManagerEmployeeId) {
+            return true;
+        }
+        // Keep traversing only if the parent is vacant!
+        if (parent.employeeId !== null) {
+            break;
+        }
+        current = parent;
+    }
+    return false;
+}
+
 function saveLocalPositionsBackup() {
     try {
         localStorage.setItem("hr_positions", JSON.stringify(positions));
@@ -810,6 +827,10 @@ async function loadPositions() {
                         // Only self-heal primary positions, leaving secondary dual-roles editable
                         const primaryPos = getPrimaryPositionForEmployee(employee.id);
                         if (primaryPos && primaryPos.id === position.id) {
+                            // Skip self-healing if already transitively reporting to this manager employee through vacant positions
+                            if (isTransitivelyReportingTo(position.id, employee.managerId)) {
+                                return;
+                            }
                             const correctManagerPosId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
                             if (correctManagerPosId !== position.managerId) {
                                 console.log(`Self-healed position ${position.title} manager from ${position.managerId} to ${correctManagerPosId}`);
