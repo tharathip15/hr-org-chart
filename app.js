@@ -2072,47 +2072,10 @@ function renderTree() {
 
     // 4. Render cards flat with absolute positioning
     const html = visiblePositions.map(position => getPositionCardHTML(position)).join("");
-    /*
-    visibleEmployees.map(employee => {
-        const deptClass = getDeptClass(employee.department);
-        const dualRoleCount = employees.filter(e => samePerson(e, employee)).length;
-        const isDualRole = dualRoleCount > 1;
-        const hasReports = employees.some(e => e.managerId === employee.id);
-        
-        let cardHtml = `
-            <div class="node-card absolute-card" data-id="${employee.id}" style="position: absolute; left: ${employee.x}px; top: ${employee.y}px; touch-action: none;">
-                <div class="card-header">
-                    ${getAvatarHTML(employee)}
-                    <div class="card-title-group">
-                        <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
-                            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(employee.name)}</span>
-                            ${isDualRole ? `<span class="dual-role-badge" title="มีหลายตำแหน่งงาน (Dual Role)" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ''}
-                        </div>
-                        <div class="card-role">${escapeHTML(employee.role)}</div>
-                    </div>
-                </div>
-                <div class="card-department-badge ${deptClass}">
-                    ${escapeHTML(employee.department)}
-                </div>
-        `;
-
-        if (hasReports) {
-            const isCollapsed = collapsedNodes.has(employee.id);
-            cardHtml += `
-                <button class="node-toggle-btn ${isCollapsed ? 'collapsed' : ''}" data-id="${employee.id}">
-                    <i data-lucide="${isCollapsed ? 'chevron-down' : 'chevron-up'}"></i>
-                </button>
-            `;
-        }
-
-        cardHtml += `</div>`;
-        return cardHtml;
-    }).join("");
-
-    */
     treeContainer.innerHTML = html;
     wireTreeInteractions();
     scheduleConnectionDraw();
+    renderAnnotations();
 }
 
 function drawConnections() {
@@ -2257,7 +2220,7 @@ function calculateInitialCoordinates() {
         
         if (children.length === 0) {
             subtreeWidths[positionId] = xSpacing;
-            subtreeHeights[positionId] = 120; // default height for a leaf node
+            subtreeHeights[positionId] = 140; // default height for a leaf node
             return xSpacing;
         }
 
@@ -2267,10 +2230,10 @@ function calculateInitialCoordinates() {
             // Children are stacked vertically, so width is just xSpacing
             subtreeWidths[positionId] = xSpacing;
             
-            let totalHeight = 120; // height for parent itself
+            let totalHeight = 140; // height for parent itself
             children.forEach(child => {
                 computeWidthsAndHeights(child.id);
-                totalHeight += (subtreeHeights[child.id] || 120);
+                totalHeight += (subtreeHeights[child.id] || 140);
             });
             subtreeHeights[positionId] = totalHeight;
             return xSpacing;
@@ -2280,7 +2243,7 @@ function calculateInitialCoordinates() {
             let maxHeight = 0;
             children.forEach(child => {
                 width += computeWidthsAndHeights(child.id);
-                maxHeight = Math.max(maxHeight, subtreeHeights[child.id] || 120);
+                maxHeight = Math.max(maxHeight, subtreeHeights[child.id] || 140);
             });
             subtreeWidths[positionId] = Math.max(xSpacing, width);
             subtreeHeights[positionId] = ySpacing + maxHeight;
@@ -2311,12 +2274,12 @@ function calculateInitialCoordinates() {
         
         if (isVertical) {
             // Stack children vertically under the parent
-            let currentChildY = position.y + 120; // Start below the parent
+            let currentChildY = position.y + 140; // Start below the parent
             children.forEach(child => {
                 // Place child shifted horizontally to the right
                 const childXStart = position.x + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
                 assignCoords(child, childXStart, currentChildY);
-                currentChildY += (subtreeHeights[child.id] || 120);
+                currentChildY += (subtreeHeights[child.id] || 140);
             });
         } else {
             // Standard horizontal sibling layout

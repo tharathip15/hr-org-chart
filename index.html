@@ -11,6 +11,8 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <link rel="stylesheet" href="style.css">
+    <!-- SVG Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👥</text></svg>">
 </head>
 <body>
     <!-- Beautiful App Loader Overlay -->
@@ -45,6 +47,40 @@
         </div>
     </div>
 
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="login-overlay" aria-modal="true" role="dialog" aria-labelledby="login-title">
+        <div class="login-card">
+            <div class="login-header-icon">
+                <i data-lucide="lock-keyhole"></i>
+            </div>
+            <h2 id="login-title">Sign in</h2>
+            <p>Enter your access password to open the organization chart.</p>
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" autocomplete="current-password" required placeholder="Enter password">
+                </div>
+                <div id="login-error-msg" class="login-error" role="alert" style="display: none;">
+                    <i data-lucide="alert-circle"></i>
+                    <span>Incorrect password. Please try again.</span>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" id="btn-login-submit">
+                    <i data-lucide="log-in"></i> Sign In
+                </button>
+            </form>
+            <div class="login-divider"><span>or</span></div>
+            <button type="button" class="btn btn-secondary btn-block" id="btn-login-sso">
+                <svg viewBox="0 0 23 23" width="16" height="16" fill="currentColor" aria-hidden="true">
+                    <path d="M0 0h11v11H0z" fill="#f25022"></path>
+                    <path d="M12 0h11v11H12z" fill="#7fba00"></path>
+                    <path d="M0 12h11v11H0z" fill="#00a4ef"></path>
+                    <path d="M12 12h11v11H12z" fill="#ffb900"></path>
+                </svg>
+                Sign in with Microsoft
+            </button>
+        </div>
+    </div>
+
     <div class="app-container">
         <!-- Sidebar -->
         <aside class="sidebar">
@@ -54,7 +90,7 @@
                     <span>HR Org Chart</span>
                 </div>
             </div>
-            
+
             <div class="sidebar-section">
                 <h3>Statistics</h3>
                 <div class="stats-grid">
@@ -149,12 +185,12 @@
                 <div class="canvas-tip">
                     <i data-lucide="info"></i> Drag to pan. Scroll to zoom. Click card to view details.
                 </div>
-                
+
                 <!-- Zoomable/Pannable Canvas -->
                 <div class="chart-canvas" id="chart-canvas">
                     <!-- SVG Overlay for connector lines -->
                     <svg class="connections-overlay" id="svg-overlay"></svg>
-                    
+
                     <!-- Annotations Overlay -->
                     <div id="annotations-container" class="annotations-container" style="position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; z-index: 5;"></div>
 
@@ -202,11 +238,10 @@
                 </div>
                 <div class="form-row two-cols">
                     <div class="form-group">
-                        <label for="form-position-layout">Position Layout Style (รูปแบบการจัดวางเก้าอี้)</label>
+                        <label for="form-position-layout">Subordinate Layout Style (รูปแบบการจัดวางลูกน้อง)</label>
                         <select id="form-position-layout" style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
-                            <option value="horizontal">Horizontal (ลูกน้องเรียงแนวนอน)</option>
-                            <option value="vertical">Vertical (ลูกน้องเรียงแนวตั้ง/ขั้นบันได)</option>
-                            <option value="assistant">Assistant / EA (วางแยกขวาข้างนายจ้าง)</option>
+                            <option value="horizontal">Horizontal (แนวนอน)</option>
+                            <option value="vertical">Staircase / Vertical (ขั้นบันได / แนวตั้ง)</option>
                         </select>
                     </div>
                     <div class="form-group">
