@@ -2268,7 +2268,9 @@ function calculateInitialCoordinates() {
         const w = subtreeWidths[position.id] || xSpacing;
 
         // If this position was manually dragged, keep its custom coordinates and adjust childXStart
-        if (position.isManual && position.x !== undefined && position.x !== null && position.y !== undefined && position.y !== null) {
+        // Only honor manual positioning within individual department views, not in overview ("All")
+        const useManual = selectedDept !== "All" && position.isManual && position.x !== undefined && position.x !== null && position.y !== undefined && position.y !== null;
+        if (useManual) {
             xStart = position.x + 110 - w / 2;
         } else {
             const myX = xStart + w / 2;
