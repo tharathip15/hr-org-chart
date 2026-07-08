@@ -27,22 +27,26 @@ export default async function handler(request, response) {
 async function handleGet(response) {
   try {
     const { data, error } = await supabase
-      .from("employees")
+      .from("positions")
       .select("*")
       .order("id", { ascending: true });
 
     if (error) {
+      if (isMissingTableError(error)) {
+        response.setHeader("Cache-Control", "no-store");
+        response.status(200).json([]);
+        return;
+      }
       throw error;
     }
 
-    const employees = (data || []).map(mapDbToEmployee);
     response.setHeader("Cache-Control", "no-store");
-    response.status(200).json(employees);
+    response.status(200).json((data || []).map(mapDbToPosition));
   } catch (error) {
-    console.error("Failed to load employees from Supabase:", error);
+    console.error("Failed to load positions from Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to load employees from database"
+      error: "Failed to load positions from database"
     });
   }
 }
@@ -56,101 +60,73 @@ async function handlePut(request, response) {
       return;
     }
 
-    const payloadIds = body.map(emp => parseInt(emp.id, 10)).filter(Number.isInteger);
+    const payloadIds = body
+      .map(position => parseInt(position.id, 10))
+      .filter(Number.isInteger);
 
-    // 1. Delete employees that are no longer in the payload
     if (payloadIds.length === 0) {
       const { error: deleteError } = await supabase
-        .from("employees")
+        .from("positions")
         .delete()
         .neq("id", 0);
       if (deleteError) throw deleteError;
     } else {
       const { error: deleteError } = await supabase
-        .from("employees")
+        .from("positions")
         .delete()
         .not("id", "in", `(${payloadIds.join(",")})`);
       if (deleteError) throw deleteError;
     }
 
-    // 2. Upsert the current list of employees
     if (body.length > 0) {
-      const dbRows = body.map(mapEmployeeToDb);
       const { error: upsertError } = await supabase
-        .from("employees")
-        .upsert(dbRows);
-      
-      if (upsertError) {
-        // Fallback: if columns x or y are missing in database, retry upsert without coordinates
-        const isMissingColumns = upsertError.message && (
-          upsertError.message.includes("column") || 
-          upsertError.message.includes("schema cache")
-        );
-        if (isMissingColumns) {
-          console.warn("x/y columns missing in Supabase, retrying upsert without coordinates...");
-          const fallbackRows = dbRows.map(row => {
-            const copy = { ...row };
-            delete copy.x;
-            delete copy.y;
-            return copy;
-          });
-          const { error: retryError } = await supabase
-            .from("employees")
-            .upsert(fallbackRows);
-          if (retryError) throw retryError;
-        } else {
-          throw upsertError;
-        }
-      }
+        .from("positions")
+        .upsert(body.map(mapPositionToDb));
+      if (upsertError) throw upsertError;
     }
 
     // Write audit log with snapshot
-    await createSnapshotAndLog("employees_update", `Updated employees (${body.length} items)`);
+    await createSnapshotAndLog("positions_update", `Updated positions (${body.length} items)`);
 
     response.status(200).json({ ok: true, count: body.length });
   } catch (error) {
-    console.error("Failed to save employees to Supabase:", error);
+    console.error("Failed to save positions to Supabase:", error);
     response.status(500).json({
       ok: false,
-      error: "Failed to save employees to database"
+      error: "Failed to save positions to database"
     });
   }
 }
 
-function mapDbToEmployee(row) {
+function mapDbToPosition(row) {
   return {
     id: row.id,
-    personId: row.person_id,
-    name: row.name,
-    role: row.role,
+    title: row.title,
     department: row.department,
     managerId: row.manager_id,
-    email: row.email,
-    phone: row.phone,
-    bio: row.bio,
-    photoUrl: row.photo_url,
-    avatarColor: row.avatar_color,
+    employeeId: row.employee_id,
     x: row.x,
-    y: row.y
+    y: row.y,
+    notes: row.notes || ""
   };
 }
 
-function mapEmployeeToDb(emp) {
+function mapPositionToDb(position) {
   return {
-    id: parseInt(emp.id, 10),
-    person_id: emp.personId || "",
-    name: emp.name || "",
-    role: emp.role || "",
-    department: emp.department || "",
-    manager_id: emp.managerId ? parseInt(emp.managerId, 10) : null,
-    email: emp.email || null,
-    phone: emp.phone || null,
-    bio: emp.bio || null,
-    photo_url: emp.photoUrl || null,
-    avatar_color: emp.avatarColor || null,
-    x: emp.x !== undefined && emp.x !== null ? parseInt(emp.x, 10) : null,
-    y: emp.y !== undefined && emp.y !== null ? parseInt(emp.y, 10) : null
+    id: parseInt(position.id, 10),
+    title: position.title || "",
+    department: position.department || "",
+    manager_id: position.managerId ? parseInt(position.managerId, 10) : null,
+    employee_id: position.employeeId ? parseInt(position.employeeId, 10) : null,
+    x: position.x !== undefined && position.x !== null ? parseInt(position.x, 10) : null,
+    y: position.y !== undefined && position.y !== null ? parseInt(position.y, 10) : null,
+    notes: position.notes || null
   };
+}
+
+function isMissingTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return message.includes("schema cache") || message.includes("does not exist");
 }
 
 function readJsonBody(request) {

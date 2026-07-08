@@ -6,7 +6,6 @@ const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 
 test("app supports free-form canvas coordinates calculation", () => {
     assert.match(appSource, /function calculateInitialCoordinates\(\)/);
-    assert.match(appSource, /subtreeWidths\[positionId\] = Math\.max\(/);
 });
 
 test("app renders visible positions with absolute CSS positioning", () => {

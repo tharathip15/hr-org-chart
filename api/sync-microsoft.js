@@ -1,10 +1,16 @@
-import { supabase } from "./supabase.js";
+import { supabase } from "./_helpers/supabase.js";
+import { validateToken } from "./_helpers/auth.js";
 
 const tenantId = process.env.MICROSOFT_TENANT_ID;
 const clientId = process.env.MICROSOFT_CLIENT_ID;
 const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
 
 export default async function handler(request, response) {
+  if (!validateToken(request)) {
+    response.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     response.status(405).json({ ok: false, error: "Method not allowed" });

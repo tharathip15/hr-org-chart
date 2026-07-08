@@ -1,8 +1,14 @@
-import { supabase } from "./supabase.js";
+import { supabase } from "./_helpers/supabase.js";
+import { validateToken } from "./_helpers/auth.js";
 
 const MAX_BODY_SIZE = 512 * 1024;
 
 export default async function handler(request, response) {
+  if (!validateToken(request)) {
+    response.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
   if (request.method === "GET") {
     await handleGet(response);
     return;

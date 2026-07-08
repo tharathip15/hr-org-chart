@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+.vercel
+node_modules
+hr_org_chart.sqlite3
+__pycache__
+*.pyc
+scratch
+docs
+tests
