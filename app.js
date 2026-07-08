@@ -2051,11 +2051,14 @@ function renderTree() {
 
     // 1. Calculate hidden IDs due to collapsed nodes
     const hiddenIds = new Set();
-    function markHidden(mgrId) {
+    function markHidden(mgrId, visited) {
+        if (!visited) visited = new Set();
+        if (visited.has(mgrId)) return;
+        visited.add(mgrId);
         positions.forEach(position => {
             if (position.managerId === mgrId) {
                 hiddenIds.add(position.id);
-                markHidden(position.id);
+                markHidden(position.id, visited);
             }
         });
     }
@@ -2154,11 +2157,14 @@ function drawConnections() {
 function calculateInitialCoordinates() {
     // 1. Determine which positions are currently visible (active)
     const hiddenIds = new Set();
-    function markHidden(mgrId) {
+    function markHidden(mgrId, visited) {
+        if (!visited) visited = new Set();
+        if (visited.has(mgrId)) return;
+        visited.add(mgrId);
         positions.forEach(pos => {
             if (pos.managerId === mgrId) {
                 hiddenIds.add(pos.id);
-                markHidden(pos.id);
+                markHidden(pos.id, visited);
             }
         });
     }
