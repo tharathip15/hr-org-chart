@@ -922,6 +922,20 @@ async function loadPositions() {
                             }
                             const correctManagerPosId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
                             if (correctManagerPosId !== position.managerId) {
+                                // Skip if current manager is in the chain leading up to the correct manager
+                                // e.g. position→62→75 is valid, don't flatten to position→75
+                                if (position.managerId !== null && correctManagerPosId !== null) {
+                                    let walkId = position.managerId;
+                                    const visited = new Set();
+                                    while (walkId !== null && !visited.has(walkId)) {
+                                        if (walkId === correctManagerPosId) {
+                                            return; // Current manager is under the correct manager, hierarchy is fine
+                                        }
+                                        visited.add(walkId);
+                                        const walkPos = positions.find(p => p.id === walkId);
+                                        walkId = walkPos ? walkPos.managerId : null;
+                                    }
+                                }
                                 console.log(`Self-healed position ${position.title} manager from ${position.managerId} to ${correctManagerPosId}`);
                                 position.managerId = correctManagerPosId;
                                 positionsChanged = true;
