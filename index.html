@@ -147,8 +147,8 @@
                     <button class="btn btn-secondary" id="btn-sync-microsoft" style="margin-right: 8px;">
                         <i data-lucide="refresh-cw"></i> Sync Microsoft 365
                     </button>
-                    <button class="btn btn-primary" id="btn-manage-employees">
-                        <i data-lucide="users"></i> Employees
+                    <button class="btn btn-primary" id="btn-add-employee">
+                        <i data-lucide="user-plus"></i> Add Employee
                     </button>
                 </div>
             </header>
@@ -290,87 +290,92 @@
         </div>
     </div>
 
-    <!-- Employee Management Modal -->
-    <div class="modal-overlay" id="employees-modal-overlay"></div>
-    <div class="modal employees-modal" id="employees-modal">
+    <!-- Employee Form Modal -->
+    <div class="modal-overlay" id="form-modal-overlay"></div>
+    <div class="modal" id="form-modal">
         <div class="modal-header">
-            <h3>Manage Employees</h3>
-            <button class="close-btn" id="close-employees-modal"><i data-lucide="x"></i></button>
+            <h3 id="modal-title">Add New Employee</h3>
+            <button class="close-btn" id="close-form-modal"><i data-lucide="x"></i></button>
         </div>
-        <div class="employees-modal-body">
-            <form id="employee-form" class="employee-form">
-                <input type="hidden" id="form-employee-id">
-                <input type="hidden" id="form-photo-data">
-                <div class="modal-body">
-                    <div class="form-row">
-                        <div class="profile-form-top">
-                            <button type="button" class="photo-picker" id="btn-photo-trigger">
-                                <span class="form-photo-preview" id="form-photo-preview">
-                                    <i data-lucide="camera"></i>
-                                </span>
-                                <span class="photo-picker-copy">
-                                    <strong>Employee Photo</strong>
-                                    <small>Upload a clear headshot</small>
-                                </span>
-                            </button>
-                            <button type="button" class="btn btn-secondary btn-sm" id="btn-remove-photo">Remove</button>
-                            <input type="file" id="form-photo-input" accept="image/*" style="display: none;">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="form-name">Full Name <span class="required">*</span></label>
-                            <input type="text" id="form-name" required placeholder="e.g. John Doe">
-                        </div>
-                    </div>
-                    <div class="form-row two-cols">
-                        <div class="form-group">
-                            <label for="form-department">Department <span class="required">*</span></label>
-                            <input type="text" id="form-department" list="department-list" required placeholder="e.g. Engineering">
-                            <datalist id="department-list"></datalist>
-                        </div>
-                        <div class="form-group">
-                            <label for="form-role">Job Title / Role</label>
-                            <input type="text" id="form-role" placeholder="e.g. Developer">
-                        </div>
-                    </div>
-                    <div class="form-row two-cols">
-                        <div class="form-group">
-                            <label for="form-email">Email Address</label>
-                            <input type="email" id="form-email" placeholder="e.g. john.doe@company.com">
-                        </div>
-                        <div class="form-group">
-                            <label for="form-phone">Phone Number</label>
-                            <input type="tel" id="form-phone" placeholder="e.g. 081-234-5678">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="form-bio">Bio / Notes</label>
-                            <textarea id="form-bio" rows="2" placeholder="Brief description of responsibilities or bio..."></textarea>
-                        </div>
+        <form id="employee-form">
+            <input type="hidden" id="form-employee-id">
+            <input type="hidden" id="form-person-id">
+            <input type="hidden" id="form-photo-data">
+            <div class="modal-body">
+                <div class="form-row">
+                    <div class="profile-form-top">
+                        <button type="button" class="photo-picker" id="btn-photo-trigger">
+                            <span class="form-photo-preview" id="form-photo-preview">
+                                <i data-lucide="camera"></i>
+                            </span>
+                            <span class="photo-picker-copy">
+                                <strong>Employee Photo</strong>
+                                <small>Upload a clear headshot</small>
+                            </span>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-remove-photo">Remove</button>
+                        <input type="file" id="form-photo-input" accept="image/*" style="display: none;">
                     </div>
                 </div>
-                <div class="employee-form-actions">
-                    <button type="button" class="btn btn-secondary" id="btn-reset-employee-form">New Employee</button>
-                    <button type="button" class="btn btn-danger" id="btn-delete-employee-form">Delete</button>
-                    <button type="submit" class="btn btn-primary" id="btn-submit-employee">Save Employee</button>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-person-link">Employee Profile / Multiple Positions</label>
+                        <input type="text" id="form-person-link" list="person-list" placeholder="Choose existing employee to link this position">
+                        <datalist id="person-list"></datalist>
+                    </div>
                 </div>
-            </form>
-            <div class="employees-list-panel">
-                <div class="employees-list-header">
-                    <h4>All Employees</h4>
-                    <span id="employees-summary">0 employees</span>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-name">Full Name <span class="required">*</span></label>
+                        <input type="text" id="form-name" required placeholder="e.g. John Doe">
+                    </div>
                 </div>
-                <div class="employees-list" id="employees-list"></div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-role">Job Title <span class="required">*</span></label>
+                        <input type="text" id="form-role" required placeholder="e.g. Senior Software Engineer">
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-department">Department <span class="required">*</span></label>
+                        <input type="text" id="form-department" list="department-list" required placeholder="e.g. Engineering">
+                        <datalist id="department-list"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="form-manager">Reports To</label>
+                        <input type="text" id="form-manager" list="manager-list" placeholder="None (Top Level)">
+                        <datalist id="manager-list"></datalist>
+                    </div>
+                </div>
+                <div class="form-row two-cols">
+                    <div class="form-group">
+                        <label for="form-email">Email Address</label>
+                        <input type="email" id="form-email" placeholder="e.g. john.doe@company.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="form-phone">Phone Number</label>
+                        <input type="tel" id="form-phone" placeholder="e.g. 081-234-5678">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-bio">Bio / Notes</label>
+                        <textarea id="form-bio" rows="3" placeholder="Brief description of responsibilities or bio..."></textarea>
+                    </div>
+                </div>
             </div>
-        </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="btn-cancel-form">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="btn-submit-form">Save Employee</button>
+            </div>
+        </form>
     </div>
 
     <!-- Notification system -->
     <div class="notification-container" id="notification-container"></div>
 
     <script src="hierarchy-utils.js?v=1"></script>
-    <script src="app.js?v=3.5"></script>
+    <script src="app.js?v=3.6"></script>
 </body>
 </html>
