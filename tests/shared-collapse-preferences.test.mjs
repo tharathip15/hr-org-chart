@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf8");
 const preferencesApiPath = new URL("../api/preferences.js", import.meta.url);
 
@@ -17,6 +18,11 @@ test("explicit collapse toggles are saved to shared preferences", () => {
     assert.match(appSource, /function getPreferencesPayload\(\)/);
     assert.match(appSource, /async function savePreferences\(\)/);
     assert.match(appSource, /function toggleNode\(id\)[\s\S]+savePreferences\(\);[\s\S]+renderAll\(\);/);
+});
+
+test("overall view provides a recovery action for shared collapsed nodes", () => {
+    assert.match(htmlSource, /id="btn-expand-all"/);
+    assert.match(appSource, /collapsedNodes\.clear\(\)/);
 });
 
 test("local and deployed APIs expose shared preferences", () => {

@@ -866,6 +866,13 @@ async function loadPositions() {
         const savedPositions = await response.json();
         positions = normalizePositionsList(savedPositions);
 
+        // Repair positions hierarchy
+        const repairResult = OrgHierarchy.repairPositionHierarchy(positions);
+        positions = repairResult.positions;
+        if (repairResult.changed) {
+            await savePositions();
+        }
+
         if (!Array.isArray(savedPositions) || positions.length === 0) {
             positions = derivePositionsFromEmployees();
             await savePositions();
@@ -879,27 +886,26 @@ async function loadPositions() {
                     // 1. Try to find a vacant position that matches the employee's role and department
                     const matchedVacant = positions.find(p => 
                         p.employeeId === null && 
-                        p.title.toLowerCase().trim() === employee.role.toLowerCase().trim() && 
-                        p.department.toLowerCase().trim() === employee.department.toLowerCase().trim()
+                        p.title.toLowerCase() === employee.role.toLowerCase() &&
+                        p.department.toLowerCase() === employee.department.toLowerCase()
                     );
-                    
                     if (matchedVacant) {
                         matchedVacant.employeeId = employee.id;
                         assignedEmployeeIds.add(employee.id);
                         positionsChanged = true;
-                        console.log(`Auto-assigned employee ${employee.name} to matching vacant position ${matchedVacant.title}`);
                     } else {
-                        // 2. Create a new position for the employee
+                        // 2. Create a new position node under their manager
+                        const newPositionId = getNextPositionId();
                         const newPositionManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, { department: employee.department });
-                        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
+                        const autoPos = getAutoPositionForPosition(newPositionManagerId);
                         positions.push({
-                            id: getNextPositionId(),
+                            id: newPositionId,
                             title: employee.role,
                             department: employee.department,
                             managerId: newPositionManagerId,
                             employeeId: employee.id,
-                            x: positionAutoPos.x,
-                            y: positionAutoPos.y,
+                            x: autoPos.x,
+                            y: autoPos.y,
                             notes: ""
                         });
                         assignedEmployeeIds.add(employee.id);
@@ -914,8 +920,9 @@ async function loadPositions() {
                     const employee = employees.find(e => e.id === position.employeeId);
                     if (employee && employee.managerId) {
                         // Only self-heal primary positions, leaving secondary dual-roles editable
-                        const primaryPos = getPrimaryPositionForEmployee(employee.id);
-                        if (primaryPos && primaryPos.id === position.id) {
+                        const employeeId = employee.id;
+                        const savedPositionId = position.id;
+                        if (OrgHierarchy.isPrimaryEmployeePosition(positions, savedPositionId, employeeId)) {
                             // Skip self-healing if already transitively reporting to this manager employee through vacant positions
                             if (isTransitivelyReportingTo(position.id, employee.managerId)) {
                                 return;
@@ -949,23 +956,21 @@ async function loadPositions() {
                 await savePositions();
             }
         }
-        return;
     } catch (error) {
-        console.warn("Positions API unavailable; falling back to localStorage.", error);
-    }
-
-    const saved = localStorage.getItem("hr_positions");
-    if (saved) {
+        showNotification("Positions API unavailable; falling back to localStorage", "warning");
+        console.warn("loadPositions API error:", error);
+        
         try {
-            positions = normalizePositionsList(JSON.parse(saved));
-            if (positions.length > 0) return;
-        } catch (error) {
-            console.warn("Failed to parse localStorage positions backup.", error);
+            const localVal = localStorage.getItem("positions");
+            if (localVal) {
+                positions = normalizePositionsList(JSON.parse(localVal));
+            } else {
+                positions = derivePositionsFromEmployees();
+            }
+        } catch (e) {
+            positions = derivePositionsFromEmployees();
         }
     }
-
-    positions = derivePositionsFromEmployees();
-    saveLocalPositionsBackup();
 }
 
 async function savePositions() {
@@ -1468,9 +1473,20 @@ function setupEventListeners() {
     }
 
     // Add Employee Button
-    document.getElementById("btn-add-employee").addEventListener("click", () => {
-        openEmployeeForm();
-    });
+    const btnManageEmployees = document.getElementById("btn-manage-employees");
+    if (btnManageEmployees) {
+        btnManageEmployees.addEventListener("click", () => openEmployeesModal());
+    }
+
+    const btnExpandAll = document.getElementById("btn-expand-all");
+    if (btnExpandAll) {
+        btnExpandAll.addEventListener("click", () => {
+            collapsedNodes.clear();
+            savePreferences();
+            renderAll();
+            showNotification("Expanded all collapsed position nodes", "success");
+        });
+    }
 
     const btnManagePositions = document.getElementById("btn-manage-positions");
     if (btnManagePositions) {
@@ -1556,20 +1572,22 @@ function setupEventListeners() {
         setPhotoPreview("", document.getElementById("form-name").value.trim());
     });
     
-    document.getElementById("form-person-link").addEventListener("change", () => {
-        applySelectedPersonProfile();
-    });
-    
-    document.getElementById("form-person-link").addEventListener("input", () => {
-        applySelectedPersonProfile();
-    });
-    
     // Close buttons for drawers/modals
     document.getElementById("close-detail-drawer").addEventListener("click", closeDetailDrawer);
     document.getElementById("detail-drawer-overlay").addEventListener("click", closeDetailDrawer);
-    document.getElementById("close-form-modal").addEventListener("click", closeFormModal);
-    document.getElementById("btn-cancel-form").addEventListener("click", closeFormModal);
-    document.getElementById("form-modal-overlay").addEventListener("click", closeFormModal);
+    document.getElementById("close-employees-modal").addEventListener("click", closeEmployeesModal);
+    document.getElementById("employees-modal-overlay").addEventListener("click", closeEmployeesModal);
+    document.getElementById("btn-reset-employee-form").addEventListener("click", () => resetEmployeeForm());
+    document.getElementById("btn-delete-employee-form").addEventListener("click", () => {
+        const id = parseInt(document.getElementById("form-employee-id").value, 10);
+        if (Number.isInteger(id)) {
+            const emp = employees.find(e => e.id === id);
+            if (emp && confirm(`Are you sure you want to delete ${emp.name}? Any positions they occupied will become vacant.`)) {
+                deleteEmployee(id);
+                closeEmployeesModal();
+            }
+        }
+    });
     document.getElementById("close-position-modal").addEventListener("click", closePositionsModal);
     document.getElementById("position-modal-overlay").addEventListener("click", closePositionsModal);
     document.getElementById("btn-reset-position-form").addEventListener("click", () => resetPositionForm());
@@ -1583,13 +1601,13 @@ function setupEventListeners() {
     // Edit & Delete actions inside Detail view
     document.getElementById("btn-edit-employee").addEventListener("click", () => {
         const id = parseInt(document.getElementById("btn-edit-employee").dataset.id);
-        openEmployeeForm(id);
+        openEmployeesModal(id);
     });
     
     document.getElementById("btn-delete-employee").addEventListener("click", () => {
         const id = parseInt(document.getElementById("btn-delete-employee").dataset.id);
         const emp = employees.find(e => e.id === id);
-        if (emp && confirm(`Are you sure you want to delete ${emp.name}? Any direct reports will report to their manager, keeping the hierarchy connected.`)) {
+        if (emp && confirm(`Are you sure you want to delete ${emp.name}? Any positions they occupied will become vacant.`)) {
             deleteEmployee(id);
             closeDetailDrawer();
         }
@@ -2527,82 +2545,90 @@ function applySelectedPersonProfile() {
     setPhotoPreview(profile.photoUrl || "", profile.name || "");
 }
 
-function openEmployeeForm(editId = null) {
-    const modal = document.getElementById("form-modal");
-    const overlay = document.getElementById("form-modal-overlay");
-    const title = document.getElementById("modal-title");
+function openEmployeesModal() {
+    const editId = arguments.length > 0 ? arguments[0] : null;
+    document.getElementById("employees-modal-overlay").classList.add("active");
+    document.getElementById("employees-modal").classList.add("active");
+    renderEmployeesList();
+    resetEmployeeForm(editId);
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function closeEmployeesModal() {
+    document.getElementById("employees-modal-overlay").classList.remove("active");
+    document.getElementById("employees-modal").classList.remove("active");
+}
+
+function renderEmployeesList() {
+    const list = document.getElementById("employees-list");
+    const summary = document.getElementById("employees-summary");
+    summary.innerText = `${employees.length} employees`;
+
+    if (employees.length === 0) {
+        list.innerHTML = `<div class="employees-empty">No employees yet</div>`;
+        return;
+    }
+
+    const sortedEmployees = employees
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    list.innerHTML = sortedEmployees.map(emp => {
+        // Count positions assigned to this employee
+        const assignedPositions = positions.filter(p => p.employeeId === emp.id);
+        const posText = assignedPositions.length > 0 
+            ? assignedPositions.map(p => p.title).join(", ")
+            : "No assigned position";
+        return `
+            <button type="button" class="employee-row" data-id="${emp.id}">
+                <span class="employee-row-main">
+                    <strong>${escapeHTML(emp.name)}</strong>
+                    <small>${escapeHTML(emp.department)}</small>
+                </span>
+                <span class="employee-row-meta">
+                    <span>${escapeHTML(posText)}</span>
+                    <small>${escapeHTML(emp.email || "No email")}</small>
+                </span>
+            </button>
+        `;
+    }).join("");
+
+    list.querySelectorAll(".employee-row").forEach(row => {
+        row.addEventListener("click", () => {
+            const id = parseInt(row.dataset.id, 10);
+            resetEmployeeForm(id);
+        });
+    });
+}
+
+function resetEmployeeForm(editId = null) {
     const form = document.getElementById("employee-form");
-    
-    // Clear and reset form
     form.reset();
     document.getElementById("form-employee-id").value = "";
-    document.getElementById("form-person-id").value = "";
     document.getElementById("form-photo-data").value = "";
     setPhotoPreview("");
-    populatePersonDatalist();
-    
-    // Populate Managers Datalist
-    const managerInput = document.getElementById("form-manager");
-    const managerDatalist = document.getElementById("manager-list");
-    managerDatalist.innerHTML = "";
-    
-    let eligibleManagers = [...employees];
-    
-    if (editId) {
-        title.innerText = "Edit Employee Details";
-        document.getElementById("form-employee-id").value = editId;
-        
-        const emp = employees.find(e => e.id === editId);
-        if (emp) {
-            document.getElementById("form-person-id").value = emp.personId || "";
-            document.getElementById("form-person-link").value = emp.personId ? getPersonOptionLabel(getPersonProfile(emp.personId) || emp) : "";
-            document.getElementById("form-photo-data").value = emp.photoUrl || "";
-            setPhotoPreview(emp.photoUrl || "", emp.name);
-            document.getElementById("form-name").value = emp.name;
-            document.getElementById("form-role").value = emp.role;
-            document.getElementById("form-department").value = emp.department;
-            document.getElementById("form-email").value = emp.email || "";
-            document.getElementById("form-phone").value = emp.phone || "";
-            document.getElementById("form-bio").value = emp.bio || "";
-            
-            // To prevent cyclic management, exclude themselves and any of their reports
-            const descendantIds = getDescendantIds(editId);
-            eligibleManagers = employees.filter(e => e.id !== editId && !descendantIds.includes(e.id));
-        }
-    } else {
-        title.innerText = "Add New Employee";
-    }
-    
-    // Sort managers alphabetically
-    eligibleManagers.sort((a, b) => a.name.localeCompare(b.name));
-    
-    eligibleManagers.forEach(mgr => {
-        managerDatalist.innerHTML += `<option value="${escapeHTML(mgr.name)} (${escapeHTML(mgr.role)} • ${escapeHTML(mgr.department)})">`;
-    });
-    
-    if (editId) {
-        const emp = employees.find(e => e.id === editId);
-        if (emp && emp.managerId) {
-            const mgr = employees.find(e => e.id === emp.managerId);
-            if (mgr) {
-                managerInput.value = `${mgr.name} (${mgr.role} • ${mgr.department})`;
-            } else {
-                managerInput.value = "";
-            }
-        } else {
-            managerInput.value = "";
-        }
-    } else {
-        managerInput.value = "";
-    }
-    
+    document.getElementById("btn-delete-employee-form").disabled = true;
+
     // Populate Department Suggestions Datalist
     const deptList = document.getElementById("department-list");
     const uniqueDepts = [...new Set(employees.map(e => e.department))].sort();
     deptList.innerHTML = uniqueDepts.map(dept => `<option value="${escapeHTML(dept)}">`).join("");
-    
-    overlay.classList.add("active");
-    modal.classList.add("active");
+
+    if (editId === null) return;
+
+    const emp = employees.find(e => e.id === editId);
+    if (!emp) return;
+
+    document.getElementById("form-employee-id").value = emp.id;
+    document.getElementById("form-photo-data").value = emp.photoUrl || "";
+    setPhotoPreview(emp.photoUrl || "", emp.name);
+    document.getElementById("form-name").value = emp.name;
+    document.getElementById("form-role").value = emp.role || "";
+    document.getElementById("form-department").value = emp.department;
+    document.getElementById("form-email").value = emp.email || "";
+    document.getElementById("form-phone").value = emp.phone || "";
+    document.getElementById("form-bio").value = emp.bio || "";
+    document.getElementById("btn-delete-employee-form").disabled = false;
 }
 
 function closeFormModal() {
@@ -3042,46 +3068,15 @@ async function handleFormSubmit(e) {
     e.preventDefault();
     
     const idVal = document.getElementById("form-employee-id").value;
-    const selectedPersonProfile = findPersonProfileFromInput(document.getElementById("form-person-link").value);
     const name = document.getElementById("form-name").value.trim();
     const role = document.getElementById("form-role").value.trim();
     const department = document.getElementById("form-department").value.trim();
-    const managerInputVal = document.getElementById("form-manager").value.trim();
     const email = document.getElementById("form-email").value.trim();
     const phone = document.getElementById("form-phone").value.trim();
     const bio = document.getElementById("form-bio").value.trim();
     const photoUrl = document.getElementById("form-photo-data").value;
-    let managerId = null;
     
-    if (managerInputVal) {
-        // Try to find a manager that matches the input string
-        const matchedMgr = employees.find(mgr => {
-            const optionText = `${mgr.name} (${mgr.role} • ${mgr.department})`;
-            return optionText === managerInputVal || mgr.name === managerInputVal;
-        });
-        if (matchedMgr) {
-            managerId = matchedMgr.id;
-            
-            // Check for cyclical relationship
-            if (idVal) {
-                const currentId = parseInt(idVal);
-                if (managerId === currentId) {
-                    showNotification("ไม่สามารถตั้งตัวเองเป็นผู้จัดการได้", "error");
-                    return;
-                }
-                const descendantIds = getDescendantIds(currentId);
-                if (descendantIds.includes(managerId)) {
-                    showNotification("ไม่สามารถเลือกผู้ใต้บังคับบัญชาเป็นผู้จัดการได้ (สายงานเป็นวงกลม)", "error");
-                    return;
-                }
-            }
-        } else {
-            showNotification("ชื่อผู้จัดการไม่ถูกต้องหรือไม่มีในระบบ", "error");
-            return;
-        }
-    }
-    
-    if (!name || !role || !department) {
+    if (!name || !department) {
         showNotification("Please fill in all required fields", "error");
         return;
     }
@@ -3091,20 +3086,13 @@ async function handleFormSubmit(e) {
         const id = parseInt(idVal);
         const empIndex = employees.findIndex(e => e.id === id);
         if (empIndex > -1) {
-            const currentPersonId = employees[empIndex].personId || createPersonId(employees[empIndex].name, id);
-            const nextPersonId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || currentPersonId;
+            const nextPersonId = employees[empIndex].personId || ("person_" + id);
             
-            const oldManagerId = employees[empIndex].managerId;
-            const managerChanged = oldManagerId !== managerId;
-            const assignedPosition = getPrimaryPositionForEmployee(id);
-            const oldPositionManagerId = assignedPosition ? assignedPosition.managerId : undefined;
-
             // Update fields
             employees[empIndex].personId = nextPersonId;
+            employees[empIndex].name = name;
             employees[empIndex].role = role;
             employees[empIndex].department = department;
-            employees[empIndex].managerId = managerId;
-            employees[empIndex].name = name;
             employees[empIndex].email = email;
             employees[empIndex].phone = phone;
             employees[empIndex].bio = bio;
@@ -3114,45 +3102,21 @@ async function handleFormSubmit(e) {
             if (employees[empIndex].department.toLowerCase() !== department.toLowerCase()) {
                 employees[empIndex].avatarColor = getDeptColor(department);
             }
-            
-            // If the manager has changed, auto-position the employee and their descendants under the new manager
-            if (managerChanged) {
-                const autoPos = getAutoPositionForNode(managerId, id);
-                const dx = autoPos.x - (employees[empIndex].x || 0);
-                const dy = autoPos.y - (employees[empIndex].y || 0);
-
-                employees[empIndex].x = autoPos.x;
-                employees[empIndex].y = autoPos.y;
-
-                const descendantIds = getDescendantIds(id);
-                descendantIds.forEach(descId => {
-                    const descIndex = employees.findIndex(e => e.id === descId);
-                    if (descIndex > -1) {
-                        employees[descIndex].x = (employees[descIndex].x || 0) + dx;
-                        employees[descIndex].y = (employees[descIndex].y || 0) + dy;
-                    }
-                });
-            }
 
             syncPersonProfile(nextPersonId, { name, email, phone, bio, photoUrl });
-            syncAssignedPositionFromEmployee(employees[empIndex], oldPositionManagerId);
             showNotification(`Updated profile for ${name}`, "success");
         }
     } else {
         // Add Mode
         const newId = employees.length > 0 ? Math.max(...employees.map(e => e.id)) + 1 : 1;
-        const personId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || createPersonId(name, newId);
-
-        const autoPos = getAutoPositionForNode(managerId);
+        const personId = "person_" + newId;
         const newEmployee = {
             id: newId,
             personId,
             name,
             role,
             department,
-            managerId,
-            x: autoPos.x,
-            y: autoPos.y,
+            managerId: null,
             email,
             phone,
             bio,
@@ -3161,35 +3125,15 @@ async function handleFormSubmit(e) {
         };
         
         employees.push(newEmployee);
-        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(managerId, { department: department });
-        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
-        positions.push({
-            id: getNextPositionId(),
-            title: role,
-            department,
-            managerId: newPositionManagerId,
-            employeeId: newId,
-            x: positionAutoPos.x,
-            y: positionAutoPos.y,
-            notes: ""
-        });
-        syncPersonProfile(personId, { name, email, phone, bio, photoUrl });
-        showNotification(`Added ${name} to organization`, "success");
+        showNotification(`Added ${name} to database`, "success");
     }
     
     await saveData();
-    await savePositions();
-    closeFormModal();
+    closeEmployeesModal();
     renderAll();
     
     // Close details drawer if it was open (to refresh data)
     closeDetailDrawer();
-    
-    // Select newly added/edited employee
-    const targetId = idVal ? parseInt(idVal) : employees[employees.length - 1].id;
-    setTimeout(() => {
-        focusAndHighlightEmployee(targetId);
-    }, 100);
 }
 
 function deleteEmployee(id) {
@@ -3220,6 +3164,8 @@ function deleteEmployee(id) {
     savePositions();
     savePreferences();
     renderAll();
+    renderEmployeesList();
+    resetEmployeeForm();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
 }
 

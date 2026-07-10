@@ -7,6 +7,7 @@ const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8
 const cssSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
 const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf8");
 const positionsApiPath = new URL("../api/positions.js", import.meta.url);
+const hierarchyUtilsPath = new URL("../hierarchy-utils.js", import.meta.url);
 
 test("app has a shared position-first data model", () => {
     assert.match(appSource, /let positions = \[\]/);
@@ -16,6 +17,9 @@ test("app has a shared position-first data model", () => {
     assert.match(appSource, /function normalizePosition\(position/);
     assert.match(appSource, /async function loadPositions\(\)/);
     assert.match(appSource, /async function savePositions\([^)]*\)/);
+    assert.match(appSource, /OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /OrgHierarchy\.isPrimaryEmployeePosition\(positions, savedPositionId, employeeId\)/);
+    assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
 test("app exposes a login surface before authenticated initialization", () => {
