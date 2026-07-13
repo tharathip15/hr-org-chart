@@ -104,6 +104,16 @@ test("deleting an employee detaches assigned positions without changing position
     assert.match(appSource, /await saveData\(\);/);
     assert.match(appSource, /await savePositions\(\);/);
     assert.doesNotMatch(appSource, /const parentManagerId = employeeToDelete\.managerId;/);
+    assert.match(appSource, /Delete employee \"\$\{employeeToDelete\.name\}\"\? Assigned positions will remain vacant\./);
+
+    const deleteDrawerHandler = appSource.match(
+        /document\.getElementById\("btn-delete-employee"\)\.addEventListener\("click", \(\) => \{[\s\S]*?\n    \}\);/
+    )?.[0];
+    assert.ok(deleteDrawerHandler);
+    assert.doesNotMatch(deleteDrawerHandler, /confirm\(/);
+    assert.equal((deleteDrawerHandler.match(/deleteEmployee\(id\)/g) || []).length, 1);
+    assert.match(deleteDrawerHandler, /deleteEmployee\(id\)\s*\.then\(/);
+    assert.match(deleteDrawerHandler, /\.catch\(error => \{/);
 });
 
 test("exposes Employee Management separately from Position Management", () => {

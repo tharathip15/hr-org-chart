@@ -1615,9 +1615,15 @@ function setupEventListeners() {
     document.getElementById("btn-delete-employee").addEventListener("click", () => {
         const id = parseInt(document.getElementById("btn-delete-employee").dataset.id);
         const emp = employees.find(e => e.id === id);
-        if (emp && confirm(`Are you sure you want to delete ${emp.name}? Any direct reports will report to their manager, keeping the hierarchy connected.`)) {
-            deleteEmployee(id);
-            closeDetailDrawer();
+        if (emp) {
+            deleteEmployee(id)
+                .then(deleted => {
+                    if (deleted) closeDetailDrawer();
+                })
+                .catch(error => {
+                    console.error("Failed to delete employee:", error);
+                    showNotification("Employee deletion failed", "error");
+                });
         }
     });
     
@@ -3250,10 +3256,10 @@ async function handleFormSubmit(e) {
 
 async function deleteEmployee(id) {
     const employeeToDelete = employees.find(e => e.id === id);
-    if (!employeeToDelete) return;
+    if (!employeeToDelete) return false;
 
     if (!confirm(`Delete employee "${employeeToDelete.name}"? Assigned positions will remain vacant.`)) {
-        return;
+        return false;
     }
 
     employees = employees
@@ -3268,6 +3274,7 @@ async function deleteEmployee(id) {
     renderAll();
     renderPositionsList();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
+    return true;
 }
 
 /* Helpers */
