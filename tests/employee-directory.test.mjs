@@ -73,6 +73,39 @@ test("detaches an employee while retaining every position", () => {
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 
+test("deleting an employee detaches assigned positions without changing position details", () => {
+    const positions = [
+        {
+            id: 20,
+            managerId: null,
+            employeeId: 7,
+            title: "Officer",
+            department: "HR",
+            layoutStyle: "vertical",
+            notes: "Backfill planned"
+        },
+        {
+            id: 21,
+            managerId: 20,
+            employeeId: 8,
+            title: "Coordinator",
+            department: "HR",
+            layoutStyle: "horizontal",
+            notes: "Keeps reporting line"
+        }
+    ];
+
+    assert.deepEqual(directory.detachEmployeeFromPositions(7, positions), [
+        { ...positions[0], employeeId: null },
+        { ...positions[1] }
+    ]);
+    assert.match(appSource, /async function deleteEmployee\(id\)/);
+    assert.match(appSource, /positions = EmployeeDirectory\.detachEmployeeFromPositions\(id, positions\);/);
+    assert.match(appSource, /await saveData\(\);/);
+    assert.match(appSource, /await savePositions\(\);/);
+    assert.doesNotMatch(appSource, /const parentManagerId = employeeToDelete\.managerId;/);
+});
+
 test("exposes Employee Management separately from Position Management", () => {
     assert.match(htmlSource, /id="btn-manage-employees"/);
     assert.match(htmlSource, /id="employee-management-modal"/);

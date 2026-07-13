@@ -1221,9 +1221,19 @@ body {
     color: var(--accent-primary);
 }
 
+.employee-source-badge.is-microsoft {
+    background-color: #e0f2fe;
+    color: #0369a1;
+}
+
 .employee-assignment-state {
     background-color: var(--bg-tertiary);
     color: var(--text-secondary);
+}
+
+.employee-assignment-state.is-assigned {
+    background-color: #dcfce7;
+    color: #15803d;
 }
 
 .employee-assignment-state.is-unassigned {

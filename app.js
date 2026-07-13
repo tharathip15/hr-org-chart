@@ -2875,8 +2875,8 @@ function renderEmployeeList(query = "") {
                     <small>${escapeHTML(employee.role || "No role")} - ${escapeHTML(employee.department || "No department")}</small>
                 </span>
                 <span class="employee-row-meta">
-                    <span class="employee-source-badge">${source === "manual" ? "Manual" : "Microsoft"}</span>
-                    <span class="employee-assignment-state ${assignment.status === "unassigned" ? "is-unassigned" : ""}">${assignmentText}</span>
+                    <span class="employee-source-badge is-${source}">${source === "manual" ? "Manual" : "Microsoft"}</span>
+                    <span class="employee-assignment-state is-${assignment.status}">${assignmentText}</span>
                 </span>
             </button>
         `;
@@ -3248,34 +3248,25 @@ async function handleFormSubmit(e) {
     }, 100);
 }
 
-function deleteEmployee(id) {
+async function deleteEmployee(id) {
     const employeeToDelete = employees.find(e => e.id === id);
     if (!employeeToDelete) return;
-    
-    const parentManagerId = employeeToDelete.managerId;
-    
-    // Reassign children to their grandparent
-    employees.forEach(emp => {
-        if (emp.managerId === id) {
-            emp.managerId = parentManagerId;
-        }
-    });
-    
-    // Filter out deleted
-    employees = employees.filter(e => e.id !== id);
-    positions.forEach(position => {
-        if (position.employeeId === id) {
-            position.employeeId = null;
-        }
-    });
-    
-    // Remove from collapsed list if present
-    collapsedNodes.delete(id);
-    
-    saveData();
-    savePositions();
-    savePreferences();
+
+    if (!confirm(`Delete employee "${employeeToDelete.name}"? Assigned positions will remain vacant.`)) {
+        return;
+    }
+
+    employees = employees
+        .filter(employee => employee.id !== id)
+        .map(employee => employee.managerId === id
+            ? { ...employee, managerId: null }
+            : employee);
+    positions = EmployeeDirectory.detachEmployeeFromPositions(id, positions);
+
+    await saveData();
+    await savePositions();
     renderAll();
+    renderPositionsList();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
 }
 
