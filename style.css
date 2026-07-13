@@ -980,6 +980,13 @@ body {
     padding-top: 4px;
 }
 
+.form-help-text {
+    margin-top: -2px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-tertiary);
+}
+
 .positions-list-panel {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -1066,7 +1073,7 @@ body {
     color: var(--text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .position-row.is-vacant .position-row-meta span {

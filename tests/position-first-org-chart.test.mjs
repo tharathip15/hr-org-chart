@@ -73,3 +73,16 @@ test("position hierarchy is not inferred from employee manager data", () => {
 test("position edits use shared parent validation", () => {
     assert.match(appSource, /OrgHierarchy\.validatePositionParent\(/);
 });
+
+test("position parent control uses stable position IDs instead of free-form text", () => {
+    assert.match(htmlSource, /<select[^>]+id="form-position-manager"/);
+    assert.doesNotMatch(htmlSource, /id="form-position-manager"[^>]+list="position-manager-list"/);
+    assert.match(htmlSource, /Top Level/);
+    assert.match(appSource, /managerList\.innerHTML = [\s\S]*positions/);
+    assert.match(appSource, /value="\$\{position\.id\}"/);
+});
+
+test("position list exposes parent and child counts", () => {
+    assert.match(appSource, /Reports to/);
+    assert.match(appSource, /childCount/);
+});

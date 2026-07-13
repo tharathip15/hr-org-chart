@@ -2716,7 +2716,7 @@ function getAutoPositionForPosition(managerId, excludePositionId = null) {
 
 function populatePositionFormLookups(excludePositionId = null) {
     const positionDeptList = document.getElementById("position-department-list");
-    const managerList = document.getElementById("position-manager-list");
+    const managerList = document.getElementById("form-position-manager");
     const employeeList = document.getElementById("position-employee-list");
 
     const departments = [...new Set([
@@ -2726,10 +2726,10 @@ function populatePositionFormLookups(excludePositionId = null) {
     positionDeptList.innerHTML = departments.map(department => `<option value="${escapeHTML(department)}">`).join("");
 
     const blockedIds = excludePositionId ? new Set([excludePositionId, ...getDescendantPositionIds(excludePositionId)]) : new Set();
-    managerList.innerHTML = positions
+    managerList.innerHTML = `<option value="">Top Level</option>` + positions
         .filter(position => !blockedIds.has(position.id))
         .sort((a, b) => getPositionTitle(a).localeCompare(getPositionTitle(b)))
-        .map(position => `<option value="${escapeHTML(getPositionOptionLabel(position))}">`)
+        .map(position => `<option value="${position.id}">${escapeHTML(getPositionOptionLabel(position))}</option>`)
         .join("");
 
     employeeList.innerHTML = employees
@@ -2758,8 +2758,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-notes").value = position.notes || "";
     document.getElementById("btn-delete-position").disabled = false;
 
-    const manager = position.managerId ? positions.find(candidate => candidate.id === position.managerId) : null;
-    document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
+    document.getElementById("form-position-manager").value = position.managerId === null ? "" : String(position.managerId);
 
     const employee = getAssignedEmployee(position);
     document.getElementById("form-position-employee").value = employee ? getEmployeeOptionLabel(employee) : "";
@@ -2875,7 +2874,11 @@ function renderPositionsList() {
 
     list.innerHTML = sortedPositions.map(position => {
         const employee = getAssignedEmployee(position);
-        const manager = position.managerId ? positions.find(candidate => candidate.id === position.managerId) : null;
+        const manager = position.managerId !== null
+            ? positions.find(candidate => candidate.id === position.managerId)
+            : null;
+        const childCount = positions.filter(candidate => candidate.managerId === position.id).length;
+        const childCountLabel = `${childCount} direct report${childCount === 1 ? "" : "s"}`;
         return `
             <button type="button" class="position-row ${employee ? "" : "is-vacant"}" data-id="${position.id}">
                 <span class="position-row-main">
@@ -2884,7 +2887,7 @@ function renderPositionsList() {
                 </span>
                 <span class="position-row-meta">
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
-                    <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"}</small>
+                    <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"} - ${childCountLabel}</small>
                 </span>
             </button>
         `;

@@ -231,8 +231,10 @@
                 <div class="form-row two-cols">
                     <div class="form-group">
                         <label for="form-position-manager">Reports To Position</label>
-                        <input type="text" id="form-position-manager" list="position-manager-list" placeholder="None (Top Level)">
-                        <datalist id="position-manager-list"></datalist>
+                        <select id="form-position-manager">
+                            <option value="">Top Level</option>
+                        </select>
+                        <small class="form-help-text">Choose the position this seat reports directly to.</small>
                     </div>
                     <div class="form-group">
                         <label for="form-position-employee">Assigned Employee</label>
