@@ -108,8 +108,17 @@ test("deleting an employee detaches assigned positions without changing position
         /async function deleteEmployee\(id\) \{[\s\S]*?\n\}/
     )?.[0];
     assert.ok(deleteEmployeeFunction);
-    assert.match(deleteEmployeeFunction, /collapsedNodes\.delete\(id\);/);
-    assert.match(deleteEmployeeFunction, /await saveData\(\);[\s\S]*await savePositions\(\);[\s\S]*await savePreferences\(\);/);
+    assert.match(deleteEmployeeFunction, /const linkedPositionIds = positions[\s\S]*?\.map\(position => position\.id\);/);
+    assert.match(deleteEmployeeFunction, /linkedPositionIds\.forEach\(positionId => collapsedNodes\.delete\(positionId\)\);/);
+    assert.match(deleteEmployeeFunction, /const employeesSnapshot = structuredClone\(employees\);/);
+    assert.match(deleteEmployeeFunction, /const positionsSnapshot = structuredClone\(positions\);/);
+    assert.match(deleteEmployeeFunction, /const collapsedNodesSnapshot = new Set\(collapsedNodes\);/);
+    assert.match(deleteEmployeeFunction, /const \[employeesSaved, positionsSaved, preferencesSaved\] = await Promise\.all\(\[\s*saveSafely\(saveData\),\s*saveSafely\(savePositions\),\s*saveSafely\(savePreferences\)\s*\]\);/);
+    assert.match(deleteEmployeeFunction, /if \(!employeesSaved \|\| !positionsSaved \|\| !preferencesSaved\)/);
+    assert.match(deleteEmployeeFunction, /employees = employeesSnapshot;/);
+    assert.match(deleteEmployeeFunction, /positions = positionsSnapshot;/);
+    assert.match(deleteEmployeeFunction, /collapsedNodes = collapsedNodesSnapshot;/);
+    assert.match(deleteEmployeeFunction, /return false;/);
     assert.doesNotMatch(appSource, /const parentManagerId = employeeToDelete\.managerId;/);
     assert.match(appSource, /Delete employee \"\$\{employeeToDelete\.name\}\"\? Assigned positions will remain vacant\./);
 
@@ -121,6 +130,33 @@ test("deleting an employee detaches assigned positions without changing position
     assert.equal((deleteDrawerHandler.match(/deleteEmployee\(id\)/g) || []).length, 1);
     assert.match(deleteDrawerHandler, /deleteEmployee\(id\)\s*\.then\(/);
     assert.match(deleteDrawerHandler, /\.catch\(error => \{/);
+});
+
+test("deleting an employee clears collapse state for linked positions with different IDs", () => {
+    const assignment = directory.getAssignmentSummary(7, [
+        { id: 41, employeeId: 7 },
+        { id: 42, employeeId: 8 }
+    ]);
+
+    assert.deepEqual(assignment.positionIds, [41]);
+    assert.notEqual(assignment.positionIds[0], 7);
+    assert.match(appSource, /linkedPositionIds\.forEach\(positionId => collapsedNodes\.delete\(positionId\)\);/);
+});
+
+test("save helpers report persistence failures and delete rolls back partial saves", () => {
+    for (const functionName of ["saveData", "savePositions", "savePreferences"]) {
+        const source = appSource.match(new RegExp(`async function ${functionName}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+        assert.ok(source, `${functionName} source was found`);
+        assert.match(source, /return true;/);
+        assert.match(source, /return false;/);
+    }
+
+    const deleteEmployeeFunction = appSource.match(
+        /async function deleteEmployee\(id\) \{[\s\S]*?\n\}/
+    )?.[0];
+    assert.match(deleteEmployeeFunction, /const saveSafely = async save => \{[\s\S]*?return false;/);
+    assert.match(deleteEmployeeFunction, /await Promise\.allSettled\(/);
+    assert.match(deleteEmployeeFunction, /renderAll\(\);[\s\S]*renderPositionsList\(\);[\s\S]*showNotification\("Could not delete employee; changes were restored\.", "error"\);/);
 });
 
 test("exposes Employee Management separately from Position Management", () => {
@@ -148,4 +184,32 @@ test("provides a separate, keyboard-accessible delete action for each employee r
     assert.match(styleSource, /\.employee-row-shell\s*\{/);
     assert.match(styleSource, /\.employee-row-delete:focus-visible\s*\{/);
     assert.match(styleSource, /body\.role-viewer \.employee-row-delete\s*,/);
+});
+
+test("position assignment labels identify source and assignment state while preserving ID selection", () => {
+    const labelFunction = appSource.match(/function getEmployeeOptionLabel\(employee\) \{[\s\S]*?\n\}/)?.[0];
+    assert.ok(labelFunction);
+    assert.match(labelFunction, /EmployeeDirectory\.getEmployeeSource\(employee\)/);
+    assert.match(labelFunction, /EmployeeDirectory\.getAssignmentSummary\(employee\.id, positions\)/);
+    assert.match(labelFunction, /Manual/);
+    assert.match(labelFunction, /Microsoft/);
+    assert.match(labelFunction, /#\$\{employee\.id\}/);
+    assert.match(appSource, /const idMatch = trimmed\.match\(\/#\(\\d\+\)\/\);/);
+});
+
+test("viewer mode keeps employee browsing available but blocks employee mutations", () => {
+    assert.match(styleSource, /body\.role-viewer #btn-new-employee\s*,/);
+    assert.match(appSource, /function openEmployeeManagementModal\(\)/);
+    assert.match(appSource, /function renderEmployeeList\(query = ""\)/);
+
+    for (const functionName of ["openEmployeeForm", "handleFormSubmit", "deleteEmployee"]) {
+        const source = appSource.match(new RegExp(`(?:async )?function ${functionName}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+        assert.ok(source, `${functionName} source was found`);
+        assert.match(source, /document\.body\.classList\.contains\("role-viewer"\)/);
+    }
+});
+
+test("profile link copy describes reusing an employee profile", () => {
+    assert.match(htmlSource, /Choose an existing employee profile to reuse their details/);
+    assert.doesNotMatch(htmlSource, /Choose existing employee to link this position/);
 });

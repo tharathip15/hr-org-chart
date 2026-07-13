@@ -727,10 +727,12 @@ async function saveData() {
             throw new Error(`Server responded with ${response.status}`);
         }
         setSyncStatus("success");
+        return true;
     } catch (error) {
         console.error("Failed to save data to database.", error);
         setSyncStatus("error");
         showNotification("Database save failed. A browser backup was kept.", "error");
+        return false;
     }
 }
 
@@ -995,10 +997,12 @@ async function savePositions() {
             throw new Error(`Server responded with ${response.status}`);
         }
         setSyncStatus("success");
+        return true;
     } catch (error) {
         console.error("Failed to save positions to database.", error);
         setSyncStatus("error");
         showNotification("Position save failed. A browser backup was kept.", "error");
+        return false;
     }
 }
 
@@ -1068,9 +1072,11 @@ async function savePreferences() {
             throw new Error(`Server responded with ${response.status}`);
         }
         setSyncStatus("success");
+        return true;
     } catch (error) {
         console.error("Failed to save shared view preferences.", error);
         setSyncStatus("error");
+        return false;
     }
 }
 
@@ -2565,6 +2571,8 @@ function applySelectedPersonProfile() {
 }
 
 function openEmployeeForm(editId = null) {
+    if (document.body.classList.contains("role-viewer")) return false;
+
     const modal = document.getElementById("form-modal");
     const overlay = document.getElementById("form-modal-overlay");
     const title = document.getElementById("modal-title");
@@ -2640,6 +2648,7 @@ function openEmployeeForm(editId = null) {
     
     overlay.classList.add("active");
     modal.classList.add("active");
+    return true;
 }
 
 function closeFormModal() {
@@ -2676,7 +2685,12 @@ function findPositionFromInput(value) {
 }
 
 function getEmployeeOptionLabel(employee) {
-    return `${employee.name} (${employee.role} - ${employee.department}) #${employee.id}`;
+    const source = EmployeeDirectory.getEmployeeSource(employee) === "manual" ? "Manual" : "Microsoft";
+    const assignment = EmployeeDirectory.getAssignmentSummary(employee.id, positions);
+    const assignmentText = assignment.count === 0
+        ? "Unassigned (0 positions)"
+        : `Assigned (${assignment.count} ${assignment.count === 1 ? "position" : "positions"})`;
+    return `${employee.name} (${employee.role} - ${employee.department}) [${source}; ${assignmentText}] #${employee.id}`;
 }
 
 function findEmployeeFromInput(value) {
@@ -3140,6 +3154,7 @@ function getAutoPositionForNode(managerId, excludeEmployeeId = null) {
 
 async function handleFormSubmit(e) {
     e.preventDefault();
+    if (document.body.classList.contains("role-viewer")) return false;
     
     const idVal = document.getElementById("form-employee-id").value;
     const selectedPersonProfile = findPersonProfileFromInput(document.getElementById("form-person-link").value);
@@ -3271,6 +3286,8 @@ async function handleFormSubmit(e) {
 }
 
 async function deleteEmployee(id) {
+    if (document.body.classList.contains("role-viewer")) return false;
+
     const employeeToDelete = employees.find(e => e.id === id);
     if (!employeeToDelete) return false;
 
@@ -3278,17 +3295,59 @@ async function deleteEmployee(id) {
         return false;
     }
 
+    const employeesSnapshot = structuredClone(employees);
+    const positionsSnapshot = structuredClone(positions);
+    const collapsedNodesSnapshot = new Set(collapsedNodes);
+    const linkedPositionIds = positions
+        .filter(position => position.employeeId === id)
+        .map(position => position.id);
+
     employees = employees
         .filter(employee => employee.id !== id)
         .map(employee => employee.managerId === id
             ? { ...employee, managerId: null }
             : employee);
     positions = EmployeeDirectory.detachEmployeeFromPositions(id, positions);
-    collapsedNodes.delete(id);
+    linkedPositionIds.forEach(positionId => collapsedNodes.delete(positionId));
 
-    await saveData();
-    await savePositions();
-    await savePreferences();
+    const saveSafely = async save => {
+        try {
+            return await save();
+        } catch (error) {
+            console.error("Unexpected persistence error while deleting an employee.", error);
+            return false;
+        }
+    };
+    const [employeesSaved, positionsSaved, preferencesSaved] = await Promise.all([
+        saveSafely(saveData),
+        saveSafely(savePositions),
+        saveSafely(savePreferences)
+    ]);
+
+    if (!employeesSaved || !positionsSaved || !preferencesSaved) {
+        employees = employeesSnapshot;
+        positions = positionsSnapshot;
+        collapsedNodes = collapsedNodesSnapshot;
+        saveLocalBackup();
+        saveLocalPositionsBackup();
+        try {
+            localStorage.setItem("hr_org_preferences", JSON.stringify(getPreferencesPayload()));
+        } catch (error) {
+            console.warn("Failed to restore preferences in localStorage:", error);
+        }
+
+        await Promise.allSettled([
+            employeesSaved ? saveData() : Promise.resolve(false),
+            positionsSaved ? savePositions() : Promise.resolve(false),
+            preferencesSaved ? savePreferences() : Promise.resolve(false)
+        ]);
+
+        renderAll();
+        renderPositionsList();
+        showNotification("Could not delete employee; changes were restored.", "error");
+        return false;
+    }
+
     renderAll();
     renderPositionsList();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
