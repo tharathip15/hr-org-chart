@@ -1,5 +1,6 @@
 import { supabase } from "./_helpers/supabase.js";
 import { validateToken } from "./_helpers/auth.js";
+import { findExistingEmployee, isManualEmployee } from "./_helpers/employee_merge.js";
 
 const tenantId = process.env.MICROSOFT_TENANT_ID;
 const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -79,24 +80,18 @@ export default async function handler(request, response) {
       throw new Error(`Failed to fetch existing employees: ${fetchError.message}`);
     }
 
-    const existingMap = new Map();
-    (existingEmployees || []).forEach(e => {
-      if (e.email) existingMap.set(e.email.toLowerCase(), e);
-      if (e.person_id) existingMap.set(e.person_id.toLowerCase(), e);
-    });
-
     // 6. Map and merge users
     const dbRows = [];
     const newAdUsers = [];
+    const mergedExistingEmployeeIds = new Set();
 
     realPeople.forEach(u => {
-      const emailKey = (u.mail || u.userPrincipalName || "").toLowerCase();
-      const guidKey = u.id.toLowerCase();
-      const existing = existingMap.get(emailKey) || existingMap.get(guidKey);
+      const existing = findExistingEmployee(existingEmployees, u);
 
       const photoBase64 = photosMap.get(u.id) || (existing ? existing.photo_url : null);
 
       if (existing) {
+        mergedExistingEmployeeIds.add(existing.id);
         // PRESERVE: id, manager_id, x, y, bio
         dbRows.push({
           id: existing.id,
@@ -167,7 +162,7 @@ export default async function handler(request, response) {
     // 7. Retain manual employees (non-AD records)
     const adPersonIds = new Set(realPeople.map(u => u.id.toLowerCase()));
     const manualEmployees = (existingEmployees || []).filter(
-      e => !e.person_id || !adPersonIds.has(e.person_id.toLowerCase())
+      e => isManualEmployee(e, adPersonIds) && !mergedExistingEmployeeIds.has(e.id)
     );
 
     dbRows.push(...manualEmployees);
