@@ -7,9 +7,11 @@ function normalizePersonId(value) {
 }
 
 export function findExistingEmployee(existingEmployees, microsoftUser) {
-  const email = normalizeEmail(microsoftUser?.mail || microsoftUser?.userPrincipalName);
-  const emailMatch = email && (existingEmployees || []).find(
-    employee => normalizeEmail(employee.email) === email
+  const emailCandidates = [microsoftUser?.mail, microsoftUser?.userPrincipalName]
+    .map(normalizeEmail)
+    .filter(Boolean);
+  const emailMatch = (existingEmployees || []).find(employee =>
+    emailCandidates.includes(normalizeEmail(employee.email))
   );
 
   if (emailMatch) return emailMatch;

@@ -18,6 +18,16 @@ test("matches Microsoft users to Manual employee by normalized email", () => {
   assert.equal(match.id, 900);
 });
 
+test("falls back to userPrincipalName when mail is whitespace", () => {
+  const existing = [{ id: 902, email: "jane@example.com", person_id: "manual-jane-902" }];
+  const match = findExistingEmployee(existing, {
+    mail: "   ",
+    userPrincipalName: "JANE@example.com"
+  });
+
+  assert.equal(match.id, 902);
+});
+
 test("matches Microsoft users by directory ID when no email matches", () => {
   const existing = [{ id: 901, email: "other@example.com", person_id: "ms-guid-1" }];
   const match = findExistingEmployee(existing, { id: "MS-GUID-1", mail: "new@example.com" });
