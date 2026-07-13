@@ -104,6 +104,12 @@ test("deleting an employee detaches assigned positions without changing position
     assert.match(appSource, /positions = EmployeeDirectory\.detachEmployeeFromPositions\(id, positions\);/);
     assert.match(appSource, /await saveData\(\);/);
     assert.match(appSource, /await savePositions\(\);/);
+    const deleteEmployeeFunction = appSource.match(
+        /async function deleteEmployee\(id\) \{[\s\S]*?\n\}/
+    )?.[0];
+    assert.ok(deleteEmployeeFunction);
+    assert.match(deleteEmployeeFunction, /collapsedNodes\.delete\(id\);/);
+    assert.match(deleteEmployeeFunction, /await saveData\(\);[\s\S]*await savePositions\(\);[\s\S]*await savePreferences\(\);/);
     assert.doesNotMatch(appSource, /const parentManagerId = employeeToDelete\.managerId;/);
     assert.match(appSource, /Delete employee \"\$\{employeeToDelete\.name\}\"\? Assigned positions will remain vacant\./);
 
@@ -141,4 +147,5 @@ test("provides a separate, keyboard-accessible delete action for each employee r
     assert.doesNotMatch(deleteRowHandler, /confirm\(/);
     assert.match(styleSource, /\.employee-row-shell\s*\{/);
     assert.match(styleSource, /\.employee-row-delete:focus-visible\s*\{/);
+    assert.match(styleSource, /body\.role-viewer \.employee-row-delete\s*,/);
 });

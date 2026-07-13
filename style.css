@@ -2431,6 +2431,7 @@ body.role-viewer .card-add-btn,
 body.role-viewer .annotation-toolbar,
 body.role-viewer .history-item-actions .btn-restore,
 body.role-viewer #btn-delete-employee,
+body.role-viewer .employee-row-delete,
 body.role-viewer #btn-delete-position,
 body.role-viewer .positions-form-card, /* Hide positions form for viewers */
 body.role-viewer #employee-modal .modal-footer button[type="submit"] {

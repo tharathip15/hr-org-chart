@@ -3284,9 +3284,11 @@ async function deleteEmployee(id) {
             ? { ...employee, managerId: null }
             : employee);
     positions = EmployeeDirectory.detachEmployeeFromPositions(id, positions);
+    collapsedNodes.delete(id);
 
     await saveData();
     await savePositions();
+    await savePreferences();
     renderAll();
     renderPositionsList();
     showNotification(`Deleted employee: ${employeeToDelete.name}`, "info");
