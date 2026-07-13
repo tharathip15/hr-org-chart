@@ -2646,10 +2646,7 @@ function getNextPositionId() {
 }
 
 function getNextEmployeeId() {
-    const numericIds = employees
-        .map(employee => Number(employee.id))
-        .filter(Number.isFinite);
-    return numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+    return EmployeeDirectory.getNextEmployeeId(employees);
 }
 
 function getPositionOptionLabel(position) {

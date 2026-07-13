@@ -33,6 +33,31 @@ test("creates manual employees without a position link", () => {
     assert.equal(Object.hasOwn(employee, "positionId"), false);
 });
 
+test("creates a manual employee without changing the positions collection", () => {
+    const employees = [
+        { id: 4, name: "Existing Employee" },
+        { id: 12, name: "Highest ID Employee" }
+    ];
+    const positions = [
+        { id: 20, employeeId: 4, title: "Officer" },
+        { id: 21, employeeId: null, title: "Manager" }
+    ];
+    const originalPositions = structuredClone(positions);
+    const newId = directory.getNextEmployeeId(employees);
+    const newEmployee = directory.createManualEmployee({
+        id: newId, name: "Jane Doe", role: "Officer", department: "HR"
+    });
+
+    employees.push(newEmployee);
+
+    assert.equal(employees.length, 3);
+    assert.equal(newEmployee.id, 13);
+    assert.equal(typeof newEmployee.id, "number");
+    assert.equal(newEmployee.personId, "manual-jane-doe-13");
+    assert.deepEqual(positions, originalPositions);
+    assert.equal(positions.length, 2);
+});
+
 test("detaches an employee while retaining every position", () => {
     const positions = [
         { id: 20, managerId: null, employeeId: 7, title: "Officer" },

@@ -22,6 +22,13 @@
         };
     }
 
+    function getNextEmployeeId(employees) {
+        const numericIds = (employees || [])
+            .map(employee => Number(employee.id))
+            .filter(Number.isFinite);
+        return numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+    }
+
     function createManualEmployee(fields) {
         return {
             id: fields.id,
@@ -50,6 +57,7 @@
         createManualPersonId,
         getEmployeeSource,
         getAssignmentSummary,
+        getNextEmployeeId,
         createManualEmployee,
         detachEmployeeFromPositions
     });
