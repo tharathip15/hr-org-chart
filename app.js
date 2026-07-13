@@ -908,7 +908,12 @@ async function loadPositions() {
     if (saved) {
         try {
             positions = normalizePositionsList(JSON.parse(saved));
-            if (positions.length > 0) return;
+            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+            positions = localHierarchyRepair.positions;
+            if (positions.length > 0) {
+                if (localHierarchyRepair.changed) saveLocalPositionsBackup();
+                return;
+            }
         } catch (error) {
             console.warn("Failed to parse localStorage positions backup.", error);
         }
@@ -921,6 +926,8 @@ async function loadPositions() {
 async function savePositions() {
     setSyncStatus("saving");
     positions = normalizePositionsList(positions);
+    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+    positions = saveHierarchyRepair.positions;
     saveLocalPositionsBackup();
 
     const payload = positions.map(p => ({
@@ -2376,8 +2383,21 @@ function showEmployeeDetails(id) {
     document.getElementById("btn-edit-employee").dataset.id = id;
     document.getElementById("btn-delete-employee").dataset.id = id;
     
-    // Find manager name
-    const manager = emp.managerId ? employees.find(e => e.id === emp.managerId) : null;
+    // Derive reporting from the employee's primary assigned position.
+    const primaryPosition = getPrimaryPositionForEmployee(id);
+    const parentPosition = primaryPosition && primaryPosition.managerId !== null
+        ? positions.find(position => position.id === primaryPosition.managerId)
+        : null;
+    const parentEmployee = parentPosition ? getAssignedEmployee(parentPosition) : null;
+    const manager = parentPosition ? {
+        ...(parentEmployee || {}),
+        id: parentEmployee?.id || 0,
+        name: parentEmployee?.name || "VACANT",
+        role: getPositionTitle(parentPosition),
+        department: getPositionDepartment(parentPosition),
+        avatarColor: parentEmployee?.avatarColor || "#f43f5e",
+        photoUrl: parentEmployee?.photoUrl || ""
+    } : null;
     const managerHTML = manager ? `
         <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${manager.id})">
             ${getAvatarHTML(manager, "avatar-sm")}
@@ -2388,8 +2408,21 @@ function showEmployeeDetails(id) {
         </div>
     ` : `<p style="font-size: 13px; color: var(--text-tertiary); font-style: italic;">No manager (Top level)</p>`;
     
-    // Find direct reports
-    const reports = employees.filter(e => e.managerId === id);
+    // Direct reports are child positions, including vacant seats.
+    const reports = primaryPosition
+        ? positions.filter(position => position.managerId === primaryPosition.id).map(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            return {
+                ...position,
+                id: assignedEmployee?.id || null,
+                name: assignedEmployee?.name || "VACANT",
+                role: getPositionTitle(position),
+                department: getPositionDepartment(position),
+                avatarColor: assignedEmployee?.avatarColor || "#f43f5e",
+                photoUrl: assignedEmployee?.photoUrl || ""
+            };
+        })
+        : [];
     let reportsHTML = `<p style="font-size: 13px; color: var(--text-tertiary); font-style: italic;">No direct reports</p>`;
     
     if (reports.length > 0) {
@@ -2409,7 +2442,27 @@ function showEmployeeDetails(id) {
     }
     
     // Find sibling positions for the same person (dual-position profile)
-    const siblingPositions = employees.filter(e => samePerson(e, emp) && e.id !== emp.id);
+    const siblingPositions = positions
+        .filter(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            return assignedEmployee && samePerson(assignedEmployee, emp) && position.id !== primaryPosition?.id;
+        })
+        .map(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            const parent = position.managerId !== null
+                ? positions.find(candidate => candidate.id === position.managerId)
+                : null;
+            return {
+                ...position,
+                id: assignedEmployee.id,
+                name: assignedEmployee.name,
+                role: getPositionTitle(position),
+                department: getPositionDepartment(position),
+                photoUrl: assignedEmployee.photoUrl || "",
+                avatarColor: assignedEmployee.avatarColor,
+                managerName: parent ? getPositionTitle(parent) : "Top Level"
+            };
+        });
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
         siblingsHTML = `
@@ -2417,7 +2470,7 @@ function showEmployeeDetails(id) {
                 <div class="info-section-title">ตำแหน่งงานอื่น ๆ ของพนักงานคนนี้ (${siblingPositions.length})</div>
                 <div class="reports-list">
                     ${siblingPositions.map(pos => {
-                        const mgr = pos.managerId ? employees.find(e => e.id === pos.managerId) : null;
+                        const mgr = pos.managerName ? { name: pos.managerName } : null;
                         return `
                             <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${pos.id})">
                                 ${getAvatarHTML(pos, "avatar-sm")}
@@ -2465,7 +2518,7 @@ function showEmployeeDetails(id) {
         </div>
         
         <div>
-            <div class="info-section-title">Reports To</div>
+            <div class="info-section-title">Reports To Position</div>
             ${managerHTML}
         </div>
         
@@ -2532,13 +2585,6 @@ function openEmployeeForm(editId = null) {
     setPhotoPreview("");
     populatePersonDatalist();
     
-    // Populate Managers Datalist
-    const managerInput = document.getElementById("form-manager");
-    const managerDatalist = document.getElementById("manager-list");
-    managerDatalist.innerHTML = "";
-    
-    let eligibleManagers = [...employees];
-    
     if (editId) {
         title.innerText = "Edit Employee Details";
         document.getElementById("form-employee-id").value = editId;
@@ -2556,22 +2602,16 @@ function openEmployeeForm(editId = null) {
             document.getElementById("form-phone").value = emp.phone || "";
             document.getElementById("form-bio").value = emp.bio || "";
             
-            // To prevent cyclic management, exclude themselves and any of their reports
-            const descendantIds = getDescendantIds(editId);
-            eligibleManagers = employees.filter(e => e.id !== editId && !descendantIds.includes(e.id));
         }
     } else {
         title.innerText = "Add New Employee";
     }
     
-    // Sort managers alphabetically
-    eligibleManagers.sort((a, b) => a.name.localeCompare(b.name));
-    
-    eligibleManagers.forEach(mgr => {
+    /*
         managerDatalist.innerHTML += `<option value="${escapeHTML(mgr.name)} (${escapeHTML(mgr.role)} • ${escapeHTML(mgr.department)})">`;
-    });
-    
-    if (editId) {
+    */
+
+    /* if (editId) {
         const emp = employees.find(e => e.id === editId);
         if (emp && emp.managerId) {
             const mgr = employees.find(e => e.id === emp.managerId);
@@ -2587,6 +2627,8 @@ function openEmployeeForm(editId = null) {
         managerInput.value = "";
     }
     
+    */
+
     // Populate Department Suggestions Datalist
     const deptList = document.getElementById("department-list");
     const uniqueDepts = [...new Set(employees.map(e => e.department))].sort();
@@ -3076,14 +3118,11 @@ async function handleFormSubmit(e) {
     const name = document.getElementById("form-name").value.trim();
     const role = document.getElementById("form-role").value.trim();
     const department = document.getElementById("form-department").value.trim();
-    const managerInputVal = document.getElementById("form-manager").value.trim();
     const email = document.getElementById("form-email").value.trim();
     const phone = document.getElementById("form-phone").value.trim();
     const bio = document.getElementById("form-bio").value.trim();
     const photoUrl = document.getElementById("form-photo-data").value;
-    let managerId = null;
-    
-    if (managerInputVal) {
+    /* if (false) {
         // Try to find a manager that matches the input string
         const matchedMgr = employees.find(mgr => {
             const optionText = `${mgr.name} (${mgr.role} • ${mgr.department})`;
@@ -3110,7 +3149,8 @@ async function handleFormSubmit(e) {
             return;
         }
     }
-    
+    */
+
     if (!name || !role || !department) {
         showNotification("Please fill in all required fields", "error");
         return;
@@ -3124,13 +3164,10 @@ async function handleFormSubmit(e) {
             const currentPersonId = employees[empIndex].personId || createPersonId(employees[empIndex].name, id);
             const nextPersonId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || currentPersonId;
             
-            const oldManagerId = employees[empIndex].managerId;
-            const managerChanged = oldManagerId !== managerId;
             // Update fields
             employees[empIndex].personId = nextPersonId;
             employees[empIndex].role = role;
             employees[empIndex].department = department;
-            employees[empIndex].managerId = managerId;
             employees[empIndex].name = name;
             employees[empIndex].email = email;
             employees[empIndex].phone = phone;
@@ -3142,25 +3179,6 @@ async function handleFormSubmit(e) {
                 employees[empIndex].avatarColor = getDeptColor(department);
             }
             
-            // If the manager has changed, auto-position the employee and their descendants under the new manager
-            if (managerChanged) {
-                const autoPos = getAutoPositionForNode(managerId, id);
-                const dx = autoPos.x - (employees[empIndex].x || 0);
-                const dy = autoPos.y - (employees[empIndex].y || 0);
-
-                employees[empIndex].x = autoPos.x;
-                employees[empIndex].y = autoPos.y;
-
-                const descendantIds = getDescendantIds(id);
-                descendantIds.forEach(descId => {
-                    const descIndex = employees.findIndex(e => e.id === descId);
-                    if (descIndex > -1) {
-                        employees[descIndex].x = (employees[descIndex].x || 0) + dx;
-                        employees[descIndex].y = (employees[descIndex].y || 0) + dy;
-                    }
-                });
-            }
-
             syncPersonProfile(nextPersonId, { name, email, phone, bio, photoUrl });
             showNotification(`Updated profile for ${name}`, "success");
         }
@@ -3170,7 +3188,6 @@ async function handleFormSubmit(e) {
             name,
             role,
             department,
-            managerId,
             email,
             phone,
             bio,

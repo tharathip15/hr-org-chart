@@ -86,3 +86,9 @@ test("position list exposes parent and child counts", () => {
     assert.match(appSource, /Reports to/);
     assert.match(appSource, /childCount/);
 });
+
+test("position hierarchy repairs are applied to local fallback and saves", () => {
+    assert.match(appSource, /const hierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /const localHierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /positions = localHierarchyRepair\.positions/);
+});

@@ -213,3 +213,15 @@ test("profile link copy describes reusing an employee profile", () => {
     assert.match(htmlSource, /Choose an existing employee profile to reuse their details/);
     assert.doesNotMatch(htmlSource, /Choose existing employee to link this position/);
 });
+
+test("employee editing no longer exposes a person-based Reports To control", () => {
+    assert.doesNotMatch(htmlSource, /id="form-manager"/);
+    assert.doesNotMatch(appSource, /const managerInputVal = document\.getElementById\("form-manager"\)/);
+    assert.doesNotMatch(appSource, /employees\[empIndex\]\.managerId = managerId/);
+});
+
+test("employee detail reporting is derived from position hierarchy", () => {
+    assert.match(appSource, /getPrimaryPositionForEmployee\(id\)/);
+    assert.match(appSource, /primaryPosition\.managerId/);
+    assert.match(appSource, /Reports To Position/);
+});
