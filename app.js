@@ -833,23 +833,6 @@ function derivePositionsFromEmployees() {
     }, employee.id));
 }
 
-function isTransitivelyReportingTo(positionId, targetManagerEmployeeId) {
-    let current = positions.find(p => p.id === positionId);
-    while (current && current.managerId !== null) {
-        const parent = positions.find(p => p.id === current.managerId);
-        if (!parent) break;
-        if (parent.employeeId === targetManagerEmployeeId) {
-            return true;
-        }
-        // Keep traversing only if the parent is vacant!
-        if (parent.employeeId !== null) {
-            break;
-        }
-        current = parent;
-    }
-    return false;
-}
-
 function saveLocalPositionsBackup() {
     try {
         localStorage.setItem("hr_positions", JSON.stringify(positions));
@@ -894,13 +877,12 @@ async function loadPositions() {
                         console.log(`Auto-assigned employee ${employee.name} to matching vacant position ${matchedVacant.title}`);
                     } else {
                         // 2. Create a new position for the employee
-                        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, { department: employee.department, employeeId: employee.id });
-                        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
+                        const positionAutoPos = getAutoPositionForPosition(null);
                         positions.push({
                             id: getNextPositionId(),
                             title: employee.role,
                             department: employee.department,
-                            managerId: newPositionManagerId,
+                            managerId: null,
                             employeeId: employee.id,
                             x: positionAutoPos.x,
                             y: positionAutoPos.y,
@@ -912,43 +894,7 @@ async function loadPositions() {
                 }
             });
 
-            // Position hierarchy is managed explicitly; employee manager data must not rewrite it.
-            if (false) positions.forEach(position => {
-                if (position.employeeId) {
-                    const employee = employees.find(e => e.id === position.employeeId);
-                    if (employee && employee.managerId) {
-                        // Only self-heal primary positions, leaving secondary dual-roles editable
-                        const primaryPos = getPrimaryPositionForEmployee(employee.id);
-                        if (primaryPos && primaryPos.id === position.id) {
-                            // Skip self-healing if already transitively reporting to this manager employee through vacant positions
-                            if (isTransitivelyReportingTo(position.id, employee.managerId)) {
-                                return;
-                            }
-                            const correctManagerPosId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
-                            if (correctManagerPosId !== position.managerId) {
-                                // Skip if current manager is in the chain leading up to the correct manager
                                 // e.g. position→62→75 is valid, don't flatten to position→75
-                                if (position.managerId !== null && correctManagerPosId !== null) {
-                                    let walkId = position.managerId;
-                                    const visited = new Set();
-                                    while (walkId !== null && !visited.has(walkId)) {
-                                        if (walkId === correctManagerPosId) {
-                                            return; // Current manager is under the correct manager, hierarchy is fine
-                                        }
-                                        visited.add(walkId);
-                                        const walkPos = positions.find(p => p.id === walkId);
-                                        walkId = walkPos ? walkPos.managerId : null;
-                                    }
-                                }
-                                console.log(`Self-healed position ${position.title} manager from ${position.managerId} to ${correctManagerPosId}`);
-                                position.managerId = correctManagerPosId;
-                                positionsChanged = true;
-                            }
-                        }
-                    }
-                }
-            });
-
             if (positionsChanged) {
                 await savePositions();
             }
@@ -2715,21 +2661,6 @@ function getPrimaryPositionForEmployee(employeeId) {
     return positions.find(position => position.employeeId === employeeId) || null;
 }
 
-function getPositionManagerIdFromEmployeeManager(managerEmployeeId, childPosition = null) {
-    if (!managerEmployeeId) return null;
-    if (childPosition?.employeeId === managerEmployeeId) return null;
-    const managerPositions = positions.filter(p => p.employeeId === managerEmployeeId);
-    if (managerPositions.length === 0) return null;
-    if (managerPositions.length === 1) return managerPositions[0].id;
-    
-    if (childPosition && childPosition.department) {
-        const matchingPos = managerPositions.find(p => p.id !== childPosition.id && p.department === childPosition.department);
-        if (matchingPos) return matchingPos.id;
-    }
-    
-    return managerPositions.find(p => p.id !== childPosition?.id)?.id || null;
-}
-
 function getDescendantPositionIds(positionId) {
     const descendants = [];
     const queue = [positionId];
@@ -2993,13 +2924,17 @@ async function handlePositionFormSubmit(e) {
         }
 
         managerId = manager.id;
-        if (currentId && managerId === currentId) {
-            showNotification("A position cannot report to itself", "error");
-            return;
-        }
-        if (currentId && getDescendantPositionIds(currentId).includes(managerId)) {
-            showNotification("A position cannot report to its own child position", "error");
-            return;
+        if (currentId) {
+            const parentValidation = OrgHierarchy.validatePositionParent(positions, currentId, managerId);
+            if (!parentValidation.valid) {
+                const messageByReason = {
+                    self: "A position cannot report to itself",
+                    descendant: "A position cannot report to its own child position",
+                    missing: "Reports To position is not valid"
+                };
+                showNotification(messageByReason[parentValidation.reason] || "Reports To position is not valid", "error");
+                return;
+            }
         }
     }
 
@@ -3013,7 +2948,6 @@ async function handlePositionFormSubmit(e) {
         employeeId = employee.id;
     }
 
-    let savedPositionId = currentId;
     if (currentId) {
         const index = positions.findIndex(position => position.id === currentId);
         if (index === -1) return;
@@ -3049,7 +2983,6 @@ async function handlePositionFormSubmit(e) {
         showNotification(`Updated position: ${title}`, "success");
     } else {
         const newId = getNextPositionId();
-        savedPositionId = newId;
         const autoPos = getAutoPositionForPosition(managerId);
         positions.push({
             id: newId,
@@ -3063,27 +2996,6 @@ async function handlePositionFormSubmit(e) {
             notes
         });
         showNotification(`Added position: ${title}`, "success");
-    }
-
-    // Only a person's primary position controls the employee-level manager field.
-    if (employeeId && OrgHierarchy.isPrimaryEmployeePosition(positions, savedPositionId, employeeId)) {
-        const empIndex = employees.findIndex(e => e.id === employeeId);
-        if (empIndex > -1) {
-            let nextEmployeeManagerId = null;
-            let canSyncManager = true;
-            if (managerId) {
-                const mgrPos = positions.find(p => p.id === managerId);
-                if (mgrPos && mgrPos.employeeId && mgrPos.employeeId !== employeeId) {
-                    nextEmployeeManagerId = mgrPos.employeeId;
-                } else if (mgrPos?.employeeId === employeeId) {
-                    canSyncManager = false;
-                }
-            }
-            if (canSyncManager && employees[empIndex].managerId !== nextEmployeeManagerId) {
-                employees[empIndex].managerId = nextEmployeeManagerId;
-                await saveData();
-            }
-        }
     }
 
     await savePositions();

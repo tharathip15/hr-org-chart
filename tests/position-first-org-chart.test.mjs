@@ -18,7 +18,7 @@ test("app has a shared position-first data model", () => {
     assert.match(appSource, /async function loadPositions\(\)/);
     assert.match(appSource, /async function savePositions\([^)]*\)/);
     assert.match(appSource, /OrgHierarchy\.repairPositionHierarchy\(positions\)/);
-    assert.match(appSource, /OrgHierarchy\.isPrimaryEmployeePosition\(positions, savedPositionId, employeeId\)/);
+    assert.match(appSource, /position\.managerId/);
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
@@ -62,4 +62,14 @@ test("local and deployed APIs expose positions", () => {
     assert.match(positionsApiSource, /from\("positions"\)/);
     assert.match(positionsApiSource, /mapPositionToDb/);
     assert.match(positionsApiSource, /mapDbToPosition/);
+});
+
+test("position hierarchy is not inferred from employee manager data", () => {
+    assert.doesNotMatch(appSource, /getPositionManagerIdFromEmployeeManager\(employee\.managerId/);
+    assert.doesNotMatch(appSource, /if \(false\) positions\.forEach/);
+    assert.match(appSource, /managerId: null/);
+});
+
+test("position edits use shared parent validation", () => {
+    assert.match(appSource, /OrgHierarchy\.validatePositionParent\(/);
 });
