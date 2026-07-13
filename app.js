@@ -2645,6 +2645,13 @@ function getNextPositionId() {
     return positions.length > 0 ? Math.max(...positions.map(position => position.id)) + 1 : 1;
 }
 
+function getNextEmployeeId() {
+    const numericIds = employees
+        .map(employee => Number(employee.id))
+        .filter(Number.isFinite);
+    return numericIds.length > 0 ? Math.max(...numericIds) + 1 : 1;
+}
+
 function getPositionOptionLabel(position) {
     const employee = getAssignedEmployee(position);
     const assignee = employee ? ` - ${employee.name}` : " - VACANT";
@@ -2708,26 +2715,6 @@ function getPositionManagerIdFromEmployeeManager(managerEmployeeId, childPositio
     }
     
     return managerPositions.find(p => p.id !== childPosition?.id)?.id || null;
-}
-
-function syncAssignedPositionFromEmployee(employee, previousPositionManagerId = undefined) {
-    if (!employee) return;
-
-    const position = getPrimaryPositionForEmployee(employee.id);
-    if (!position) return;
-
-    const nextManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
-    const managerChanged = previousPositionManagerId !== undefined && previousPositionManagerId !== nextManagerId;
-
-    position.title = employee.role;
-    position.department = employee.department;
-    position.managerId = nextManagerId;
-
-    if (managerChanged) {
-        const autoPos = getAutoPositionForPosition(nextManagerId, position.id);
-        position.x = autoPos.x;
-        position.y = autoPos.y;
-    }
 }
 
 function getDescendantPositionIds(positionId) {
@@ -3194,9 +3181,6 @@ async function handleFormSubmit(e) {
             
             const oldManagerId = employees[empIndex].managerId;
             const managerChanged = oldManagerId !== managerId;
-            const assignedPosition = getPrimaryPositionForEmployee(id);
-            const oldPositionManagerId = assignedPosition ? assignedPosition.managerId : undefined;
-
             // Update fields
             employees[empIndex].personId = nextPersonId;
             employees[empIndex].role = role;
@@ -3233,50 +3217,32 @@ async function handleFormSubmit(e) {
             }
 
             syncPersonProfile(nextPersonId, { name, email, phone, bio, photoUrl });
-            syncAssignedPositionFromEmployee(employees[empIndex], oldPositionManagerId);
             showNotification(`Updated profile for ${name}`, "success");
         }
     } else {
         // Add Mode
-        const newId = employees.length > 0 ? Math.max(...employees.map(e => e.id)) + 1 : 1;
-        const personId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || createPersonId(name, newId);
-
-        const autoPos = getAutoPositionForNode(managerId);
-        const newEmployee = {
+        const newId = getNextEmployeeId();
+        const newEmployee = EmployeeDirectory.createManualEmployee({
             id: newId,
-            personId,
             name,
             role,
             department,
             managerId,
-            x: autoPos.x,
-            y: autoPos.y,
             email,
             phone,
             bio,
             photoUrl,
             avatarColor: getDeptColor(department)
-        };
+        });
+        const personId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || newEmployee.personId;
+        newEmployee.personId = personId;
         
         employees.push(newEmployee);
-        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(managerId, { department: department, employeeId: newId });
-        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
-        positions.push({
-            id: getNextPositionId(),
-            title: role,
-            department,
-            managerId: newPositionManagerId,
-            employeeId: newId,
-            x: positionAutoPos.x,
-            y: positionAutoPos.y,
-            notes: ""
-        });
         syncPersonProfile(personId, { name, email, phone, bio, photoUrl });
         showNotification(`Added ${name} to organization`, "success");
     }
     
     await saveData();
-    await savePositions();
     closeFormModal();
     renderAll();
     

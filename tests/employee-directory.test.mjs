@@ -55,3 +55,19 @@ test("exposes Employee Management separately from Position Management", () => {
     assert.match(appSource, /function openEmployeeManagementModal\(\)/);
     assert.match(appSource, /function renderEmployeeList\(/);
 });
+
+test("employee CRUD creates manual records without changing positions", () => {
+    const submitHandler = appSource.match(
+        /async function handleFormSubmit\(e\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction deleteEmployee/
+    )?.[0] || "";
+
+    assert.match(appSource, /function getNextEmployeeId\(\) \{/);
+    assert.match(submitHandler, /EmployeeDirectory\.createManualEmployee\(\{/);
+    assert.match(submitHandler, /const newId = getNextEmployeeId\(\)/);
+    assert.match(submitHandler, /id:\s*newId/);
+    assert.match(submitHandler, /employees\.push\(newEmployee\)/);
+    assert.match(submitHandler, /await saveData\(\)/);
+    assert.doesNotMatch(submitHandler, /positions\.push\(/);
+    assert.doesNotMatch(submitHandler, /savePositions\(\)/);
+    assert.doesNotMatch(submitHandler, /syncAssignedPositionFromEmployee\(/);
+});
