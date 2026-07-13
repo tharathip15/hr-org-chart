@@ -55,3 +55,43 @@ test("only the first assigned seat is the employee primary position", () => {
     assert.equal(isPrimaryEmployeePosition(positions, 74, 74), true);
     assert.equal(isPrimaryEmployeePosition(positions, 102, 74), false);
 });
+
+test("accepts top-level and unrelated position parents", () => {
+    assert.equal(typeof OrgHierarchy.validatePositionParent, "function");
+
+    const positions = [
+        { id: 1, managerId: null },
+        { id: 2, managerId: 1 },
+        { id: 3, managerId: null }
+    ];
+
+    assert.deepEqual(OrgHierarchy.validatePositionParent(positions, 2, null), {
+        valid: true,
+        reason: null
+    });
+    assert.deepEqual(OrgHierarchy.validatePositionParent(positions, 2, 3), {
+        valid: true,
+        reason: null
+    });
+});
+
+test("rejects self, descendant, and missing position parents", () => {
+    const positions = [
+        { id: 1, managerId: null },
+        { id: 2, managerId: 1 },
+        { id: 3, managerId: 2 }
+    ];
+
+    assert.deepEqual(OrgHierarchy.validatePositionParent(positions, 2, 2), {
+        valid: false,
+        reason: "self"
+    });
+    assert.deepEqual(OrgHierarchy.validatePositionParent(positions, 1, 3), {
+        valid: false,
+        reason: "descendant"
+    });
+    assert.deepEqual(OrgHierarchy.validatePositionParent(positions, 3, 999), {
+        valid: false,
+        reason: "missing"
+    });
+});

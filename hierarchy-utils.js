@@ -56,6 +56,39 @@
         return { positions, changed, repairs };
     }
 
+    function validatePositionParent(sourcePositions, positionId, parentId) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const byId = new Map(positions.map(position => [toInteger(position.id), position]));
+        const childId = toInteger(positionId);
+        const candidateParentId = toInteger(parentId);
+
+        if (candidateParentId === null) {
+            return { valid: true, reason: null };
+        }
+
+        if (childId === null || !byId.has(childId) || !byId.has(candidateParentId)) {
+            return { valid: false, reason: "missing" };
+        }
+
+        if (childId === candidateParentId) {
+            return { valid: false, reason: "self" };
+        }
+
+        const visited = new Set();
+        let current = byId.get(candidateParentId);
+        while (current) {
+            const currentId = toInteger(current.id);
+            if (currentId === childId) {
+                return { valid: false, reason: "descendant" };
+            }
+            if (visited.has(currentId)) break;
+            visited.add(currentId);
+            current = byId.get(toInteger(current.managerId)) || null;
+        }
+
+        return { valid: true, reason: null };
+    }
+
     function repairEmployeeManagers(sourceEmployees) {
         const employees = Array.isArray(sourceEmployees)
             ? sourceEmployees.map(employee => ({ ...employee }))
@@ -82,6 +115,7 @@
 
     root.OrgHierarchy = Object.freeze({
         repairPositionHierarchy,
+        validatePositionParent,
         repairEmployeeManagers,
         isPrimaryEmployeePosition
     });
