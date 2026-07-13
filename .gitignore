@@ -4,4 +4,4 @@ node_modules/
 hr_org_chart.sqlite3
 scratch/
 __pycache__/
-
+.worktrees/
