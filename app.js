@@ -2875,22 +2875,38 @@ function renderEmployeeList(query = "") {
             ? "Unassigned"
             : `${assignment.count} assigned position${assignment.count === 1 ? "" : "s"}`;
         return `
-            <button type="button" class="employee-row" data-employee-id="${employee.id}">
-                <span class="employee-row-main">
-                    <strong>${escapeHTML(employee.name || "Unnamed employee")}</strong>
-                    <small>${escapeHTML(employee.role || "No role")} - ${escapeHTML(employee.department || "No department")}</small>
-                </span>
-                <span class="employee-row-meta">
-                    <span class="employee-source-badge is-${source}">${source === "manual" ? "Manual" : "Microsoft"}</span>
-                    <span class="employee-assignment-state is-${assignment.status}">${assignmentText}</span>
-                </span>
-            </button>
+            <div class="employee-row-shell">
+                <button type="button" class="employee-row" data-employee-id="${employee.id}">
+                    <span class="employee-row-main">
+                        <strong>${escapeHTML(employee.name || "Unnamed employee")}</strong>
+                        <small>${escapeHTML(employee.role || "No role")} - ${escapeHTML(employee.department || "No department")}</small>
+                    </span>
+                    <span class="employee-row-meta">
+                        <span class="employee-source-badge is-${source}">${source === "manual" ? "Manual" : "Microsoft"}</span>
+                        <span class="employee-assignment-state is-${assignment.status}">${assignmentText}</span>
+                    </span>
+                </button>
+                <button type="button" class="employee-row-delete" data-employee-id="${employee.id}" aria-label="Delete ${escapeHTML(employee.name || "Unnamed employee")}">
+                    <i data-lucide="trash-2"></i>
+                </button>
+            </div>
         `;
     }).join("");
 
     list.querySelectorAll(".employee-row").forEach(row => {
         row.addEventListener("click", () => openEmployeeForm(parseInt(row.dataset.employeeId, 10)));
     });
+    list.querySelectorAll(".employee-row-delete").forEach(button => {
+        button.addEventListener("click", event => {
+            event.stopPropagation();
+            deleteEmployee(parseInt(button.dataset.employeeId, 10)).catch(error => {
+                console.error("Failed to delete employee:", error);
+                showNotification("Employee deletion failed", "error");
+            });
+        });
+    });
+
+    if (window.lucide) window.lucide.createIcons();
 }
 
 function renderPositionsList() {

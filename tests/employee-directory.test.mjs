@@ -72,6 +72,7 @@ test("detaches an employee while retaining every position", () => {
 
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const styleSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
 
 test("deleting an employee detaches assigned positions without changing position details", () => {
     const positions = [
@@ -123,4 +124,21 @@ test("exposes Employee Management separately from Position Management", () => {
     assert.match(htmlSource, /id="employee-list"/);
     assert.match(appSource, /function openEmployeeManagementModal\(\)/);
     assert.match(appSource, /function renderEmployeeList\(/);
+});
+
+test("provides a separate, keyboard-accessible delete action for each employee row", () => {
+    assert.match(appSource, /class="employee-row-shell"/);
+    assert.match(appSource, /<button type="button" class="employee-row" data-employee-id="\$\{employee\.id\}">/);
+    assert.match(appSource, /<button type="button" class="employee-row-delete" data-employee-id="\$\{employee\.id\}" aria-label="Delete \$\{escapeHTML\(employee\.name \|\| "Unnamed employee"\)\}">/);
+    assert.match(appSource, /list\.querySelectorAll\("\.employee-row"\)\.forEach\(row => \{\s*row\.addEventListener\("click", \(\) => openEmployeeForm\(parseInt\(row\.dataset\.employeeId, 10\)\)\);/);
+
+    const deleteRowHandler = appSource.match(
+        /list\.querySelectorAll\("\.employee-row-delete"\)\.forEach\(button => \{[\s\S]*?\n    \}\);/
+    )?.[0];
+    assert.ok(deleteRowHandler);
+    assert.match(deleteRowHandler, /event\.stopPropagation\(\);/);
+    assert.equal((deleteRowHandler.match(/deleteEmployee\(parseInt\(button\.dataset\.employeeId, 10\)\)/g) || []).length, 1);
+    assert.doesNotMatch(deleteRowHandler, /confirm\(/);
+    assert.match(styleSource, /\.employee-row-shell\s*\{/);
+    assert.match(styleSource, /\.employee-row-delete:focus-visible\s*\{/);
 });
