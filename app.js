@@ -1493,6 +1493,11 @@ function setupEventListeners() {
     if (btnManagePositions) {
         btnManagePositions.addEventListener("click", () => openPositionsModal());
     }
+
+    const btnManageEmployees = document.getElementById("btn-manage-employees");
+    if (btnManageEmployees) {
+        btnManageEmployees.addEventListener("click", () => openEmployeeManagementModal());
+    }
     
     // Search logic
     const searchInput = document.getElementById("search-input");
@@ -1589,6 +1594,10 @@ function setupEventListeners() {
     document.getElementById("form-modal-overlay").addEventListener("click", closeFormModal);
     document.getElementById("close-position-modal").addEventListener("click", closePositionsModal);
     document.getElementById("position-modal-overlay").addEventListener("click", closePositionsModal);
+    document.getElementById("close-employee-management-modal").addEventListener("click", closeEmployeeManagementModal);
+    document.getElementById("employee-management-modal-overlay").addEventListener("click", closeEmployeeManagementModal);
+    document.getElementById("employee-search").addEventListener("input", (event) => renderEmployeeList(event.target.value));
+    document.getElementById("btn-new-employee").addEventListener("click", () => openEmployeeForm());
     document.getElementById("btn-reset-position-form").addEventListener("click", () => resetPositionForm());
     document.getElementById("btn-delete-position").addEventListener("click", () => {
         const id = parseInt(document.getElementById("form-position-id").value, 10);
@@ -1767,6 +1776,11 @@ function renderAll() {
     renderSidebarStats();
     renderSidebarDeptList();
     renderTree();
+
+    const employeeManagementModal = document.getElementById("employee-management-modal");
+    if (employeeManagementModal?.classList.contains("active")) {
+        renderEmployeeList(document.getElementById("employee-search").value);
+    }
 }
 
 // Compute counts and populate sidebar
@@ -2832,6 +2846,65 @@ function openPositionsModal() {
 function closePositionsModal() {
     document.getElementById("position-modal-overlay").classList.remove("active");
     document.getElementById("position-modal").classList.remove("active");
+}
+
+function openEmployeeManagementModal() {
+    document.getElementById("employee-management-modal-overlay").classList.add("active");
+    document.getElementById("employee-management-modal").classList.add("active");
+    document.getElementById("employee-search").value = "";
+    renderEmployeeList();
+    lucide.createIcons();
+}
+
+function closeEmployeeManagementModal() {
+    document.getElementById("employee-management-modal-overlay").classList.remove("active");
+    document.getElementById("employee-management-modal").classList.remove("active");
+}
+
+function getEmployeeListSearchText(employee) {
+    return [employee.name, employee.role, employee.department, employee.email]
+        .map(value => String(value || "").toLowerCase())
+        .join(" ");
+}
+
+function renderEmployeeList(query = "") {
+    const list = document.getElementById("employee-list");
+    const summary = document.getElementById("employee-summary");
+    const normalizedQuery = String(query || "").trim().toLowerCase();
+    const matchingEmployees = employees
+        .filter(employee => getEmployeeListSearchText(employee).includes(normalizedQuery))
+        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+    summary.innerText = `${matchingEmployees.length} of ${employees.length} employees`;
+
+    if (matchingEmployees.length === 0) {
+        list.innerHTML = `<div class="employee-empty-state">${employees.length === 0 ? "No employees yet" : "No employees match your search"}</div>`;
+        return;
+    }
+
+    list.innerHTML = matchingEmployees.map(employee => {
+        const source = EmployeeDirectory.getEmployeeSource(employee);
+        const assignment = EmployeeDirectory.getAssignmentSummary(employee.id, positions);
+        const assignmentText = assignment.count === 0
+            ? "Unassigned"
+            : `${assignment.count} assigned position${assignment.count === 1 ? "" : "s"}`;
+        return `
+            <button type="button" class="employee-row" data-employee-id="${employee.id}">
+                <span class="employee-row-main">
+                    <strong>${escapeHTML(employee.name || "Unnamed employee")}</strong>
+                    <small>${escapeHTML(employee.role || "No role")} - ${escapeHTML(employee.department || "No department")}</small>
+                </span>
+                <span class="employee-row-meta">
+                    <span class="employee-source-badge">${source === "manual" ? "Manual" : "Microsoft"}</span>
+                    <span class="employee-assignment-state ${assignment.status === "unassigned" ? "is-unassigned" : ""}">${assignmentText}</span>
+                </span>
+            </button>
+        `;
+    }).join("");
+
+    list.querySelectorAll(".employee-row").forEach(row => {
+        row.addEventListener("click", () => openEmployeeForm(parseInt(row.dataset.employeeId, 10)));
+    });
 }
 
 function renderPositionsList() {

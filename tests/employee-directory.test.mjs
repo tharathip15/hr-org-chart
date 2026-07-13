@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 await import("../employee-utils.js");
 const directory = globalThis.EmployeeDirectory;
@@ -41,4 +42,16 @@ test("detaches an employee while retaining every position", () => {
         { id: 20, managerId: null, employeeId: null, title: "Officer" },
         { id: 21, managerId: 20, employeeId: null, title: "Acting Officer" }
     ]);
+});
+
+const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+
+test("exposes Employee Management separately from Position Management", () => {
+    assert.match(htmlSource, /id="btn-manage-employees"/);
+    assert.match(htmlSource, /id="employee-management-modal"/);
+    assert.match(htmlSource, /id="employee-search"/);
+    assert.match(htmlSource, /id="employee-list"/);
+    assert.match(appSource, /function openEmployeeManagementModal\(\)/);
+    assert.match(appSource, /function renderEmployeeList\(/);
 });
