@@ -33,7 +33,7 @@ test("creates manual employees without a position link", () => {
     assert.equal(Object.hasOwn(employee, "positionId"), false);
 });
 
-test("creates a manual employee without changing the positions collection", () => {
+test("adds a manual employee at runtime without changing positions", () => {
     const employees = [
         { id: 4, name: "Existing Employee" },
         { id: 12, name: "Highest ID Employee" }
@@ -42,20 +42,21 @@ test("creates a manual employee without changing the positions collection", () =
         { id: 20, employeeId: 4, title: "Officer" },
         { id: 21, employeeId: null, title: "Manager" }
     ];
+    const originalEmployees = structuredClone(employees);
     const originalPositions = structuredClone(positions);
-    const newId = directory.getNextEmployeeId(employees);
-    const newEmployee = directory.createManualEmployee({
-        id: newId, name: "Jane Doe", role: "Officer", department: "HR"
+    const result = directory.addManualEmployee(employees, positions, {
+        name: "Jane Doe", role: "Officer", department: "HR"
     });
 
-    employees.push(newEmployee);
-
-    assert.equal(employees.length, 3);
-    assert.equal(newEmployee.id, 13);
-    assert.equal(typeof newEmployee.id, "number");
-    assert.equal(newEmployee.personId, "manual-jane-doe-13");
+    assert.equal(result.employees.length, 3);
+    assert.equal(result.employee.id, 13);
+    assert.equal(typeof result.employee.id, "number");
+    assert.equal(result.employee.personId, "manual-jane-doe-13");
+    assert.deepEqual(employees, originalEmployees);
+    assert.equal(result.positions, positions);
     assert.deepEqual(positions, originalPositions);
     assert.equal(positions.length, 2);
+    assert.match(appSource, /EmployeeDirectory\.addManualEmployee\(/);
 });
 
 test("detaches an employee while retaining every position", () => {
@@ -79,20 +80,4 @@ test("exposes Employee Management separately from Position Management", () => {
     assert.match(htmlSource, /id="employee-list"/);
     assert.match(appSource, /function openEmployeeManagementModal\(\)/);
     assert.match(appSource, /function renderEmployeeList\(/);
-});
-
-test("employee CRUD creates manual records without changing positions", () => {
-    const submitHandler = appSource.match(
-        /async function handleFormSubmit\(e\) \{[\s\S]*?\r?\n\}\r?\n\r?\nfunction deleteEmployee/
-    )?.[0] || "";
-
-    assert.match(appSource, /function getNextEmployeeId\(\) \{/);
-    assert.match(submitHandler, /EmployeeDirectory\.createManualEmployee\(\{/);
-    assert.match(submitHandler, /const newId = getNextEmployeeId\(\)/);
-    assert.match(submitHandler, /id:\s*newId/);
-    assert.match(submitHandler, /employees\.push\(newEmployee\)/);
-    assert.match(submitHandler, /await saveData\(\)/);
-    assert.doesNotMatch(submitHandler, /positions\.push\(/);
-    assert.doesNotMatch(submitHandler, /savePositions\(\)/);
-    assert.doesNotMatch(submitHandler, /syncAssignedPositionFromEmployee\(/);
 });

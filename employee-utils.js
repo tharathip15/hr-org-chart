@@ -45,6 +45,18 @@
         };
     }
 
+    function addManualEmployee(employees, positions, fields) {
+        const employee = createManualEmployee({
+            ...fields,
+            id: getNextEmployeeId(employees)
+        });
+        return {
+            employee,
+            employees: [...(employees || []), employee],
+            positions
+        };
+    }
+
     function detachEmployeeFromPositions(employeeId, positions) {
         return (positions || []).map(position => (
             Number(position.employeeId) === Number(employeeId)
@@ -59,6 +71,7 @@
         getAssignmentSummary,
         getNextEmployeeId,
         createManualEmployee,
+        addManualEmployee,
         detachEmployeeFromPositions
     });
 })(globalThis);

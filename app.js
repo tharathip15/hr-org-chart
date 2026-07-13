@@ -2645,10 +2645,6 @@ function getNextPositionId() {
     return positions.length > 0 ? Math.max(...positions.map(position => position.id)) + 1 : 1;
 }
 
-function getNextEmployeeId() {
-    return EmployeeDirectory.getNextEmployeeId(employees);
-}
-
 function getPositionOptionLabel(position) {
     const employee = getAssignedEmployee(position);
     const assignee = employee ? ` - ${employee.name}` : " - VACANT";
@@ -3218,9 +3214,7 @@ async function handleFormSubmit(e) {
         }
     } else {
         // Add Mode
-        const newId = getNextEmployeeId();
-        const newEmployee = EmployeeDirectory.createManualEmployee({
-            id: newId,
+        const addResult = EmployeeDirectory.addManualEmployee(employees, positions, {
             name,
             role,
             department,
@@ -3231,10 +3225,11 @@ async function handleFormSubmit(e) {
             photoUrl,
             avatarColor: getDeptColor(department)
         });
+        const newEmployee = addResult.employee;
         const personId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || newEmployee.personId;
         newEmployee.personId = personId;
-        
-        employees.push(newEmployee);
+        employees = addResult.employees;
+
         syncPersonProfile(personId, { name, email, phone, bio, photoUrl });
         showNotification(`Added ${name} to organization`, "success");
     }
