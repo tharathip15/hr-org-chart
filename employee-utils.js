@@ -65,6 +65,34 @@
         ));
     }
 
+    function getStaffingSummary(employees, positions) {
+        const people = Array.isArray(employees) ? employees : [];
+        const seats = Array.isArray(positions) ? positions : [];
+        const vacantPositions = seats
+            .filter(position => {
+                if (position?.employeeId === null || position?.employeeId === undefined) return true;
+                return !people.some(employee => employee?.id === position.employeeId);
+            })
+            .map(position => ({
+                id: position?.id ?? null,
+                title: String(position?.title || "Open Position").trim() || "Open Position",
+                department: String(position?.department || "Unassigned").trim() || "Unassigned"
+            }))
+            .sort((a, b) => {
+                const departmentOrder = a.department.localeCompare(b.department);
+                return departmentOrder !== 0
+                    ? departmentOrder
+                    : a.title.localeCompare(b.title);
+            });
+
+        return {
+            employeeCount: people.length,
+            positionCount: seats.length,
+            vacantCount: vacantPositions.length,
+            vacantPositions
+        };
+    }
+
     root.EmployeeDirectory = Object.freeze({
         createManualPersonId,
         getEmployeeSource,
@@ -72,6 +100,7 @@
         getNextEmployeeId,
         createManualEmployee,
         addManualEmployee,
-        detachEmployeeFromPositions
+        detachEmployeeFromPositions,
+        getStaffingSummary
     });
 })(globalThis);
