@@ -52,6 +52,15 @@ test("org chart renders positions and clearly marks vacant seats", () => {
     assert.match(cssSource, /\.position-status-vacant/);
 });
 
+test("non-primary assigned positions are rendered as Acting", () => {
+    assert.match(appSource, /function isActingPosition\(position\) \{[\s\S]+OrgHierarchy\.isPrimaryEmployeePosition\(positions, position\.id, employee\.id\)/);
+    assert.match(appSource, /const isActing = isActingPosition\(position\);/);
+    assert.match(appSource, /position-status-acting/);
+    assert.match(appSource, /position-row-acting/);
+    assert.match(cssSource, /\.position-status-acting/);
+    assert.match(cssSource, /\.position-row-acting/);
+});
+
 test("local and deployed APIs expose positions", () => {
     assert.match(serverSource, /if path == "\/api\/positions":/);
     assert.match(serverSource, /load_positions\(\)/);
