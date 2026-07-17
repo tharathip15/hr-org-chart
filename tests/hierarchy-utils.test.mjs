@@ -44,16 +44,18 @@ test("repairs employee self-managers while preserving valid reporting lines", ()
     assert.deepEqual(result.employees.map(employee => employee.managerId), [null, 10, null]);
 });
 
-test("only the first assigned seat is the employee primary position", () => {
+test("only the first assigned seat is primary when an employee holds three positions", () => {
     assert.equal(typeof isPrimaryEmployeePosition, "function");
 
     const positions = [
         { id: 74, employeeId: 74 },
-        { id: 102, employeeId: 74 }
+        { id: 102, employeeId: 74 },
+        { id: 103, employeeId: 74 }
     ];
 
     assert.equal(isPrimaryEmployeePosition(positions, 74, 74), true);
     assert.equal(isPrimaryEmployeePosition(positions, 102, 74), false);
+    assert.equal(isPrimaryEmployeePosition(positions, 103, 74), false);
 });
 
 test("accepts top-level and unrelated position parents", () => {
