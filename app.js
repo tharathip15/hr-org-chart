@@ -750,6 +750,19 @@ function toNullableInteger(value) {
     return Number.isInteger(parsed) ? parsed : null;
 }
 
+function normalizeManualLayouts(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+    return Object.entries(value).reduce((layouts, [viewKey, coordinates]) => {
+        const x = toNullableInteger(coordinates?.x);
+        const y = toNullableInteger(coordinates?.y);
+        if (x !== null && y !== null) {
+            layouts[viewKey] = { x, y };
+        }
+        return layouts;
+    }, {});
+}
+
 function normalizePosition(position, fallbackId) {
     const id = toNullableInteger(position?.id) || fallbackId;
     const title = (position?.title || position?.role || "Open Position").trim();
@@ -757,6 +770,7 @@ function normalizePosition(position, fallbackId) {
 
     let layoutStyle = "horizontal";
     let isManual = false;
+    let manualLayouts = normalizeManualLayouts(position?.manualLayouts);
     let notesText = (position?.notes || "").trim();
 
     // Check if notes contains layout style JSON
@@ -765,6 +779,10 @@ function normalizePosition(position, fallbackId) {
             const parsed = JSON.parse(notesText);
             layoutStyle = parsed.layoutStyle || "horizontal";
             isManual = !!parsed.isManual;
+            manualLayouts = {
+                ...manualLayouts,
+                ...normalizeManualLayouts(parsed.manualLayouts)
+            };
             notesText = parsed.text || "";
         } catch (e) {
             // Not valid JSON, keep as is
@@ -781,6 +799,7 @@ function normalizePosition(position, fallbackId) {
         y: toNullableInteger(position?.y),
         layoutStyle,
         isManual: isManual || (position?.isManual === true),
+        manualLayouts,
         notes: notesText
     };
 }
@@ -935,6 +954,7 @@ async function savePositions() {
         notes: JSON.stringify({
             layoutStyle: p.layoutStyle || "horizontal",
             isManual: !!p.isManual,
+            manualLayouts: p.manualLayouts || {},
             text: p.notes || ""
         })
     }));
@@ -1435,6 +1455,7 @@ function setupEventListeners() {
                     position.x = null;
                     position.y = null;
                     position.isManual = false;
+                    position.manualLayouts = {};
                 });
                 renderTree();
                 savePositions();
@@ -2006,6 +2027,25 @@ function getPositionDepartment(position) {
     return (position?.department || "Unassigned").trim();
 }
 
+function getManualPositionCoordinates(position) {
+    const coordinates = selectedDept === "All"
+        ? (position.isManual ? { x: position.x, y: position.y } : null)
+        : position.manualLayouts?.[selectedDept];
+
+    if (!coordinates) return null;
+
+    const x = toNullableInteger(coordinates.x);
+    const y = toNullableInteger(coordinates.y);
+    return x !== null && y !== null ? { x, y } : null;
+}
+
+function getRenderedPositionCoordinates(position) {
+    return {
+        x: position.renderX ?? position.x ?? 0,
+        y: position.renderY ?? position.y ?? 0
+    };
+}
+
 function getPositionCardHTML(position) {
     const employee = getAssignedEmployee(position);
     const title = getPositionTitle(position);
@@ -2020,9 +2060,10 @@ function getPositionCardHTML(position) {
     const avatarHTML = employee
         ? getAvatarHTML({ ...employee, department }, "avatar")
         : `<div class="avatar position-vacant-avatar" style="background-color: #f43f5e;">OP</div>`;
+    const { x, y } = getRenderedPositionCoordinates(position);
 
     let cardHtml = `
-        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"}" data-id="${position.id}" style="position: absolute; left: ${position.x}px; top: ${position.y}px; touch-action: none;">
+        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"}" data-id="${position.id}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
             <div class="card-header">
                 ${avatarHTML}
                 <div class="card-title-group">
@@ -2187,6 +2228,11 @@ function calculateInitialCoordinates() {
 
     if (activePositions.length === 0) return;
 
+    positions.forEach(position => {
+        delete position.renderX;
+        delete position.renderY;
+    });
+
     const activeIds = new Set(activePositions.map(p => p.id));
     
     // 2. Find roots within active positions
@@ -2277,24 +2323,30 @@ function calculateInitialCoordinates() {
         const children = reportsMap[position.id] || [];
         const w = subtreeWidths[position.id] || xSpacing;
 
-        // If this position was manually dragged, keep its custom coordinates and adjust childXStart
-        const useManual = position.isManual && position.x !== undefined && position.x !== null && position.y !== undefined && position.y !== null;
+        // Keep manual coordinates only for the active view; other views use their own layout.
+        const manualCoordinates = getManualPositionCoordinates(position);
+        const useManual = manualCoordinates !== null;
         if (useManual) {
-            xStart = position.x + 110 - w / 2;
+            position.renderX = manualCoordinates.x;
+            position.renderY = manualCoordinates.y;
+            xStart = manualCoordinates.x + 110 - w / 2;
         } else {
             const myX = xStart + w / 2;
-            position.x = Math.round(myX - 110);
-            position.y = Math.round(y);
+            position.renderX = Math.round(myX - 110);
+            position.renderY = Math.round(y);
         }
+
+        const renderedX = position.renderX;
+        const renderedY = position.renderY;
         
         const isVertical = position.layoutStyle === "vertical";
         
         if (isVertical) {
             // Stack children vertically under the parent
-            let currentChildY = position.y + 140; // Start below the parent
+            let currentChildY = renderedY + 140; // Start below the parent
             children.forEach(child => {
                 // Place child shifted horizontally to the right
-                const childXStart = position.x + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
+                const childXStart = renderedX + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
                 assignCoords(child, childXStart, currentChildY);
                 currentChildY += (subtreeHeights[child.id] || 140);
             });
@@ -2302,7 +2354,7 @@ function calculateInitialCoordinates() {
             // Standard horizontal sibling layout
             let childXStart = xStart;
             children.forEach(child => {
-                assignCoords(child, childXStart, position.y + ySpacing);
+                assignCoords(child, childXStart, renderedY + ySpacing);
                 childXStart += (subtreeWidths[child.id] || xSpacing);
             });
         }
@@ -3415,8 +3467,9 @@ function handleCardDragStart(e) {
     card.setPointerCapture(e.pointerId);
     card.classList.add("dragging");
 
-    dragGrabOffsetX = (e.clientX / currentScale) - position.x;
-    dragGrabOffsetY = (e.clientY / currentScale) - position.y;
+    const renderedCoordinates = getRenderedPositionCoordinates(position);
+    dragGrabOffsetX = (e.clientX / currentScale) - renderedCoordinates.x;
+    dragGrabOffsetY = (e.clientY / currentScale) - renderedCoordinates.y;
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
@@ -3436,26 +3489,26 @@ function handleCardDragMove(e) {
     let snappedX = newX;
     let snappedY = newY;
 
-    const otherPositions = positions.filter(p => p.id !== draggedId && p.x !== undefined && p.x !== null && p.y !== undefined && p.y !== null);
+    const otherPositions = positions.filter(p => p.id !== draggedId && p.renderX !== undefined && p.renderY !== undefined);
 
     // Check X snap
     for (let other of otherPositions) {
-        if (Math.abs(newX - other.x) < SNAP_THRESHOLD) {
-            snappedX = other.x;
+        if (Math.abs(newX - other.renderX) < SNAP_THRESHOLD) {
+            snappedX = other.renderX;
             break;
         }
     }
 
     // Check Y snap
     for (let other of otherPositions) {
-        if (Math.abs(newY - other.y) < SNAP_THRESHOLD) {
-            snappedY = other.y;
+        if (Math.abs(newY - other.renderY) < SNAP_THRESHOLD) {
+            snappedY = other.renderY;
             break;
         }
     }
 
-    position.x = snappedX;
-    position.y = snappedY;
+    position.renderX = snappedX;
+    position.renderY = snappedY;
 
     activeDragCard.style.left = `${snappedX}px`;
     activeDragCard.style.top = `${snappedY}px`;
@@ -3470,7 +3523,19 @@ function handleCardDragEnd(e) {
     if (activeDragCard && draggedId !== null) {
         const position = positions.find(p => p.id === draggedId);
         if (position) {
-            position.isManual = true;
+            const renderedCoordinates = getRenderedPositionCoordinates(position);
+            if (selectedDept === "All") {
+                position.x = renderedCoordinates.x;
+                position.y = renderedCoordinates.y;
+                position.isManual = true;
+            } else {
+                const manualLayouts = normalizeManualLayouts(position.manualLayouts);
+                manualLayouts[selectedDept] = {
+                    x: renderedCoordinates.x,
+                    y: renderedCoordinates.y
+                };
+                position.manualLayouts = manualLayouts;
+            }
         }
         try {
             activeDragCard.releasePointerCapture(e.pointerId);
