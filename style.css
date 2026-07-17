@@ -726,8 +726,17 @@ body {
     gap: 10px;
 }
 
+.position-status-group {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    min-width: 0;
+}
+
 .position-status-vacant,
-.position-status-filled {
+.position-status-filled,
+.position-status-acting {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
@@ -745,6 +754,11 @@ body {
 .position-status-filled {
     color: #047857;
     background-color: #d1fae5;
+}
+
+.position-status-acting {
+    color: #92400e;
+    background-color: #fef3c7;
 }
 
 /* Card Header */
@@ -1093,6 +1107,13 @@ body {
 .position-row.is-vacant .position-row-meta span {
     color: #be123c;
     font-weight: 700;
+}
+
+.position-row-acting {
+    color: #92400e !important;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .positions-empty {
