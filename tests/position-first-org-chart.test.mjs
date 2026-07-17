@@ -61,6 +61,13 @@ test("non-primary assigned positions are rendered as Acting", () => {
     assert.match(cssSource, /\.position-row-acting/);
 });
 
+test("acting position cards hide duplicate and filled labels", () => {
+    assert.match(appSource, /const showDualRole = isDualRole && !isActing;/);
+    assert.match(appSource, /const occupancyStatus = isVacant \? "Open Position" : \(isActing \? "" : "Filled"\);/);
+    assert.match(appSource, /\$\{showDualRole \?/);
+    assert.match(appSource, /\$\{occupancyStatus \?/);
+});
+
 test("local and deployed APIs expose positions", () => {
     assert.match(serverSource, /if path == "\/api\/positions":/);
     assert.match(serverSource, /load_positions\(\)/);

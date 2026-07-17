@@ -2062,6 +2062,8 @@ function getPositionCardHTML(position) {
     const isActing = isActingPosition(position);
     const dualRoleCount = employee ? positions.filter(candidate => candidate.employeeId === employee.id).length : 0;
     const isDualRole = dualRoleCount > 1;
+    const showDualRole = isDualRole && !isActing;
+    const occupancyStatus = isVacant ? "Open Position" : (isActing ? "" : "Filled");
     const displayName = employee ? employee.name : "VACANT";
     const avatarHTML = employee
         ? getAvatarHTML({ ...employee, department }, "avatar")
@@ -2075,7 +2077,7 @@ function getPositionCardHTML(position) {
                 <div class="card-title-group">
                     <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
                         <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(displayName)}</span>
-                        ${isDualRole ? `<span class="dual-role-badge" title="Multiple assigned positions" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ""}
+                        ${showDualRole ? `<span class="dual-role-badge" title="Multiple assigned positions" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ""}
                     </div>
                     <div class="card-role">${escapeHTML(title)}</div>
                 </div>
@@ -2085,9 +2087,7 @@ function getPositionCardHTML(position) {
                     ${escapeHTML(department)}
                 </div>
                 <div class="position-status-group">
-                    <span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">
-                        ${isVacant ? "Open Position" : "Filled"}
-                    </span>
+                    ${occupancyStatus ? `<span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">${occupancyStatus}</span>` : ""}
                     ${isActing ? `<span class="position-status-acting">Acting</span>` : ""}
                 </div>
             </div>
