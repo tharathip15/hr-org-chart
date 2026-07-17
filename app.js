@@ -3566,6 +3566,126 @@ let annotationHistory = [];
 let annotationRedoHistory = [];
 
 const ANNOTATIONS_API_URL = "/api/annotations";
+const ANNOTATION_DEFAULT_COLOR = "#4f46e5";
+const ANNOTATION_DEFAULT_FONT_SIZE = 15;
+const ANNOTATION_MIN_FONT_SIZE = 12;
+const ANNOTATION_MAX_FONT_SIZE = 48;
+const ANNOTATION_MIN_WIDTH = 120;
+const ANNOTATION_MAX_WIDTH = 1600;
+const ANNOTATION_MIN_HEIGHT = 80;
+const ANNOTATION_MAX_HEIGHT = 1200;
+let selectedAnnotationId = null;
+
+function normalizeAnnotationColor(value) {
+    const color = String(value || "").trim();
+    return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : ANNOTATION_DEFAULT_COLOR;
+}
+
+function getAnnotationColor(annotation) {
+    return normalizeAnnotationColor(annotation?.color);
+}
+
+function getAnnotationNumber(annotation, property, fallback, min, max) {
+    const value = Number(annotation?.[property]);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function getAnnotationFontSize(annotation) {
+    return getAnnotationNumber(annotation, "fontSize", ANNOTATION_DEFAULT_FONT_SIZE, ANNOTATION_MIN_FONT_SIZE, ANNOTATION_MAX_FONT_SIZE);
+}
+
+function getAnnotationDimension(annotation, property, fallback, min, max) {
+    return getAnnotationNumber(annotation, property, fallback, min, max);
+}
+
+function getAnnotationFillColor(color) {
+    const normalized = normalizeAnnotationColor(color);
+    const red = parseInt(normalized.slice(1, 3), 16);
+    const green = parseInt(normalized.slice(3, 5), 16);
+    const blue = parseInt(normalized.slice(5, 7), 16);
+    return `rgba(${red}, ${green}, ${blue}, 0.08)`;
+}
+
+function getSelectedAnnotation() {
+    return annotations.find(annotation => annotation.id === selectedAnnotationId) || null;
+}
+
+function selectAnnotation(id) {
+    selectedAnnotationId = id;
+    document.querySelectorAll(".annotation-card, .annotation-text-wrapper").forEach(element => {
+        element.classList.toggle("selected", element.dataset.id === id);
+    });
+    updateAnnotationStyleControls();
+}
+
+function updateAnnotationStyleControls() {
+    const controls = document.getElementById("annotation-style-controls");
+    const colorInput = document.getElementById("annotation-color-picker");
+    const fontSizeInput = document.getElementById("annotation-font-size");
+    const widthInput = document.getElementById("annotation-width");
+    const heightInput = document.getElementById("annotation-height");
+    const selected = getSelectedAnnotation();
+    const hasSelection = Boolean(selected);
+
+    if (controls) controls.classList.toggle("has-selection", hasSelection);
+    if (colorInput) {
+        colorInput.disabled = !hasSelection;
+        colorInput.value = selected ? getAnnotationColor(selected) : ANNOTATION_DEFAULT_COLOR;
+    }
+    if (fontSizeInput) {
+        fontSizeInput.disabled = !selected || selected.type !== "text";
+        fontSizeInput.value = selected ? getAnnotationFontSize(selected) : ANNOTATION_DEFAULT_FONT_SIZE;
+    }
+    if (widthInput) {
+        widthInput.disabled = !selected || selected.type !== "frame";
+        widthInput.value = selected
+            ? getAnnotationDimension(selected, "width", 240, ANNOTATION_MIN_WIDTH, ANNOTATION_MAX_WIDTH)
+            : 240;
+    }
+    if (heightInput) {
+        heightInput.disabled = !selected || selected.type !== "frame";
+        heightInput.value = selected
+            ? getAnnotationDimension(selected, "height", 160, ANNOTATION_MIN_HEIGHT, ANNOTATION_MAX_HEIGHT)
+            : 160;
+    }
+}
+
+function applySelectedAnnotationStyle(changes) {
+    const annotation = getSelectedAnnotation();
+    if (!annotation) return;
+
+    const nextChanges = {};
+    if (Object.prototype.hasOwnProperty.call(changes, "color")) {
+        nextChanges.color = normalizeAnnotationColor(changes.color);
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, "fontSize") && annotation.type === "text") {
+        const fontSize = Number(changes.fontSize);
+        if (Number.isFinite(fontSize)) {
+            nextChanges.fontSize = Math.min(ANNOTATION_MAX_FONT_SIZE, Math.max(ANNOTATION_MIN_FONT_SIZE, Math.round(fontSize)));
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, "width") && annotation.type === "frame") {
+        const width = Number(changes.width);
+        if (Number.isFinite(width)) {
+            nextChanges.width = Math.min(ANNOTATION_MAX_WIDTH, Math.max(ANNOTATION_MIN_WIDTH, Math.round(width)));
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(changes, "height") && annotation.type === "frame") {
+        const height = Number(changes.height);
+        if (Number.isFinite(height)) {
+            nextChanges.height = Math.min(ANNOTATION_MAX_HEIGHT, Math.max(ANNOTATION_MIN_HEIGHT, Math.round(height)));
+        }
+    }
+
+    const hasChanges = Object.entries(nextChanges).some(([key, value]) => annotation[key] !== value);
+    if (!hasChanges) return;
+
+    pushAnnotationHistory();
+    Object.assign(annotation, nextChanges);
+    renderAnnotations();
+    saveAnnotations();
+}
 
 async function loadAnnotations() {
     try {
@@ -3646,6 +3766,7 @@ function updateAnnotationToolbarButtons() {
     const btnRedo = document.getElementById("tool-redo");
     if (btnUndo) btnUndo.disabled = annotationHistory.length === 0;
     if (btnRedo) btnRedo.disabled = annotationRedoHistory.length === 0;
+    updateAnnotationStyleControls();
 }
 
 // Global active drag vars for annotations
@@ -3661,6 +3782,10 @@ let annotResizeStartY = 0;
 function renderAnnotations() {
     const container = document.getElementById("annotations-container");
     if (!container) return;
+
+    if (selectedAnnotationId && !annotations.some(annotation => annotation.id === selectedAnnotationId)) {
+        selectedAnnotationId = null;
+    }
     
     container.innerHTML = "";
     
@@ -3671,8 +3796,11 @@ function renderAnnotations() {
             el.dataset.id = annot.id;
             el.style.left = `${annot.x}px`;
             el.style.top = `${annot.y}px`;
-            el.style.width = `${annot.width || 240}px`;
-            el.style.height = `${annot.height || 160}px`;
+            el.style.width = `${getAnnotationDimension(annot, "width", 240, ANNOTATION_MIN_WIDTH, ANNOTATION_MAX_WIDTH)}px`;
+            el.style.height = `${getAnnotationDimension(annot, "height", 160, ANNOTATION_MIN_HEIGHT, ANNOTATION_MAX_HEIGHT)}px`;
+            el.style.borderColor = getAnnotationColor(annot);
+            el.style.backgroundColor = getAnnotationFillColor(annot.color);
+            el.classList.toggle("selected", annot.id === selectedAnnotationId);
             
             el.innerHTML = `
                 <div class="annotation-header">
@@ -3708,6 +3836,7 @@ function renderAnnotations() {
             
             // Drag listeners
             el.addEventListener("pointerdown", (e) => {
+                selectAnnotation(annot.id);
                 if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']") || e.target.closest(".annotation-delete-btn")) return;
                 e.stopPropagation();
                 startDragAnnotation(e, annot, el);
@@ -3722,7 +3851,7 @@ function renderAnnotations() {
             container.appendChild(el);
         } else if (annot.type === "text") {
             const wrapper = document.createElement("div");
-            wrapper.className = "annotation-text-wrapper";
+            wrapper.className = `annotation-text-wrapper ${annot.id === selectedAnnotationId ? "selected" : ""}`;
             wrapper.dataset.id = annot.id;
             wrapper.style.left = `${annot.x}px`;
             wrapper.style.top = `${annot.y}px`;
@@ -3732,6 +3861,8 @@ function renderAnnotations() {
             txt.contentEditable = "true";
             txt.spellcheck = false;
             txt.innerText = annot.text || "ดับเบิ้ลคลิกแก้ไขข้อความ";
+            txt.style.color = getAnnotationColor(annot);
+            txt.style.fontSize = `${getAnnotationFontSize(annot)}px`;
             
             const del = document.createElement("button");
             del.className = "annotation-text-delete-btn";
@@ -3765,6 +3896,7 @@ function renderAnnotations() {
             
             // Drag listeners
             wrapper.addEventListener("pointerdown", (e) => {
+                selectAnnotation(annot.id);
                 if (e.target.closest(".annotation-text-delete-btn")) return;
                 if (e.target === txt && document.activeElement === txt) return; // allow typing selection
                 e.stopPropagation();
@@ -3774,6 +3906,8 @@ function renderAnnotations() {
             container.appendChild(wrapper);
         }
     });
+
+    updateAnnotationStyleControls();
 }
 
 function startDragAnnotation(e, annot, el) {
@@ -3836,8 +3970,8 @@ function handleResizeAnnotationMove(e) {
     const deltaX = (e.clientX - annotResizeStartX) / currentScale;
     const deltaY = (e.clientY - annotResizeStartY) / currentScale;
     
-    const newW = Math.max(120, Math.round(annotResizeStartW + deltaX));
-    const newH = Math.max(80, Math.round(annotResizeStartH + deltaY));
+    const newW = Math.min(ANNOTATION_MAX_WIDTH, Math.max(ANNOTATION_MIN_WIDTH, Math.round(annotResizeStartW + deltaX)));
+    const newH = Math.min(ANNOTATION_MAX_HEIGHT, Math.max(ANNOTATION_MIN_HEIGHT, Math.round(annotResizeStartH + deltaY)));
     
     annot.width = newW;
     annot.height = newH;
@@ -3854,6 +3988,7 @@ function handleResizeAnnotationEnd(e) {
     
     pushAnnotationHistory();
     saveAnnotations();
+    updateAnnotationStyleControls();
     activeResizeAnnotation = null;
     window.removeEventListener("pointermove", handleResizeAnnotationMove);
     window.removeEventListener("pointerup", handleResizeAnnotationEnd);
@@ -3861,12 +3996,40 @@ function handleResizeAnnotationEnd(e) {
 
 function deleteAnnotation(id) {
     pushAnnotationHistory();
+    if (selectedAnnotationId === id) selectedAnnotationId = null;
     annotations = annotations.filter(a => a.id !== id);
     renderAnnotations();
     saveAnnotations();
 }
 
 function setupAnnotationListeners() {
+    const colorInput = document.getElementById("annotation-color-picker");
+    const fontSizeInput = document.getElementById("annotation-font-size");
+    const widthInput = document.getElementById("annotation-width");
+    const heightInput = document.getElementById("annotation-height");
+
+    colorInput?.addEventListener("change", (e) => {
+        applySelectedAnnotationStyle({ color: e.target.value });
+    });
+    fontSizeInput?.addEventListener("change", (e) => {
+        applySelectedAnnotationStyle({ fontSize: e.target.value });
+    });
+    fontSizeInput?.addEventListener("input", (e) => {
+        applySelectedAnnotationStyle({ fontSize: e.target.value });
+    });
+    widthInput?.addEventListener("change", (e) => {
+        applySelectedAnnotationStyle({ width: e.target.value });
+    });
+    widthInput?.addEventListener("input", (e) => {
+        applySelectedAnnotationStyle({ width: e.target.value });
+    });
+    heightInput?.addEventListener("change", (e) => {
+        applySelectedAnnotationStyle({ height: e.target.value });
+    });
+    heightInput?.addEventListener("input", (e) => {
+        applySelectedAnnotationStyle({ height: e.target.value });
+    });
+
     // Toolbar buttons
     document.getElementById("tool-add-frame").addEventListener("click", () => {
         pushAnnotationHistory();
@@ -3883,8 +4046,10 @@ function setupAnnotationListeners() {
             y: Math.round(centerY),
             width: 240,
             height: 160,
+            color: ANNOTATION_DEFAULT_COLOR,
             text: "กรอบระบุกลุ่มงาน"
         });
+        selectedAnnotationId = id;
         renderAnnotations();
         saveAnnotations();
     });
@@ -3901,8 +4066,11 @@ function setupAnnotationListeners() {
             type: "text",
             x: Math.round(centerX),
             y: Math.round(centerY),
+            color: ANNOTATION_DEFAULT_COLOR,
+            fontSize: ANNOTATION_DEFAULT_FONT_SIZE,
             text: "พิมพ์คำอธิบาย..."
         });
+        selectedAnnotationId = id;
         renderAnnotations();
         saveAnnotations();
     });
@@ -3915,6 +4083,7 @@ function setupAnnotationListeners() {
         if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบกรอบและข้อความวาดเขียนทั้งหมดบนแผนผังนี้?")) {
             pushAnnotationHistory();
             annotations = [];
+            selectedAnnotationId = null;
             renderAnnotations();
             saveAnnotations();
         }

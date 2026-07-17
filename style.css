@@ -2015,6 +2015,65 @@ body {
     margin: 0 4px;
 }
 
+.annotation-style-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: max-width var(--transition-fast), opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.annotation-style-controls.has-selection {
+    max-width: 360px;
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.annotation-style-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text-tertiary);
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.annotation-style-field input {
+    height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.annotation-style-field input:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.annotation-style-field input[type="color"] {
+    width: 30px;
+    padding: 2px;
+    cursor: pointer;
+}
+
+.annotation-style-field input[type="number"] {
+    width: 52px;
+    padding: 3px 5px;
+    text-align: right;
+}
+
+.annotation-style-field input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+}
+
 .annotation-toolbar .tool-danger:hover {
     background-color: #fee2e2;
     color: #ef4444;
@@ -2157,6 +2216,12 @@ body {
 
 .annotation-text-wrapper:hover .annotation-text-delete-btn {
     display: flex;
+}
+
+.annotation-text-wrapper.selected .annotation-text {
+    border-color: var(--accent-primary);
+    background-color: var(--bg-secondary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 
 /* Toggle View Mode Button Active style */
@@ -2524,6 +2589,20 @@ body.role-viewer .node-card {
     .zoom-controls {
         flex-wrap: wrap;
         border-radius: var(--radius-md);
+    }
+
+    .annotation-toolbar {
+        right: 12px;
+        max-width: calc(100vw - 24px);
+        flex-wrap: wrap;
+    }
+
+    .annotation-style-controls.has-selection {
+        max-width: 100%;
+        flex-wrap: wrap;
+        order: 3;
+        flex-basis: 100%;
+        padding-top: 4px;
     }
 
     .actions-group {
