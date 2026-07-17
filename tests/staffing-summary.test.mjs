@@ -41,3 +41,22 @@ test("returns zero counts and a stable empty list for missing collections", () =
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const styleSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
+
+test("defines distinct sidebar statistics and an interactive vacancy card", () => {
+    assert.match(htmlSource, /id="total-employees"/);
+    assert.match(htmlSource, /id="total-positions"/);
+    assert.match(htmlSource, /id="total-vacant-positions"/);
+    assert.match(htmlSource, /<button[^>]+id="vacant-positions-card"/);
+    assert.match(htmlSource, /aria-controls="vacancy-report-modal"/);
+    assert.match(htmlSource, /id="vacancy-report-modal"/);
+    assert.match(htmlSource, /id="vacancy-report-modal-overlay"/);
+    assert.match(htmlSource, /id="vacancy-report-list"/);
+});
+
+test("styles the vacancy statistic as an accessible interactive card", () => {
+    assert.match(styleSource, /\.stat-card-action\s*\{/);
+    assert.match(styleSource, /\.stat-card-action:focus-visible\s*\{/);
+    assert.match(styleSource, /\.stat-card-vacant\s*\{/);
+    assert.match(styleSource, /\.vacancy-report-list\s*\{/);
+    assert.match(styleSource, /\.vacancy-report-empty\s*\{/);
+});

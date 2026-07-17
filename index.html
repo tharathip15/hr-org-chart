@@ -95,13 +95,18 @@
                 <h3>Statistics</h3>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <span class="stat-value" id="total-headcount">0</span>
-                        <span class="stat-label">Positions</span>
+                        <span class="stat-value" id="total-employees">0</span>
+                        <span class="stat-label">Employees</span>
                     </div>
                     <div class="stat-card">
-                        <span class="stat-value" id="total-departments">0</span>
-                        <span class="stat-label">Departments</span>
+                        <span class="stat-value" id="total-positions">0</span>
+                        <span class="stat-label">Positions</span>
                     </div>
+                    <button type="button" class="stat-card stat-card-action stat-card-vacant" id="vacant-positions-card" aria-controls="vacancy-report-modal" aria-haspopup="dialog" aria-label="View vacant positions (0)">
+                        <span class="stat-value" id="total-vacant-positions">0</span>
+                        <span class="stat-label">Vacant positions</span>
+                        <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+                    </button>
                 </div>
             </div>
 
@@ -268,8 +273,28 @@
                     <h4>Position Plan</h4>
                     <span id="positions-summary">0 positions</span>
                 </div>
+                <div class="positions-list-search-wrapper" style="padding: 10px 16px; border-bottom: 1px solid var(--border-color); background-color: var(--bg-secondary);">
+                    <div style="position: relative; display: flex; align-items: center;">
+                        <i data-lucide="search" style="position: absolute; left: 12px; width: 14px; height: 14px; color: var(--text-tertiary); pointer-events: none;"></i>
+                        <input type="text" id="position-list-search-input" placeholder="ค้นหาตามตำแหน่ง, แผนก หรือชื่อ..." style="width: 100%; padding: 8px 12px 8px 34px; font-size: 13px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); transition: var(--transition-fast);">
+                    </div>
+                </div>
                 <div class="positions-list" id="positions-list"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- Vacancy Report Modal -->
+    <div class="modal-overlay" id="vacancy-report-modal-overlay"></div>
+    <div class="modal vacancy-report-modal" id="vacancy-report-modal" role="dialog" aria-modal="true" aria-labelledby="vacancy-report-title">
+        <div class="modal-header">
+            <h3 id="vacancy-report-title">Vacant positions (0)</h3>
+            <button type="button" class="close-btn" id="close-vacancy-report-modal" aria-label="Close vacant position report">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="vacancy-report-body">
+            <div class="vacancy-report-list" id="vacancy-report-list"></div>
         </div>
     </div>
 
