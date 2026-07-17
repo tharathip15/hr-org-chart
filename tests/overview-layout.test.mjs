@@ -17,3 +17,8 @@ test("app updates position coordinates on drag move", () => {
     assert.match(appSource, /position\.x = snappedX;/);
     assert.match(appSource, /position\.y = snappedY;/);
 });
+
+test("manual position coordinates remain authoritative in Overall view", () => {
+    assert.match(appSource, /const useManual = position\.isManual &&/);
+    assert.doesNotMatch(appSource, /selectedDept !== "All" && position\.isManual/);
+});
