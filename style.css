@@ -677,7 +677,6 @@ body {
 }
 
 .node-card:hover {
-    transform: translateY(-4px);
     box-shadow: var(--shadow-lg), var(--shadow-glow);
     border-color: var(--accent-primary);
 }
@@ -695,7 +694,8 @@ body {
 .node-card.dragging {
     opacity: 0.45;
     border-style: dashed;
-    transform: scale(0.98);
+    transform: none;
+    transition: none;
 }
 
 .node-card.drag-over {
