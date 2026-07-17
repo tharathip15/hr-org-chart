@@ -1602,7 +1602,17 @@ function setupEventListeners() {
     document.getElementById("position-modal-overlay").addEventListener("click", closePositionsModal);
     document.getElementById("close-employee-management-modal").addEventListener("click", closeEmployeeManagementModal);
     document.getElementById("employee-management-modal-overlay").addEventListener("click", closeEmployeeManagementModal);
+    document.getElementById("vacant-positions-card").addEventListener("click", openVacancyReportModal);
+    document.getElementById("close-vacancy-report-modal").addEventListener("click", closeVacancyReportModal);
+    document.getElementById("vacancy-report-modal-overlay").addEventListener("click", closeVacancyReportModal);
+    document.addEventListener("keydown", event => {
+        const modal = document.getElementById("vacancy-report-modal");
+        if (event.key === "Escape" && modal?.classList.contains("active")) {
+            closeVacancyReportModal();
+        }
+    });
     document.getElementById("employee-search").addEventListener("input", (event) => renderEmployeeList(event.target.value));
+    document.getElementById("position-list-search-input").addEventListener("input", () => renderPositionsList());
     document.getElementById("btn-new-employee").addEventListener("click", () => openEmployeeForm());
     document.getElementById("btn-reset-position-form").addEventListener("click", () => resetPositionForm());
     document.getElementById("btn-delete-position").addEventListener("click", () => {
@@ -1793,14 +1803,23 @@ function renderAll() {
     if (employeeManagementModal?.classList.contains("active")) {
         renderEmployeeList(document.getElementById("employee-search").value);
     }
+
+    const vacancyReportModal = document.getElementById("vacancy-report-modal");
+    if (vacancyReportModal?.classList.contains("active")) {
+        renderVacancyReport();
+    }
 }
 
 // Compute counts and populate sidebar
 function renderSidebarStats() {
-    document.getElementById("total-headcount").innerText = positions.length;
-    
-    const depts = new Set(positions.map(position => position.department));
-    document.getElementById("total-departments").innerText = depts.size;
+    const summary = EmployeeDirectory.getStaffingSummary(employees, positions);
+    document.getElementById("total-employees").innerText = summary.employeeCount;
+    document.getElementById("total-positions").innerText = summary.positionCount;
+    document.getElementById("total-vacant-positions").innerText = summary.vacantCount;
+    document.getElementById("vacant-positions-card").setAttribute(
+        "aria-label",
+        `View vacant positions (${summary.vacantCount})`
+    );
 }
 
 // Build department items list in sidebar
@@ -2228,7 +2247,7 @@ function calculateInitialCoordinates() {
     collapsedNodes.forEach(id => markHidden(id));
     
     let activePositions = positions.filter(pos => !hiddenIds.has(pos.id));
-    if (selectedDept !== "All") {
+    if (false && selectedDept !== "All") {
         activePositions = activePositions.filter(pos => pos.department === selectedDept);
     }
 
@@ -2838,6 +2857,8 @@ function openPositionsModal() {
     const editId = arguments.length > 0 ? arguments[0] : null;
     document.getElementById("position-modal-overlay").classList.add("active");
     document.getElementById("position-modal").classList.add("active");
+    const filterInput = document.getElementById("position-list-search-input");
+    if (filterInput) filterInput.value = "";
     renderPositionsList();
     resetPositionForm(editId);
     lucide.createIcons();
@@ -2859,6 +2880,39 @@ function openEmployeeManagementModal() {
 function closeEmployeeManagementModal() {
     document.getElementById("employee-management-modal-overlay").classList.remove("active");
     document.getElementById("employee-management-modal").classList.remove("active");
+}
+
+function renderVacancyReport() {
+    const summary = EmployeeDirectory.getStaffingSummary(employees, positions);
+    const title = document.getElementById("vacancy-report-title");
+    const list = document.getElementById("vacancy-report-list");
+    title.innerText = `Vacant positions (${summary.vacantCount})`;
+
+    if (summary.vacantCount === 0) {
+        list.innerHTML = `<div class="vacancy-report-empty">No vacant positions</div>`;
+        return;
+    }
+
+    list.innerHTML = summary.vacantPositions.map(position => `
+        <div class="vacant-report-card">
+            <span class="vacant-report-card-title">${escapeHTML(position.title)}</span>
+            <span class="vacant-report-card-dept">${escapeHTML(position.department)}</span>
+        </div>
+    `).join("");
+}
+
+function openVacancyReportModal() {
+    document.getElementById("vacancy-report-modal-overlay").classList.add("active");
+    document.getElementById("vacancy-report-modal").classList.add("active");
+    renderVacancyReport();
+    if (window.lucide) window.lucide.createIcons();
+    document.getElementById("close-vacancy-report-modal").focus();
+}
+
+function closeVacancyReportModal() {
+    document.getElementById("vacancy-report-modal-overlay").classList.remove("active");
+    document.getElementById("vacancy-report-modal").classList.remove("active");
+    document.getElementById("vacant-positions-card").focus();
 }
 
 function getEmployeeListSearchText(employee) {
@@ -2926,16 +2980,36 @@ function renderEmployeeList(query = "") {
 function renderPositionsList() {
     const list = document.getElementById("positions-list");
     const summary = document.getElementById("positions-summary");
+    const filterInput = document.getElementById("position-list-search-input");
+    const query = filterInput ? filterInput.value.toLowerCase().trim() : "";
+
     const vacantCount = positions.filter(position => !getAssignedEmployee(position)).length;
 
-    summary.innerText = `${positions.length} positions - ${vacantCount} vacant`;
-
     if (positions.length === 0) {
+        summary.innerText = `0 positions - 0 vacant`;
         list.innerHTML = `<div class="positions-empty">No positions yet</div>`;
         return;
     }
 
-    const sortedPositions = positions
+    let filteredPositions = positions;
+    if (query) {
+        filteredPositions = positions.filter(position => {
+            const employee = getAssignedEmployee(position);
+            const title = getPositionTitle(position).toLowerCase();
+            const dept = getPositionDepartment(position).toLowerCase();
+            const empName = employee ? employee.name.toLowerCase() : "";
+            return title.includes(query) || dept.includes(query) || empName.includes(query);
+        });
+    }
+
+    summary.innerText = `${filteredPositions.length} positions - ${vacantCount} vacant`;
+
+    if (filteredPositions.length === 0) {
+        list.innerHTML = `<div class="positions-empty" style="text-align: center; padding: 20px; color: var(--text-secondary);">ไม่พบคลิกค้นหาที่ตรงกัน</div>`;
+        return;
+    }
+
+    const sortedPositions = filteredPositions
         .slice()
         .sort((a, b) => {
             const deptCompare = getPositionDepartment(a).localeCompare(getPositionDepartment(b));
@@ -3668,7 +3742,8 @@ function renderAnnotations() {
     
     container.innerHTML = "";
     
-    annotations.forEach(annot => {
+    const filteredAnnots = annotations.filter(annot => (annot.department || "All") === selectedDept);
+    filteredAnnots.forEach(annot => {
         if (annot.type === "frame") {
             const el = document.createElement("div");
             el.className = "annotation-card";
@@ -3887,7 +3962,8 @@ function setupAnnotationListeners() {
             y: Math.round(centerY),
             width: 240,
             height: 160,
-            text: "กรอบระบุกลุ่มงาน"
+            text: "กรอบระบุกลุ่มงาน",
+            department: selectedDept
         });
         renderAnnotations();
         saveAnnotations();
@@ -3905,7 +3981,8 @@ function setupAnnotationListeners() {
             type: "text",
             x: Math.round(centerX),
             y: Math.round(centerY),
-            text: "พิมพ์คำอธิบาย..."
+            text: "พิมพ์คำอธิบาย...",
+            department: selectedDept
         });
         renderAnnotations();
         saveAnnotations();
@@ -3915,10 +3992,11 @@ function setupAnnotationListeners() {
     document.getElementById("tool-redo").addEventListener("click", redoAnnotation);
     
     document.getElementById("tool-clear").addEventListener("click", () => {
-        if (annotations.length === 0) return;
-        if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบกรอบและข้อความวาดเขียนทั้งหมดบนแผนผังนี้?")) {
+        const currentDeptsAnnots = annotations.filter(annot => (annot.department || "All") === selectedDept);
+        if (currentDeptsAnnots.length === 0) return;
+        if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบกรอบและข้อความทั้งหมดของหน้าจอนี้?")) {
             pushAnnotationHistory();
-            annotations = [];
+            annotations = annotations.filter(annot => (annot.department || "All") !== selectedDept);
             renderAnnotations();
             saveAnnotations();
         }

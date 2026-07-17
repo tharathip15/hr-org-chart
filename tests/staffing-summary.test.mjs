@@ -60,3 +60,18 @@ test("styles the vacancy statistic as an accessible interactive card", () => {
     assert.match(styleSource, /\.vacancy-report-list\s*\{/);
     assert.match(styleSource, /\.vacancy-report-empty\s*\{/);
 });
+
+test("wires sidebar counts and the vacancy report into the app", () => {
+    assert.match(appSource, /EmployeeDirectory\.getStaffingSummary\(employees, positions\)/);
+    assert.match(appSource, /function renderVacancyReport\(\)/);
+    assert.match(appSource, /function openVacancyReportModal\(\)/);
+    assert.match(appSource, /function closeVacancyReportModal\(\)/);
+    assert.match(appSource, /getElementById\("vacant-positions-card"\)/);
+    assert.match(appSource, /getElementById\("close-vacancy-report-modal"\)/);
+    assert.match(appSource, /getElementById\("vacancy-report-modal-overlay"\)/);
+    assert.match(appSource, /event\.key === "Escape"/);
+});
+
+test("refreshes an open vacancy report from renderAll", () => {
+    assert.match(appSource, /function renderAll\(\)[\s\S]*?vacancy-report-modal[\s\S]*?renderVacancyReport\(\)/);
+});
