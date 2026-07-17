@@ -2064,6 +2064,11 @@ function getAssignedEmployee(position) {
     return employees.find(employee => employee.id === position.employeeId) || null;
 }
 
+function isActingPosition(position) {
+    const employee = getAssignedEmployee(position);
+    return Boolean(employee && !OrgHierarchy.isPrimaryEmployeePosition(positions, position.id, employee.id));
+}
+
 function getPositionTitle(position) {
     return (position?.title || "Open Position").trim();
 }
@@ -2080,6 +2085,7 @@ function getPositionCardHTML(position) {
     const hasReports = positions.some(child => child.managerId === position.id);
     const isCollapsed = collapsedNodes.has(position.id);
     const isVacant = !employee;
+    const isActing = isActingPosition(position);
     const dualRoleCount = employee ? positions.filter(candidate => candidate.employeeId === employee.id).length : 0;
     const isDualRole = dualRoleCount > 1;
     const displayName = employee ? employee.name : "VACANT";
@@ -2103,9 +2109,12 @@ function getPositionCardHTML(position) {
                 <div class="card-department-badge ${deptClass}">
                     ${escapeHTML(department)}
                 </div>
-                <span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">
-                    ${isVacant ? "Open Position" : "Filled"}
-                </span>
+                <div class="position-status-group">
+                    <span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">
+                        ${isVacant ? "Open Position" : "Filled"}
+                    </span>
+                    ${isActing ? `<span class="position-status-acting">Acting</span>` : ""}
+                </div>
             </div>
     `;
 
@@ -3018,6 +3027,7 @@ function renderPositionsList() {
 
     list.innerHTML = sortedPositions.map(position => {
         const employee = getAssignedEmployee(position);
+        const isActing = isActingPosition(position);
         const manager = position.managerId ? positions.find(candidate => candidate.id === position.managerId) : null;
         return `
             <button type="button" class="position-row ${employee ? "" : "is-vacant"}" data-id="${position.id}">
@@ -3027,6 +3037,7 @@ function renderPositionsList() {
                 </span>
                 <span class="position-row-meta">
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
+                    ${isActing ? `<small class="position-row-acting">Acting</small>` : ""}
                     <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"}</small>
                 </span>
             </button>
