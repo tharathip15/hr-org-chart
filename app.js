@@ -3463,6 +3463,21 @@ let dropTargetId = null;
 let activeDragCard = null;
 let dragGrabOffsetX = 0;
 let dragGrabOffsetY = 0;
+let draggedPositionIds = [];
+let dragStartCoordinates = new Map();
+
+function getDragStartCoordinates(position) {
+    if (!position) return null;
+
+    const renderedX = toNullableInteger(position.renderX);
+    const renderedY = toNullableInteger(position.renderY);
+    if (renderedX !== null && renderedY !== null) {
+        return { x: renderedX, y: renderedY };
+    }
+
+    const manualCoordinates = getManualPositionCoordinates(position);
+    return manualCoordinates ? { ...manualCoordinates } : null;
+}
 
 function handleCardDragStart(e) {
     if (e.button !== 0) return;
@@ -3474,6 +3489,24 @@ function handleCardDragStart(e) {
     
     const position = positions.find(position => position.id === draggedId);
     if (!position) return;
+
+    draggedPositionIds = OrgHierarchy.getDescendantPositionIds(positions, draggedId);
+    dragStartCoordinates = new Map();
+    draggedPositionIds.forEach(positionId => {
+        const draggedPosition = positions.find(candidate => candidate.id === positionId);
+        const startCoordinates = getDragStartCoordinates(draggedPosition);
+        if (startCoordinates) {
+            dragStartCoordinates.set(positionId, startCoordinates);
+        }
+    });
+
+    if (!dragStartCoordinates.has(draggedId)) {
+        draggedPositionIds = [];
+        dragStartCoordinates.clear();
+        activeDragCard = null;
+        draggedId = null;
+        return;
+    }
 
     card.setPointerCapture(e.pointerId);
     card.classList.add("dragging");
@@ -3488,9 +3521,9 @@ function handleCardDragStart(e) {
 
 function handleCardDragMove(e) {
     if (!activeDragCard || draggedId === null) return;
-    
-    const position = positions.find(position => position.id === draggedId);
-    if (!position) return;
+
+    const rootStart = dragStartCoordinates.get(draggedId);
+    if (!rootStart) return;
 
     const newX = Math.round(e.clientX / currentScale - dragGrabOffsetX);
     const newY = Math.round(e.clientY / currentScale - dragGrabOffsetY);
@@ -3500,7 +3533,8 @@ function handleCardDragMove(e) {
     let snappedX = newX;
     let snappedY = newY;
 
-    const otherPositions = positions.filter(p => p.id !== draggedId && p.renderX !== undefined && p.renderY !== undefined);
+    const draggedIds = new Set(draggedPositionIds);
+    const otherPositions = positions.filter(p => !draggedIds.has(p.id) && p.renderX !== undefined && p.renderY !== undefined);
 
     // Check X snap
     for (let other of otherPositions) {
@@ -3518,11 +3552,23 @@ function handleCardDragMove(e) {
         }
     }
 
-    position.renderX = snappedX;
-    position.renderY = snappedY;
+    const deltaX = snappedX - rootStart.x;
+    const deltaY = snappedY - rootStart.y;
 
-    activeDragCard.style.left = `${snappedX}px`;
-    activeDragCard.style.top = `${snappedY}px`;
+    draggedPositionIds.forEach(positionId => {
+        const subtreePosition = positions.find(candidate => candidate.id === positionId);
+        const start = dragStartCoordinates.get(positionId);
+        if (!subtreePosition || !start) return;
+
+        subtreePosition.renderX = Math.round(start.x + deltaX);
+        subtreePosition.renderY = Math.round(start.y + deltaY);
+
+        const subtreeCard = document.querySelector(`.node-card.absolute-card[data-id="${positionId}"]`);
+        if (subtreeCard) {
+            subtreeCard.style.left = `${subtreePosition.renderX}px`;
+            subtreeCard.style.top = `${subtreePosition.renderY}px`;
+        }
+    });
 
     drawConnections();
 }
@@ -3532,22 +3578,24 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointerup", handleCardDragEnd);
     
     if (activeDragCard && draggedId !== null) {
-        const position = positions.find(p => p.id === draggedId);
-        if (position) {
-            const renderedCoordinates = getRenderedPositionCoordinates(position);
+        draggedPositionIds.forEach(positionId => {
+            const movedPosition = positions.find(p => p.id === positionId);
+            if (!movedPosition || !dragStartCoordinates.has(positionId)) return;
+
+            const renderedCoordinates = getRenderedPositionCoordinates(movedPosition);
             if (selectedDept === "All") {
-                position.x = renderedCoordinates.x;
-                position.y = renderedCoordinates.y;
-                position.isManual = true;
+                movedPosition.x = renderedCoordinates.x;
+                movedPosition.y = renderedCoordinates.y;
+                movedPosition.isManual = true;
             } else {
-                const manualLayouts = normalizeManualLayouts(position.manualLayouts);
+                const manualLayouts = normalizeManualLayouts(movedPosition.manualLayouts);
                 manualLayouts[selectedDept] = {
                     x: renderedCoordinates.x,
                     y: renderedCoordinates.y
                 };
-                position.manualLayouts = manualLayouts;
+                movedPosition.manualLayouts = manualLayouts;
             }
-        }
+        });
         try {
             activeDragCard.releasePointerCapture(e.pointerId);
         } catch (err) {}
@@ -3555,6 +3603,8 @@ function handleCardDragEnd(e) {
         activeDragCard = null;
     }
     
+    draggedPositionIds = [];
+    dragStartCoordinates.clear();
     draggedId = null;
     savePositions();
 }
