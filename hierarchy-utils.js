@@ -56,6 +56,39 @@
         return { positions, changed, repairs };
     }
 
+    function validatePositionParent(sourcePositions, positionId, parentId) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const byId = new Map(positions.map(position => [toInteger(position.id), position]));
+        const childId = toInteger(positionId);
+        const candidateParentId = toInteger(parentId);
+
+        if (candidateParentId === null) {
+            return { valid: true, reason: null };
+        }
+
+        if (childId === null || !byId.has(childId) || !byId.has(candidateParentId)) {
+            return { valid: false, reason: "missing" };
+        }
+
+        if (childId === candidateParentId) {
+            return { valid: false, reason: "self" };
+        }
+
+        const visited = new Set();
+        let current = byId.get(candidateParentId);
+        while (current) {
+            const currentId = toInteger(current.id);
+            if (currentId === childId) {
+                return { valid: false, reason: "descendant" };
+            }
+            if (visited.has(currentId)) break;
+            visited.add(currentId);
+            current = byId.get(toInteger(current.managerId)) || null;
+        }
+
+        return { valid: true, reason: null };
+    }
+
     function repairEmployeeManagers(sourceEmployees) {
         const employees = Array.isArray(sourceEmployees)
             ? sourceEmployees.map(employee => ({ ...employee }))
@@ -80,9 +113,41 @@
         return Boolean(primary && toInteger(primary.id) === toInteger(positionId));
     }
 
+    function getDescendantPositionIds(sourcePositions, rootId) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const rootPositionId = toInteger(rootId);
+        if (rootPositionId === null) return [];
+
+        const childrenByManager = new Map();
+        positions.forEach(position => {
+            const managerId = toInteger(position.managerId);
+            if (managerId === null) return;
+            const children = childrenByManager.get(managerId) || [];
+            children.push(toInteger(position.id));
+            childrenByManager.set(managerId, children);
+        });
+
+        const knownIds = new Set(positions.map(position => toInteger(position.id)));
+        if (!knownIds.has(rootPositionId)) return [];
+
+        const visited = new Set();
+        const result = [];
+        function visit(positionId) {
+            if (visited.has(positionId)) return;
+            visited.add(positionId);
+            result.push(positionId);
+            (childrenByManager.get(positionId) || []).forEach(visit);
+        }
+
+        visit(rootPositionId);
+        return result;
+    }
+
     root.OrgHierarchy = Object.freeze({
         repairPositionHierarchy,
+        validatePositionParent,
         repairEmployeeManagers,
-        isPrimaryEmployeePosition
+        isPrimaryEmployeePosition,
+        getDescendantPositionIds
     });
 })(globalThis);

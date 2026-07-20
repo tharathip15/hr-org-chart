@@ -18,7 +18,7 @@ test("app has a shared position-first data model", () => {
     assert.match(appSource, /async function loadPositions\(\)/);
     assert.match(appSource, /async function savePositions\([^)]*\)/);
     assert.match(appSource, /OrgHierarchy\.repairPositionHierarchy\(positions\)/);
-    assert.match(appSource, /OrgHierarchy\.isPrimaryEmployeePosition\(positions, savedPositionId, employeeId\)/);
+    assert.match(appSource, /position\.managerId/);
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
@@ -61,6 +61,13 @@ test("non-primary assigned positions are rendered as Acting", () => {
     assert.match(cssSource, /\.position-row-acting/);
 });
 
+test("acting position cards hide duplicate and filled labels", () => {
+    assert.match(appSource, /const showDualRole = isDualRole && !isActing;/);
+    assert.match(appSource, /const occupancyStatus = isVacant \? "Open Position" : \(isActing \? "" : "Filled"\);/);
+    assert.match(appSource, /\$\{showDualRole \?/);
+    assert.match(appSource, /\$\{occupancyStatus \?/);
+});
+
 test("local and deployed APIs expose positions", () => {
     assert.match(serverSource, /if path == "\/api\/positions":/);
     assert.match(serverSource, /load_positions\(\)/);
@@ -71,4 +78,33 @@ test("local and deployed APIs expose positions", () => {
     assert.match(positionsApiSource, /from\("positions"\)/);
     assert.match(positionsApiSource, /mapPositionToDb/);
     assert.match(positionsApiSource, /mapDbToPosition/);
+});
+
+test("position hierarchy is not inferred from employee manager data", () => {
+    assert.doesNotMatch(appSource, /getPositionManagerIdFromEmployeeManager\(employee\.managerId/);
+    assert.doesNotMatch(appSource, /if \(false\) positions\.forEach/);
+    assert.match(appSource, /managerId: null/);
+});
+
+test("position edits use shared parent validation", () => {
+    assert.match(appSource, /OrgHierarchy\.validatePositionParent\(/);
+});
+
+test("position parent control uses stable position IDs instead of free-form text", () => {
+    assert.match(htmlSource, /<select[^>]+id="form-position-manager"/);
+    assert.doesNotMatch(htmlSource, /id="form-position-manager"[^>]+list="position-manager-list"/);
+    assert.match(htmlSource, /Top Level/);
+    assert.match(appSource, /managerList\.innerHTML = [\s\S]*positions/);
+    assert.match(appSource, /value="\$\{position\.id\}"/);
+});
+
+test("position list exposes parent and child counts", () => {
+    assert.match(appSource, /Reports to/);
+    assert.match(appSource, /childCount/);
+});
+
+test("position hierarchy repairs are applied to local fallback and saves", () => {
+    assert.match(appSource, /const hierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /const localHierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /positions = localHierarchyRepair\.positions/);
 });

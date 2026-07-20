@@ -750,6 +750,19 @@ function toNullableInteger(value) {
     return Number.isInteger(parsed) ? parsed : null;
 }
 
+function normalizeManualLayouts(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+    return Object.entries(value).reduce((layouts, [viewKey, coordinates]) => {
+        const x = toNullableInteger(coordinates?.x);
+        const y = toNullableInteger(coordinates?.y);
+        if (x !== null && y !== null) {
+            layouts[viewKey] = { x, y };
+        }
+        return layouts;
+    }, {});
+}
+
 function normalizePosition(position, fallbackId) {
     const id = toNullableInteger(position?.id) || fallbackId;
     const title = (position?.title || position?.role || "Open Position").trim();
@@ -757,6 +770,7 @@ function normalizePosition(position, fallbackId) {
 
     let layoutStyle = "horizontal";
     let isManual = false;
+    let manualLayouts = normalizeManualLayouts(position?.manualLayouts);
     let notesText = (position?.notes || "").trim();
 
     // Check if notes contains layout style JSON
@@ -765,6 +779,10 @@ function normalizePosition(position, fallbackId) {
             const parsed = JSON.parse(notesText);
             layoutStyle = parsed.layoutStyle || "horizontal";
             isManual = !!parsed.isManual;
+            manualLayouts = {
+                ...manualLayouts,
+                ...normalizeManualLayouts(parsed.manualLayouts)
+            };
             notesText = parsed.text || "";
         } catch (e) {
             // Not valid JSON, keep as is
@@ -781,6 +799,7 @@ function normalizePosition(position, fallbackId) {
         y: toNullableInteger(position?.y),
         layoutStyle,
         isManual: isManual || (position?.isManual === true),
+        manualLayouts,
         notes: notesText
     };
 }
@@ -833,23 +852,6 @@ function derivePositionsFromEmployees() {
     }, employee.id));
 }
 
-function isTransitivelyReportingTo(positionId, targetManagerEmployeeId) {
-    let current = positions.find(p => p.id === positionId);
-    while (current && current.managerId !== null) {
-        const parent = positions.find(p => p.id === current.managerId);
-        if (!parent) break;
-        if (parent.employeeId === targetManagerEmployeeId) {
-            return true;
-        }
-        // Keep traversing only if the parent is vacant!
-        if (parent.employeeId !== null) {
-            break;
-        }
-        current = parent;
-    }
-    return false;
-}
-
 function saveLocalPositionsBackup() {
     try {
         localStorage.setItem("hr_positions", JSON.stringify(positions));
@@ -894,13 +896,12 @@ async function loadPositions() {
                         console.log(`Auto-assigned employee ${employee.name} to matching vacant position ${matchedVacant.title}`);
                     } else {
                         // 2. Create a new position for the employee
-                        const newPositionManagerId = getPositionManagerIdFromEmployeeManager(employee.managerId, { department: employee.department, employeeId: employee.id });
-                        const positionAutoPos = getAutoPositionForPosition(newPositionManagerId);
+                        const positionAutoPos = getAutoPositionForPosition(null);
                         positions.push({
                             id: getNextPositionId(),
                             title: employee.role,
                             department: employee.department,
-                            managerId: newPositionManagerId,
+                            managerId: null,
                             employeeId: employee.id,
                             x: positionAutoPos.x,
                             y: positionAutoPos.y,
@@ -912,43 +913,7 @@ async function loadPositions() {
                 }
             });
 
-            // Position hierarchy is managed explicitly; employee manager data must not rewrite it.
-            if (false) positions.forEach(position => {
-                if (position.employeeId) {
-                    const employee = employees.find(e => e.id === position.employeeId);
-                    if (employee && employee.managerId) {
-                        // Only self-heal primary positions, leaving secondary dual-roles editable
-                        const primaryPos = getPrimaryPositionForEmployee(employee.id);
-                        if (primaryPos && primaryPos.id === position.id) {
-                            // Skip self-healing if already transitively reporting to this manager employee through vacant positions
-                            if (isTransitivelyReportingTo(position.id, employee.managerId)) {
-                                return;
-                            }
-                            const correctManagerPosId = getPositionManagerIdFromEmployeeManager(employee.managerId, position);
-                            if (correctManagerPosId !== position.managerId) {
-                                // Skip if current manager is in the chain leading up to the correct manager
                                 // e.g. position→62→75 is valid, don't flatten to position→75
-                                if (position.managerId !== null && correctManagerPosId !== null) {
-                                    let walkId = position.managerId;
-                                    const visited = new Set();
-                                    while (walkId !== null && !visited.has(walkId)) {
-                                        if (walkId === correctManagerPosId) {
-                                            return; // Current manager is under the correct manager, hierarchy is fine
-                                        }
-                                        visited.add(walkId);
-                                        const walkPos = positions.find(p => p.id === walkId);
-                                        walkId = walkPos ? walkPos.managerId : null;
-                                    }
-                                }
-                                console.log(`Self-healed position ${position.title} manager from ${position.managerId} to ${correctManagerPosId}`);
-                                position.managerId = correctManagerPosId;
-                                positionsChanged = true;
-                            }
-                        }
-                    }
-                }
-            });
-
             if (positionsChanged) {
                 await savePositions();
             }
@@ -962,7 +927,12 @@ async function loadPositions() {
     if (saved) {
         try {
             positions = normalizePositionsList(JSON.parse(saved));
-            if (positions.length > 0) return;
+            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+            positions = localHierarchyRepair.positions;
+            if (positions.length > 0) {
+                if (localHierarchyRepair.changed) saveLocalPositionsBackup();
+                return;
+            }
         } catch (error) {
             console.warn("Failed to parse localStorage positions backup.", error);
         }
@@ -975,6 +945,8 @@ async function loadPositions() {
 async function savePositions() {
     setSyncStatus("saving");
     positions = normalizePositionsList(positions);
+    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+    positions = saveHierarchyRepair.positions;
     saveLocalPositionsBackup();
 
     const payload = positions.map(p => ({
@@ -982,6 +954,7 @@ async function savePositions() {
         notes: JSON.stringify({
             layoutStyle: p.layoutStyle || "horizontal",
             isManual: !!p.isManual,
+            manualLayouts: p.manualLayouts || {},
             text: p.notes || ""
         })
     }));
@@ -1482,6 +1455,7 @@ function setupEventListeners() {
                     position.x = null;
                     position.y = null;
                     position.isManual = false;
+                    position.manualLayouts = {};
                 });
                 renderTree();
                 savePositions();
@@ -2089,6 +2063,25 @@ function getPositionDepartment(position) {
     return (position?.department || "Unassigned").trim();
 }
 
+function getManualPositionCoordinates(position) {
+    const coordinates = selectedDept === "All"
+        ? (position.isManual ? { x: position.x, y: position.y } : null)
+        : position.manualLayouts?.[selectedDept];
+
+    if (!coordinates) return null;
+
+    const x = toNullableInteger(coordinates.x);
+    const y = toNullableInteger(coordinates.y);
+    return x !== null && y !== null ? { x, y } : null;
+}
+
+function getRenderedPositionCoordinates(position) {
+    return {
+        x: position.renderX ?? position.x ?? 0,
+        y: position.renderY ?? position.y ?? 0
+    };
+}
+
 function getPositionCardHTML(position) {
     const employee = getAssignedEmployee(position);
     const title = getPositionTitle(position);
@@ -2100,19 +2093,22 @@ function getPositionCardHTML(position) {
     const isActing = isActingPosition(position);
     const dualRoleCount = employee ? positions.filter(candidate => candidate.employeeId === employee.id).length : 0;
     const isDualRole = dualRoleCount > 1;
+    const showDualRole = isDualRole && !isActing;
+    const occupancyStatus = isVacant ? "Open Position" : (isActing ? "" : "Filled");
     const displayName = employee ? employee.name : "VACANT";
     const avatarHTML = employee
         ? getAvatarHTML({ ...employee, department }, "avatar")
         : `<div class="avatar position-vacant-avatar" style="background-color: #f43f5e;">OP</div>`;
+    const { x, y } = getRenderedPositionCoordinates(position);
 
     let cardHtml = `
-        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"}" data-id="${position.id}" style="position: absolute; left: ${position.x}px; top: ${position.y}px; touch-action: none;">
+        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"}" data-id="${position.id}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
             <div class="card-header">
                 ${avatarHTML}
                 <div class="card-title-group">
                     <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
                         <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(displayName)}</span>
-                        ${isDualRole ? `<span class="dual-role-badge" title="Multiple assigned positions" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ""}
+                        ${showDualRole ? `<span class="dual-role-badge" title="Multiple assigned positions" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ""}
                     </div>
                     <div class="card-role">${escapeHTML(title)}</div>
                 </div>
@@ -2122,9 +2118,7 @@ function getPositionCardHTML(position) {
                     ${escapeHTML(department)}
                 </div>
                 <div class="position-status-group">
-                    <span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">
-                        ${isVacant ? "Open Position" : "Filled"}
-                    </span>
+                    ${occupancyStatus ? `<span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">${occupancyStatus}</span>` : ""}
                     ${isActing ? `<span class="position-status-acting">Acting</span>` : ""}
                 </div>
             </div>
@@ -2274,6 +2268,11 @@ function calculateInitialCoordinates() {
 
     if (activePositions.length === 0) return;
 
+    positions.forEach(position => {
+        delete position.renderX;
+        delete position.renderY;
+    });
+
     const activeIds = new Set(activePositions.map(p => p.id));
     
     // 2. Find roots within active positions
@@ -2364,25 +2363,30 @@ function calculateInitialCoordinates() {
         const children = reportsMap[position.id] || [];
         const w = subtreeWidths[position.id] || xSpacing;
 
-        // If this position was manually dragged, keep its custom coordinates and adjust childXStart
-        // Only honor manual positioning within individual department views, not in overview ("All")
-        const useManual = selectedDept !== "All" && position.isManual && position.x !== undefined && position.x !== null && position.y !== undefined && position.y !== null;
+        // Keep manual coordinates only for the active view; other views use their own layout.
+        const manualCoordinates = getManualPositionCoordinates(position);
+        const useManual = manualCoordinates !== null;
         if (useManual) {
-            xStart = position.x + 110 - w / 2;
+            position.renderX = manualCoordinates.x;
+            position.renderY = manualCoordinates.y;
+            xStart = manualCoordinates.x + 110 - w / 2;
         } else {
             const myX = xStart + w / 2;
-            position.x = Math.round(myX - 110);
-            position.y = Math.round(y);
+            position.renderX = Math.round(myX - 110);
+            position.renderY = Math.round(y);
         }
+
+        const renderedX = position.renderX;
+        const renderedY = position.renderY;
         
         const isVertical = position.layoutStyle === "vertical";
         
         if (isVertical) {
             // Stack children vertically under the parent
-            let currentChildY = position.y + 140; // Start below the parent
+            let currentChildY = renderedY + 140; // Start below the parent
             children.forEach(child => {
                 // Place child shifted horizontally to the right
-                const childXStart = position.x + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
+                const childXStart = renderedX + 110 - (subtreeWidths[child.id] || xSpacing) / 2 + 140;
                 assignCoords(child, childXStart, currentChildY);
                 currentChildY += (subtreeHeights[child.id] || 140);
             });
@@ -2390,7 +2394,7 @@ function calculateInitialCoordinates() {
             // Standard horizontal sibling layout
             let childXStart = xStart;
             children.forEach(child => {
-                assignCoords(child, childXStart, position.y + ySpacing);
+                assignCoords(child, childXStart, renderedY + ySpacing);
                 childXStart += (subtreeWidths[child.id] || xSpacing);
             });
         }
@@ -2470,8 +2474,21 @@ function showEmployeeDetails(id) {
     document.getElementById("btn-edit-employee").dataset.id = id;
     document.getElementById("btn-delete-employee").dataset.id = id;
     
-    // Find manager name
-    const manager = emp.managerId ? employees.find(e => e.id === emp.managerId) : null;
+    // Derive reporting from the employee's primary assigned position.
+    const primaryPosition = getPrimaryPositionForEmployee(id);
+    const parentPosition = primaryPosition && primaryPosition.managerId !== null
+        ? positions.find(position => position.id === primaryPosition.managerId)
+        : null;
+    const parentEmployee = parentPosition ? getAssignedEmployee(parentPosition) : null;
+    const manager = parentPosition ? {
+        ...(parentEmployee || {}),
+        id: parentEmployee?.id || 0,
+        name: parentEmployee?.name || "VACANT",
+        role: getPositionTitle(parentPosition),
+        department: getPositionDepartment(parentPosition),
+        avatarColor: parentEmployee?.avatarColor || "#f43f5e",
+        photoUrl: parentEmployee?.photoUrl || ""
+    } : null;
     const managerHTML = manager ? `
         <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${manager.id})">
             ${getAvatarHTML(manager, "avatar-sm")}
@@ -2482,8 +2499,21 @@ function showEmployeeDetails(id) {
         </div>
     ` : `<p style="font-size: 13px; color: var(--text-tertiary); font-style: italic;">No manager (Top level)</p>`;
     
-    // Find direct reports
-    const reports = employees.filter(e => e.managerId === id);
+    // Direct reports are child positions, including vacant seats.
+    const reports = primaryPosition
+        ? positions.filter(position => position.managerId === primaryPosition.id).map(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            return {
+                ...position,
+                id: assignedEmployee?.id || null,
+                name: assignedEmployee?.name || "VACANT",
+                role: getPositionTitle(position),
+                department: getPositionDepartment(position),
+                avatarColor: assignedEmployee?.avatarColor || "#f43f5e",
+                photoUrl: assignedEmployee?.photoUrl || ""
+            };
+        })
+        : [];
     let reportsHTML = `<p style="font-size: 13px; color: var(--text-tertiary); font-style: italic;">No direct reports</p>`;
     
     if (reports.length > 0) {
@@ -2503,7 +2533,27 @@ function showEmployeeDetails(id) {
     }
     
     // Find sibling positions for the same person (dual-position profile)
-    const siblingPositions = employees.filter(e => samePerson(e, emp) && e.id !== emp.id);
+    const siblingPositions = positions
+        .filter(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            return assignedEmployee && samePerson(assignedEmployee, emp) && position.id !== primaryPosition?.id;
+        })
+        .map(position => {
+            const assignedEmployee = getAssignedEmployee(position);
+            const parent = position.managerId !== null
+                ? positions.find(candidate => candidate.id === position.managerId)
+                : null;
+            return {
+                ...position,
+                id: assignedEmployee.id,
+                name: assignedEmployee.name,
+                role: getPositionTitle(position),
+                department: getPositionDepartment(position),
+                photoUrl: assignedEmployee.photoUrl || "",
+                avatarColor: assignedEmployee.avatarColor,
+                managerName: parent ? getPositionTitle(parent) : "Top Level"
+            };
+        });
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
         siblingsHTML = `
@@ -2511,7 +2561,7 @@ function showEmployeeDetails(id) {
                 <div class="info-section-title">ตำแหน่งงานอื่น ๆ ของพนักงานคนนี้ (${siblingPositions.length})</div>
                 <div class="reports-list">
                     ${siblingPositions.map(pos => {
-                        const mgr = pos.managerId ? employees.find(e => e.id === pos.managerId) : null;
+                        const mgr = pos.managerName ? { name: pos.managerName } : null;
                         return `
                             <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${pos.id})">
                                 ${getAvatarHTML(pos, "avatar-sm")}
@@ -2559,7 +2609,7 @@ function showEmployeeDetails(id) {
         </div>
         
         <div>
-            <div class="info-section-title">Reports To</div>
+            <div class="info-section-title">Reports To Position</div>
             ${managerHTML}
         </div>
         
@@ -2626,13 +2676,6 @@ function openEmployeeForm(editId = null) {
     setPhotoPreview("");
     populatePersonDatalist();
     
-    // Populate Managers Datalist
-    const managerInput = document.getElementById("form-manager");
-    const managerDatalist = document.getElementById("manager-list");
-    managerDatalist.innerHTML = "";
-    
-    let eligibleManagers = [...employees];
-    
     if (editId) {
         title.innerText = "Edit Employee Details";
         document.getElementById("form-employee-id").value = editId;
@@ -2650,22 +2693,16 @@ function openEmployeeForm(editId = null) {
             document.getElementById("form-phone").value = emp.phone || "";
             document.getElementById("form-bio").value = emp.bio || "";
             
-            // To prevent cyclic management, exclude themselves and any of their reports
-            const descendantIds = getDescendantIds(editId);
-            eligibleManagers = employees.filter(e => e.id !== editId && !descendantIds.includes(e.id));
         }
     } else {
         title.innerText = "Add New Employee";
     }
     
-    // Sort managers alphabetically
-    eligibleManagers.sort((a, b) => a.name.localeCompare(b.name));
-    
-    eligibleManagers.forEach(mgr => {
+    /*
         managerDatalist.innerHTML += `<option value="${escapeHTML(mgr.name)} (${escapeHTML(mgr.role)} • ${escapeHTML(mgr.department)})">`;
-    });
-    
-    if (editId) {
+    */
+
+    /* if (editId) {
         const emp = employees.find(e => e.id === editId);
         if (emp && emp.managerId) {
             const mgr = employees.find(e => e.id === emp.managerId);
@@ -2681,6 +2718,8 @@ function openEmployeeForm(editId = null) {
         managerInput.value = "";
     }
     
+    */
+
     // Populate Department Suggestions Datalist
     const deptList = document.getElementById("department-list");
     const uniqueDepts = [...new Set(employees.map(e => e.department))].sort();
@@ -2755,21 +2794,6 @@ function getPrimaryPositionForEmployee(employeeId) {
     return positions.find(position => position.employeeId === employeeId) || null;
 }
 
-function getPositionManagerIdFromEmployeeManager(managerEmployeeId, childPosition = null) {
-    if (!managerEmployeeId) return null;
-    if (childPosition?.employeeId === managerEmployeeId) return null;
-    const managerPositions = positions.filter(p => p.employeeId === managerEmployeeId);
-    if (managerPositions.length === 0) return null;
-    if (managerPositions.length === 1) return managerPositions[0].id;
-    
-    if (childPosition && childPosition.department) {
-        const matchingPos = managerPositions.find(p => p.id !== childPosition.id && p.department === childPosition.department);
-        if (matchingPos) return matchingPos.id;
-    }
-    
-    return managerPositions.find(p => p.id !== childPosition?.id)?.id || null;
-}
-
 function getDescendantPositionIds(positionId) {
     const descendants = [];
     const queue = [positionId];
@@ -2825,7 +2849,7 @@ function getAutoPositionForPosition(managerId, excludePositionId = null) {
 
 function populatePositionFormLookups(excludePositionId = null) {
     const positionDeptList = document.getElementById("position-department-list");
-    const managerList = document.getElementById("position-manager-list");
+    const managerList = document.getElementById("form-position-manager");
     const employeeList = document.getElementById("position-employee-list");
 
     const departments = [...new Set([
@@ -2835,10 +2859,10 @@ function populatePositionFormLookups(excludePositionId = null) {
     positionDeptList.innerHTML = departments.map(department => `<option value="${escapeHTML(department)}">`).join("");
 
     const blockedIds = excludePositionId ? new Set([excludePositionId, ...getDescendantPositionIds(excludePositionId)]) : new Set();
-    managerList.innerHTML = positions
+    managerList.innerHTML = `<option value="">Top Level</option>` + positions
         .filter(position => !blockedIds.has(position.id))
         .sort((a, b) => getPositionTitle(a).localeCompare(getPositionTitle(b)))
-        .map(position => `<option value="${escapeHTML(getPositionOptionLabel(position))}">`)
+        .map(position => `<option value="${position.id}">${escapeHTML(getPositionOptionLabel(position))}</option>`)
         .join("");
 
     employeeList.innerHTML = employees
@@ -2867,8 +2891,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-notes").value = position.notes || "";
     document.getElementById("btn-delete-position").disabled = false;
 
-    const manager = position.managerId ? positions.find(candidate => candidate.id === position.managerId) : null;
-    document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
+    document.getElementById("form-position-manager").value = position.managerId === null ? "" : String(position.managerId);
 
     const employee = getAssignedEmployee(position);
     document.getElementById("form-position-employee").value = employee ? getEmployeeOptionLabel(employee) : "";
@@ -3040,7 +3063,11 @@ function renderPositionsList() {
     list.innerHTML = sortedPositions.map(position => {
         const employee = getAssignedEmployee(position);
         const isActing = isActingPosition(position);
-        const manager = position.managerId ? positions.find(candidate => candidate.id === position.managerId) : null;
+        const manager = position.managerId !== null
+            ? positions.find(candidate => candidate.id === position.managerId)
+            : null;
+        const childCount = positions.filter(candidate => candidate.managerId === position.id).length;
+        const childCountLabel = `${childCount} direct report${childCount === 1 ? "" : "s"}`;
         return `
             <button type="button" class="position-row ${employee ? "" : "is-vacant"}" data-id="${position.id}">
                 <span class="position-row-main">
@@ -3050,7 +3077,7 @@ function renderPositionsList() {
                 <span class="position-row-meta">
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
                     ${isActing ? `<small class="position-row-acting">Acting</small>` : ""}
-                    <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"}</small>
+                    <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"} - ${childCountLabel}</small>
                 </span>
             </button>
         `;
@@ -3090,13 +3117,17 @@ async function handlePositionFormSubmit(e) {
         }
 
         managerId = manager.id;
-        if (currentId && managerId === currentId) {
-            showNotification("A position cannot report to itself", "error");
-            return;
-        }
-        if (currentId && getDescendantPositionIds(currentId).includes(managerId)) {
-            showNotification("A position cannot report to its own child position", "error");
-            return;
+        if (currentId) {
+            const parentValidation = OrgHierarchy.validatePositionParent(positions, currentId, managerId);
+            if (!parentValidation.valid) {
+                const messageByReason = {
+                    self: "A position cannot report to itself",
+                    descendant: "A position cannot report to its own child position",
+                    missing: "Reports To position is not valid"
+                };
+                showNotification(messageByReason[parentValidation.reason] || "Reports To position is not valid", "error");
+                return;
+            }
         }
     }
 
@@ -3110,7 +3141,6 @@ async function handlePositionFormSubmit(e) {
         employeeId = employee.id;
     }
 
-    let savedPositionId = currentId;
     if (currentId) {
         const index = positions.findIndex(position => position.id === currentId);
         if (index === -1) return;
@@ -3146,7 +3176,6 @@ async function handlePositionFormSubmit(e) {
         showNotification(`Updated position: ${title}`, "success");
     } else {
         const newId = getNextPositionId();
-        savedPositionId = newId;
         const autoPos = getAutoPositionForPosition(managerId);
         positions.push({
             id: newId,
@@ -3160,27 +3189,6 @@ async function handlePositionFormSubmit(e) {
             notes
         });
         showNotification(`Added position: ${title}`, "success");
-    }
-
-    // Only a person's primary position controls the employee-level manager field.
-    if (employeeId && OrgHierarchy.isPrimaryEmployeePosition(positions, savedPositionId, employeeId)) {
-        const empIndex = employees.findIndex(e => e.id === employeeId);
-        if (empIndex > -1) {
-            let nextEmployeeManagerId = null;
-            let canSyncManager = true;
-            if (managerId) {
-                const mgrPos = positions.find(p => p.id === managerId);
-                if (mgrPos && mgrPos.employeeId && mgrPos.employeeId !== employeeId) {
-                    nextEmployeeManagerId = mgrPos.employeeId;
-                } else if (mgrPos?.employeeId === employeeId) {
-                    canSyncManager = false;
-                }
-            }
-            if (canSyncManager && employees[empIndex].managerId !== nextEmployeeManagerId) {
-                employees[empIndex].managerId = nextEmployeeManagerId;
-                await saveData();
-            }
-        }
     }
 
     await savePositions();
@@ -3258,14 +3266,11 @@ async function handleFormSubmit(e) {
     const name = document.getElementById("form-name").value.trim();
     const role = document.getElementById("form-role").value.trim();
     const department = document.getElementById("form-department").value.trim();
-    const managerInputVal = document.getElementById("form-manager").value.trim();
     const email = document.getElementById("form-email").value.trim();
     const phone = document.getElementById("form-phone").value.trim();
     const bio = document.getElementById("form-bio").value.trim();
     const photoUrl = document.getElementById("form-photo-data").value;
-    let managerId = null;
-    
-    if (managerInputVal) {
+    /* if (false) {
         // Try to find a manager that matches the input string
         const matchedMgr = employees.find(mgr => {
             const optionText = `${mgr.name} (${mgr.role} • ${mgr.department})`;
@@ -3292,7 +3297,8 @@ async function handleFormSubmit(e) {
             return;
         }
     }
-    
+    */
+
     if (!name || !role || !department) {
         showNotification("Please fill in all required fields", "error");
         return;
@@ -3306,13 +3312,10 @@ async function handleFormSubmit(e) {
             const currentPersonId = employees[empIndex].personId || createPersonId(employees[empIndex].name, id);
             const nextPersonId = selectedPersonProfile?.personId || document.getElementById("form-person-id").value || currentPersonId;
             
-            const oldManagerId = employees[empIndex].managerId;
-            const managerChanged = oldManagerId !== managerId;
             // Update fields
             employees[empIndex].personId = nextPersonId;
             employees[empIndex].role = role;
             employees[empIndex].department = department;
-            employees[empIndex].managerId = managerId;
             employees[empIndex].name = name;
             employees[empIndex].email = email;
             employees[empIndex].phone = phone;
@@ -3324,25 +3327,6 @@ async function handleFormSubmit(e) {
                 employees[empIndex].avatarColor = getDeptColor(department);
             }
             
-            // If the manager has changed, auto-position the employee and their descendants under the new manager
-            if (managerChanged) {
-                const autoPos = getAutoPositionForNode(managerId, id);
-                const dx = autoPos.x - (employees[empIndex].x || 0);
-                const dy = autoPos.y - (employees[empIndex].y || 0);
-
-                employees[empIndex].x = autoPos.x;
-                employees[empIndex].y = autoPos.y;
-
-                const descendantIds = getDescendantIds(id);
-                descendantIds.forEach(descId => {
-                    const descIndex = employees.findIndex(e => e.id === descId);
-                    if (descIndex > -1) {
-                        employees[descIndex].x = (employees[descIndex].x || 0) + dx;
-                        employees[descIndex].y = (employees[descIndex].y || 0) + dy;
-                    }
-                });
-            }
-
             syncPersonProfile(nextPersonId, { name, email, phone, bio, photoUrl });
             showNotification(`Updated profile for ${name}`, "success");
         }
@@ -3352,7 +3336,6 @@ async function handleFormSubmit(e) {
             name,
             role,
             department,
-            managerId,
             email,
             phone,
             bio,
@@ -3566,6 +3549,21 @@ let dropTargetId = null;
 let activeDragCard = null;
 let dragGrabOffsetX = 0;
 let dragGrabOffsetY = 0;
+let draggedPositionIds = [];
+let dragStartCoordinates = new Map();
+
+function getDragStartCoordinates(position) {
+    if (!position) return null;
+
+    const renderedX = toNullableInteger(position.renderX);
+    const renderedY = toNullableInteger(position.renderY);
+    if (renderedX !== null && renderedY !== null) {
+        return { x: renderedX, y: renderedY };
+    }
+
+    const manualCoordinates = getManualPositionCoordinates(position);
+    return manualCoordinates ? { ...manualCoordinates } : null;
+}
 
 function handleCardDragStart(e) {
     if (e.button !== 0) return;
@@ -3578,11 +3576,30 @@ function handleCardDragStart(e) {
     const position = positions.find(position => position.id === draggedId);
     if (!position) return;
 
+    draggedPositionIds = OrgHierarchy.getDescendantPositionIds(positions, draggedId);
+    dragStartCoordinates = new Map();
+    draggedPositionIds.forEach(positionId => {
+        const draggedPosition = positions.find(candidate => candidate.id === positionId);
+        const startCoordinates = getDragStartCoordinates(draggedPosition);
+        if (startCoordinates) {
+            dragStartCoordinates.set(positionId, startCoordinates);
+        }
+    });
+
+    if (!dragStartCoordinates.has(draggedId)) {
+        draggedPositionIds = [];
+        dragStartCoordinates.clear();
+        activeDragCard = null;
+        draggedId = null;
+        return;
+    }
+
     card.setPointerCapture(e.pointerId);
     card.classList.add("dragging");
 
-    dragGrabOffsetX = (e.clientX / currentScale) - position.x;
-    dragGrabOffsetY = (e.clientY / currentScale) - position.y;
+    const renderedCoordinates = getRenderedPositionCoordinates(position);
+    dragGrabOffsetX = (e.clientX / currentScale) - renderedCoordinates.x;
+    dragGrabOffsetY = (e.clientY / currentScale) - renderedCoordinates.y;
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
@@ -3590,9 +3607,9 @@ function handleCardDragStart(e) {
 
 function handleCardDragMove(e) {
     if (!activeDragCard || draggedId === null) return;
-    
-    const position = positions.find(position => position.id === draggedId);
-    if (!position) return;
+
+    const rootStart = dragStartCoordinates.get(draggedId);
+    if (!rootStart) return;
 
     const newX = Math.round(e.clientX / currentScale - dragGrabOffsetX);
     const newY = Math.round(e.clientY / currentScale - dragGrabOffsetY);
@@ -3602,29 +3619,42 @@ function handleCardDragMove(e) {
     let snappedX = newX;
     let snappedY = newY;
 
-    const otherPositions = positions.filter(p => p.id !== draggedId && p.x !== undefined && p.x !== null && p.y !== undefined && p.y !== null);
+    const draggedIds = new Set(draggedPositionIds);
+    const otherPositions = positions.filter(p => !draggedIds.has(p.id) && p.renderX !== undefined && p.renderY !== undefined);
 
     // Check X snap
     for (let other of otherPositions) {
-        if (Math.abs(newX - other.x) < SNAP_THRESHOLD) {
-            snappedX = other.x;
+        if (Math.abs(newX - other.renderX) < SNAP_THRESHOLD) {
+            snappedX = other.renderX;
             break;
         }
     }
 
     // Check Y snap
     for (let other of otherPositions) {
-        if (Math.abs(newY - other.y) < SNAP_THRESHOLD) {
-            snappedY = other.y;
+        if (Math.abs(newY - other.renderY) < SNAP_THRESHOLD) {
+            snappedY = other.renderY;
             break;
         }
     }
 
-    position.x = snappedX;
-    position.y = snappedY;
+    const deltaX = snappedX - rootStart.x;
+    const deltaY = snappedY - rootStart.y;
 
-    activeDragCard.style.left = `${snappedX}px`;
-    activeDragCard.style.top = `${snappedY}px`;
+    draggedPositionIds.forEach(positionId => {
+        const subtreePosition = positions.find(candidate => candidate.id === positionId);
+        const start = dragStartCoordinates.get(positionId);
+        if (!subtreePosition || !start) return;
+
+        subtreePosition.renderX = Math.round(start.x + deltaX);
+        subtreePosition.renderY = Math.round(start.y + deltaY);
+
+        const subtreeCard = document.querySelector(`.node-card.absolute-card[data-id="${positionId}"]`);
+        if (subtreeCard) {
+            subtreeCard.style.left = `${subtreePosition.renderX}px`;
+            subtreeCard.style.top = `${subtreePosition.renderY}px`;
+        }
+    });
 
     drawConnections();
 }
@@ -3634,10 +3664,24 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointerup", handleCardDragEnd);
     
     if (activeDragCard && draggedId !== null) {
-        const position = positions.find(p => p.id === draggedId);
-        if (position) {
-            position.isManual = true;
-        }
+        draggedPositionIds.forEach(positionId => {
+            const movedPosition = positions.find(p => p.id === positionId);
+            if (!movedPosition || !dragStartCoordinates.has(positionId)) return;
+
+            const renderedCoordinates = getRenderedPositionCoordinates(movedPosition);
+            if (selectedDept === "All") {
+                movedPosition.x = renderedCoordinates.x;
+                movedPosition.y = renderedCoordinates.y;
+                movedPosition.isManual = true;
+            } else {
+                const manualLayouts = normalizeManualLayouts(movedPosition.manualLayouts);
+                manualLayouts[selectedDept] = {
+                    x: renderedCoordinates.x,
+                    y: renderedCoordinates.y
+                };
+                movedPosition.manualLayouts = manualLayouts;
+            }
+        });
         try {
             activeDragCard.releasePointerCapture(e.pointerId);
         } catch (err) {}
@@ -3645,6 +3689,8 @@ function handleCardDragEnd(e) {
         activeDragCard = null;
     }
     
+    draggedPositionIds = [];
+    dragStartCoordinates.clear();
     draggedId = null;
     savePositions();
 }
