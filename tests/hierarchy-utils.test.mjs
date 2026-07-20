@@ -6,7 +6,8 @@ await import("../hierarchy-utils.js");
 const {
     repairPositionHierarchy,
     repairEmployeeManagers,
-    isPrimaryEmployeePosition
+    isPrimaryEmployeePosition,
+    getDescendantPositionIds
 } = globalThis.OrgHierarchy || {};
 
 test("repairs self-reporting and multi-position cycles without dropping positions", () => {
@@ -56,6 +57,25 @@ test("only the first assigned seat is primary when an employee holds three posit
     assert.equal(isPrimaryEmployeePosition(positions, 74, 74), true);
     assert.equal(isPrimaryEmployeePosition(positions, 102, 74), false);
     assert.equal(isPrimaryEmployeePosition(positions, 103, 74), false);
+});
+
+test("collects a position subtree without duplicates or cycle loops", () => {
+    assert.equal(typeof getDescendantPositionIds, "function");
+
+    const positions = [
+        { id: 10, managerId: null },
+        { id: 20, managerId: 10 },
+        { id: 30, managerId: 20 },
+        { id: 40, managerId: 10 },
+        { id: 50, managerId: 40 },
+        { id: 60, managerId: 50 },
+        { id: 70, managerId: 70 },
+        { id: 99, managerId: null }
+    ];
+
+    assert.deepEqual(getDescendantPositionIds(positions, 10), [10, 20, 30, 40, 50, 60]);
+    assert.deepEqual(getDescendantPositionIds(positions, 70), [70]);
+    assert.deepEqual(getDescendantPositionIds(positions, 999), []);
 });
 
 test("accepts top-level and unrelated position parents", () => {

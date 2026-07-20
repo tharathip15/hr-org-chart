@@ -113,10 +113,41 @@
         return Boolean(primary && toInteger(primary.id) === toInteger(positionId));
     }
 
+    function getDescendantPositionIds(sourcePositions, rootId) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const rootPositionId = toInteger(rootId);
+        if (rootPositionId === null) return [];
+
+        const childrenByManager = new Map();
+        positions.forEach(position => {
+            const managerId = toInteger(position.managerId);
+            if (managerId === null) return;
+            const children = childrenByManager.get(managerId) || [];
+            children.push(toInteger(position.id));
+            childrenByManager.set(managerId, children);
+        });
+
+        const knownIds = new Set(positions.map(position => toInteger(position.id)));
+        if (!knownIds.has(rootPositionId)) return [];
+
+        const visited = new Set();
+        const result = [];
+        function visit(positionId) {
+            if (visited.has(positionId)) return;
+            visited.add(positionId);
+            result.push(positionId);
+            (childrenByManager.get(positionId) || []).forEach(visit);
+        }
+
+        visit(rootPositionId);
+        return result;
+    }
+
     root.OrgHierarchy = Object.freeze({
         repairPositionHierarchy,
         validatePositionParent,
         repairEmployeeManagers,
-        isPrimaryEmployeePosition
+        isPrimaryEmployeePosition,
+        getDescendantPositionIds
     });
 })(globalThis);
