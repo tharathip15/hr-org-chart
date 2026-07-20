@@ -61,3 +61,27 @@ test("dragging persists the subtree in the active coordinate scope", () => {
     assert.match(appSource, /manualLayouts\[selectedDept\] =/);
     assert.match(appSource, /movedPosition\.isManual = true;/);
 });
+
+test("dragging cards falls back to DOM coordinates without hijacking controls", () => {
+    assert.match(appSource, /function getDragStartCoordinates\(position, card\)/);
+    assert.match(appSource, /card\?\.style\?\.left/);
+    assert.match(appSource, /card\?\.style\?\.top/);
+    assert.match(appSource, /e\.target\.closest\("\.node-toggle-btn"\)/);
+    assert.match(appSource, /window\.addEventListener\("pointercancel", handleCardDragEnd\)/);
+});
+
+test("auto arrange restores the latest saved layout", () => {
+    assert.match(appSource, /async function restoreSavedLayout\(\)/);
+    assert.match(appSource, /await latestPositionsSavePromise/);
+    assert.match(appSource, /await loadPositions\(\);[\s\S]+renderTree\(\);/);
+    assert.doesNotMatch(appSource, /position\.manualLayouts = \{\};/);
+});
+
+test("fit to screen keeps oversized charts inside the chart viewport edge", () => {
+    assert.match(appSource, /const scaledContentWidth = bounds\.width \* currentScale;/);
+    assert.match(appSource, /panX = padding - bounds\.minX \* currentScale;/);
+});
+
+test("toggling a position refits the chart after visibility changes", () => {
+    assert.match(appSource, /function toggleNode\(id\)[\s\S]+renderAll\(\);\s*fitToScreen\(\);/);
+});

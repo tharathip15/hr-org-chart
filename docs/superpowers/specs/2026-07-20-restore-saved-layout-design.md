@@ -19,7 +19,7 @@ The existing Auto-Arrange toolbar button will restore the latest persisted posit
 
 ### Drag behavior
 
-Position cards remain clickable and their collapse buttons remain usable. Pointerdown may begin a drag from any card surface, including the collapse button. A click without movement keeps its existing behavior; a real drag suppresses the follow-up click/toggle event. Drag start will fall back to the card's inline `left` and `top` values when transient render coordinates are unavailable. Pointer cancellation will use the same cleanup path as pointerup.
+Position cards remain clickable and their collapse buttons remain usable. Dragging starts from the card surface while the collapse button remains a dedicated click control. A click without movement keeps its existing behavior; a real drag suppresses the follow-up card click. Drag start will fall back to the card's inline `left` and `top` values when transient render coordinates are unavailable. Pointer cancellation will use the same cleanup path as pointerup.
 
 ### Persistence
 

@@ -942,6 +942,8 @@ async function loadPositions() {
     saveLocalPositionsBackup();
 }
 
+let latestPositionsSavePromise = Promise.resolve(true);
+
 async function savePositions() {
     setSyncStatus("saving");
     positions = normalizePositionsList(positions);
@@ -1449,17 +1451,18 @@ function setupEventListeners() {
     // Auto-Arrange Layout Button
     const btnAutoLayout = document.getElementById("btn-auto-layout");
     if (btnAutoLayout) {
-        btnAutoLayout.addEventListener("click", () => {
-            if (confirm("ต้องการจัดระเบียบแผนผังและพิกัดการ์ดทั้งหมดโดยอัตโนมัติหรือไม่? (พิกัดการจัดวางที่คุณลากเองจะถูกรีเซ็ตให้เรียงกันอย่างเป็นระเบียบ)")) {
-                positions.forEach(position => {
-                    position.x = null;
-                    position.y = null;
-                    position.isManual = false;
-                    position.manualLayouts = {};
-                });
-                renderTree();
-                savePositions();
-                showNotification("จัดตำแหน่งการ์ดทั้งหมดและดึงกลับมาใกล้กันเรียบร้อยแล้ว", "success");
+        btnAutoLayout.addEventListener("click", async () => {
+            if (!confirm("ต้องการคืนค่าตำแหน่งล่าสุดที่บันทึกไว้หรือไม่?")) return;
+
+            btnAutoLayout.disabled = true;
+            try {
+                await restoreSavedLayout();
+                showNotification("คืนค่าตำแหน่งล่าสุดที่บันทึกไว้เรียบร้อยแล้ว", "success");
+            } catch (error) {
+                console.error("Failed to restore saved layout:", error);
+                showNotification("ไม่สามารถคืนค่าตำแหน่งที่บันทึกไว้ได้", "error");
+            } finally {
+                btnAutoLayout.disabled = false;
             }
         });
     }
@@ -1692,9 +1695,15 @@ function fitToScreen() {
     currentScale = Math.min(scaleX, scaleY);
     currentScale = Math.max(0.15, Math.min(1.2, currentScale)); // clamp fitting scale
     
-    // Center it horizontally, add padding top
-    const centerX = bounds.minX + bounds.width / 2;
-    panX = (viewportRect.width / 2) - centerX * currentScale;
+    // Center compact trees, but keep oversized trees anchored inside the chart viewport.
+    const scaledContentWidth = bounds.width * currentScale;
+    const availableWidth = viewportRect.width - padding * 2;
+    if (scaledContentWidth > availableWidth) {
+        panX = padding - bounds.minX * currentScale;
+    } else {
+        const centerX = bounds.minX + bounds.width / 2;
+        panX = (viewportRect.width / 2) - centerX * currentScale;
+    }
     panY = 80 - bounds.minY * currentScale;
     
     updateCanvasTransform();
@@ -1758,6 +1767,7 @@ function toggleNode(id) {
     
     savePreferences();
     renderAll();
+    fitToScreen();
 }
 
 // Reset highlights
@@ -2020,6 +2030,10 @@ function wireTreeInteractions() {
     document.querySelectorAll(".node-card").forEach(card => {
         card.addEventListener("click", () => {
             const id = parseInt(card.dataset.id, 10);
+            if (suppressCardClickId === id) {
+                suppressCardClickId = null;
+                return;
+            }
             const position = positions.find(position => position.id === id);
             const employee = position ? getAssignedEmployee(position) : null;
 
@@ -2040,6 +2054,10 @@ function wireTreeInteractions() {
         btn.addEventListener("click", (e) => {
             e.stopPropagation();
             const id = parseInt(btn.dataset.id, 10);
+            if (suppressCardClickId === id) {
+                suppressCardClickId = null;
+                return;
+            }
             toggleNode(id);
         });
     });
@@ -3549,10 +3567,15 @@ let dropTargetId = null;
 let activeDragCard = null;
 let dragGrabOffsetX = 0;
 let dragGrabOffsetY = 0;
+let dragStartClientX = 0;
+let dragStartClientY = 0;
+let dragPointerCaptured = false;
+let cardDragMoved = false;
+let suppressCardClickId = null;
 let draggedPositionIds = [];
 let dragStartCoordinates = new Map();
 
-function getDragStartCoordinates(position) {
+function getDragStartCoordinates(position, card) {
     if (!position) return null;
 
     const renderedX = toNullableInteger(position.renderX);
@@ -3562,15 +3585,26 @@ function getDragStartCoordinates(position) {
     }
 
     const manualCoordinates = getManualPositionCoordinates(position);
-    return manualCoordinates ? { ...manualCoordinates } : null;
+    if (manualCoordinates) return { ...manualCoordinates };
+
+    const domX = toNullableInteger(card?.style?.left);
+    const domY = toNullableInteger(card?.style?.top);
+    if (domX !== null && domY !== null) {
+        return { x: domX, y: domY };
+    }
+
+    const offsetX = toNullableInteger(card?.offsetLeft);
+    const offsetY = toNullableInteger(card?.offsetTop);
+    return offsetX !== null && offsetY !== null
+        ? { x: offsetX, y: offsetY }
+        : null;
 }
 
 function handleCardDragStart(e) {
     if (e.button !== 0) return;
-    if (e.target.closest(".node-toggle-btn") || e.target.closest("button") || e.target.closest("input") || e.target.closest("a")) return;
+    if (e.target.closest(".node-toggle-btn") || e.target.closest("input") || e.target.closest("a")) return;
     
     const card = e.currentTarget;
-    activeDragCard = card;
     draggedId = parseInt(card.dataset.id);
     
     const position = positions.find(position => position.id === draggedId);
@@ -3580,7 +3614,8 @@ function handleCardDragStart(e) {
     dragStartCoordinates = new Map();
     draggedPositionIds.forEach(positionId => {
         const draggedPosition = positions.find(candidate => candidate.id === positionId);
-        const startCoordinates = getDragStartCoordinates(draggedPosition);
+        const startCard = positionId === draggedId ? card : document.querySelector(`.node-card.absolute-card[data-id="${positionId}"]`);
+        const startCoordinates = getDragStartCoordinates(draggedPosition, startCard);
         if (startCoordinates) {
             dragStartCoordinates.set(positionId, startCoordinates);
         }
@@ -3594,19 +3629,37 @@ function handleCardDragStart(e) {
         return;
     }
 
-    card.setPointerCapture(e.pointerId);
+    activeDragCard = card;
     card.classList.add("dragging");
 
-    const renderedCoordinates = getRenderedPositionCoordinates(position);
-    dragGrabOffsetX = (e.clientX / currentScale) - renderedCoordinates.x;
-    dragGrabOffsetY = (e.clientY / currentScale) - renderedCoordinates.y;
+    const rootStart = dragStartCoordinates.get(draggedId);
+    dragStartClientX = e.clientX;
+    dragStartClientY = e.clientY;
+    dragPointerCaptured = false;
+    cardDragMoved = false;
+    dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
+    dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
+    window.addEventListener("pointercancel", handleCardDragEnd);
 }
 
 function handleCardDragMove(e) {
     if (!activeDragCard || draggedId === null) return;
+
+    if (!cardDragMoved) {
+        const distance = Math.hypot(e.clientX - dragStartClientX, e.clientY - dragStartClientY);
+        if (distance < 8) return;
+        cardDragMoved = true;
+    }
+
+    if (!dragPointerCaptured) {
+        try {
+            activeDragCard.setPointerCapture(e.pointerId);
+            dragPointerCaptured = true;
+        } catch (err) {}
+    }
 
     const rootStart = dragStartCoordinates.get(draggedId);
     if (!rootStart) return;
@@ -3662,9 +3715,15 @@ function handleCardDragMove(e) {
 function handleCardDragEnd(e) {
     window.removeEventListener("pointermove", handleCardDragMove);
     window.removeEventListener("pointerup", handleCardDragEnd);
+    window.removeEventListener("pointercancel", handleCardDragEnd);
     
+    const shouldPersist = Boolean(activeDragCard && draggedId !== null && cardDragMoved);
     if (activeDragCard && draggedId !== null) {
+        if (shouldPersist) {
+            suppressCardClickId = draggedId;
+        }
         draggedPositionIds.forEach(positionId => {
+            if (!shouldPersist) return;
             const movedPosition = positions.find(p => p.id === positionId);
             if (!movedPosition || !dragStartCoordinates.has(positionId)) return;
 
@@ -3682,9 +3741,11 @@ function handleCardDragEnd(e) {
                 movedPosition.manualLayouts = manualLayouts;
             }
         });
-        try {
-            activeDragCard.releasePointerCapture(e.pointerId);
-        } catch (err) {}
+        if (dragPointerCaptured) {
+            try {
+                activeDragCard.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+        }
         activeDragCard.classList.remove("dragging");
         activeDragCard = null;
     }
@@ -3692,7 +3753,19 @@ function handleCardDragEnd(e) {
     draggedPositionIds = [];
     dragStartCoordinates.clear();
     draggedId = null;
-    savePositions();
+    dragStartClientX = 0;
+    dragStartClientY = 0;
+    dragPointerCaptured = false;
+    cardDragMoved = false;
+    if (shouldPersist) {
+        latestPositionsSavePromise = savePositions();
+    }
+}
+
+async function restoreSavedLayout() {
+    await latestPositionsSavePromise;
+    await loadPositions();
+    renderTree();
 }
 
 // Run application on load

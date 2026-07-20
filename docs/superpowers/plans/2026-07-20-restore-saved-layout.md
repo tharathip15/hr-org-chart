@@ -41,7 +41,7 @@ Track whether the pointer actually moved and which card click should be suppress
 
 - [ ] **Step 2: Make drag start resilient**
 
-Allow pointerdown from card controls, resolve start coordinates from transient render values, manual values, or the card's inline `left`/`top`, and clear state if no valid coordinate exists.
+Keep collapse controls out of drag start, resolve coordinates from transient render values, manual values, or the card's inline `left`/`top`, and clear state if no valid coordinate exists.
 
 - [ ] **Step 3: Preserve click behavior**
 
