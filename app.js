@@ -1649,6 +1649,7 @@ function setupEventListeners() {
 // Update the canvas scale and pan position
 function updateCanvasTransform() {
     canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${currentScale})`;
+    canvas.style.setProperty("--canvas-scale", currentScale);
     document.getElementById("zoom-percent").innerText = `${Math.round(currentScale * 100)}%`;
 }
 

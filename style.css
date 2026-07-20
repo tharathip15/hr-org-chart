@@ -2158,11 +2158,14 @@ body {
     position: absolute;
     bottom: 0;
     right: 0;
-    width: 14px;
-    height: 14px;
+    width: 24px;
+    height: 24px;
+    transform: scale(calc(1 / var(--canvas-scale, 1)));
+    transform-origin: bottom right;
     cursor: nwse-resize;
     background: linear-gradient(135deg, transparent 50%, var(--text-tertiary) 50%);
     border-bottom-right-radius: var(--radius-lg);
+    touch-action: none;
 }
 
 /* Text Annotation */
