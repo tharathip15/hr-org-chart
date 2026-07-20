@@ -68,10 +68,17 @@
     function getStaffingSummary(employees, positions) {
         const people = Array.isArray(employees) ? employees : [];
         const seats = Array.isArray(positions) ? positions : [];
+        const resolvedEmployeeIds = new Set(
+            people
+                .map(employee => employee?.id)
+                .filter(employeeId => employeeId !== null && employeeId !== undefined)
+        );
+        const assignedEmployeeIds = new Set();
+        let actingCount = 0;
         const vacantPositions = seats
             .filter(position => {
                 if (position?.employeeId === null || position?.employeeId === undefined) return true;
-                return !people.some(employee => employee?.id === position.employeeId);
+                return !resolvedEmployeeIds.has(position.employeeId);
             })
             .map(position => ({
                 id: position?.id ?? null,
@@ -85,10 +92,21 @@
                     : a.title.localeCompare(b.title);
             });
 
+        seats.forEach(position => {
+            const employeeId = position?.employeeId;
+            if (employeeId === null || employeeId === undefined || !resolvedEmployeeIds.has(employeeId)) return;
+            if (assignedEmployeeIds.has(employeeId)) {
+                actingCount += 1;
+            } else {
+                assignedEmployeeIds.add(employeeId);
+            }
+        });
+
         return {
             employeeCount: people.length,
             positionCount: seats.length,
             vacantCount: vacantPositions.length,
+            actingCount,
             vacantPositions
         };
     }

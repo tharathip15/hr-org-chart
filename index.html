@@ -102,6 +102,10 @@
                         <span class="stat-value" id="total-positions">0</span>
                         <span class="stat-label">Positions</span>
                     </div>
+                    <div class="stat-card stat-card-acting">
+                        <span class="stat-value" id="total-acting-positions">0</span>
+                        <span class="stat-label">Acting positions</span>
+                    </div>
                     <button type="button" class="stat-card stat-card-action stat-card-vacant" id="vacant-positions-card" aria-controls="vacancy-report-modal" aria-haspopup="dialog" aria-label="View vacant positions (0)">
                         <span class="stat-value" id="total-vacant-positions">0</span>
                         <span class="stat-label">Vacant positions</span>
@@ -183,6 +187,24 @@
                 <div class="annotation-toolbar" id="annotation-toolbar">
                     <button class="tool-btn" id="tool-add-frame" title="Add Frame (เพิ่มกรอบ)"><i data-lucide="square"></i></button>
                     <button class="tool-btn" id="tool-add-text" title="Add Text (เพิ่มข้อความอิสระ)"><i data-lucide="type"></i></button>
+                    <div class="annotation-style-controls" id="annotation-style-controls" aria-label="Annotation style controls">
+                        <label class="annotation-style-field" title="Annotation color">
+                            <span>Color</span>
+                            <input type="color" id="annotation-color-picker" value="#4f46e5" aria-label="Annotation color" disabled>
+                        </label>
+                        <label class="annotation-style-field annotation-text-size-control" title="Text size">
+                            <span>Text</span>
+                            <input type="number" id="annotation-font-size" min="12" max="48" step="1" value="15" aria-label="Text size in pixels" disabled>
+                        </label>
+                        <label class="annotation-style-field annotation-frame-size-control" title="Frame width">
+                            <span>W</span>
+                            <input type="number" id="annotation-width" min="120" max="1600" step="10" value="240" aria-label="Frame width in pixels" disabled>
+                        </label>
+                        <label class="annotation-style-field annotation-frame-size-control" title="Frame height">
+                            <span>H</span>
+                            <input type="number" id="annotation-height" min="80" max="1200" step="10" value="160" aria-label="Frame height in pixels" disabled>
+                        </label>
+                    </div>
                     <div class="tool-separator"></div>
                     <button class="tool-btn" id="tool-undo" title="Undo (ย้อนกลับ)" disabled><i data-lucide="undo-2"></i></button>
                     <button class="tool-btn" id="tool-redo" title="Redo (ทำซ้ำ)" disabled><i data-lucide="redo-2"></i></button>

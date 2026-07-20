@@ -20,6 +20,7 @@ test("summarizes employees, positions, and sorted vacant positions", () => {
     assert.equal(summary.employeeCount, 1);
     assert.equal(summary.positionCount, 3);
     assert.equal(summary.vacantCount, 2);
+    assert.equal(summary.actingCount, 0);
     assert.deepEqual(summary.vacantPositions, [
         { id: 13, title: "Analyst", department: "Alpha" },
         { id: 12, title: "Operator", department: "Zeta" }
@@ -34,8 +35,23 @@ test("returns zero counts and a stable empty list for missing collections", () =
         employeeCount: 0,
         positionCount: 0,
         vacantCount: 0,
+        actingCount: 0,
         vacantPositions: []
     });
+});
+
+test("counts resolved secondary assignments as acting positions", () => {
+    const summary = directory.getStaffingSummary(
+        [{ id: 7, name: "Shared employee" }],
+        [
+            { id: 12, employeeId: 7, title: "Primary", department: "Alpha" },
+            { id: 13, employeeId: 7, title: "Acting", department: "Beta" },
+            { id: 14, employeeId: 7, title: "Acting again", department: "Gamma" },
+            { id: 15, employeeId: null, title: "Vacant", department: "Gamma" }
+        ]
+    );
+
+    assert.equal(summary.actingCount, 2);
 });
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
@@ -45,6 +61,7 @@ const styleSource = readFileSync(new URL("../style.css", import.meta.url), "utf8
 test("defines distinct sidebar statistics and an interactive vacancy card", () => {
     assert.match(htmlSource, /id="total-employees"/);
     assert.match(htmlSource, /id="total-positions"/);
+    assert.match(htmlSource, /id="total-acting-positions"/);
     assert.match(htmlSource, /id="total-vacant-positions"/);
     assert.match(htmlSource, /<button[^>]+id="vacant-positions-card"/);
     assert.match(htmlSource, /aria-controls="vacancy-report-modal"/);
@@ -54,6 +71,7 @@ test("defines distinct sidebar statistics and an interactive vacancy card", () =
 });
 
 test("styles the vacancy statistic as an accessible interactive card", () => {
+    assert.match(styleSource, /\.stat-card-acting\s*\{/);
     assert.match(styleSource, /\.stat-card-action\s*\{/);
     assert.match(styleSource, /\.stat-card-action:focus-visible\s*\{/);
     assert.match(styleSource, /\.stat-card-vacant\s*\{/);
@@ -63,6 +81,9 @@ test("styles the vacancy statistic as an accessible interactive card", () => {
 
 test("wires sidebar counts and the vacancy report into the app", () => {
     assert.match(appSource, /EmployeeDirectory\.getStaffingSummary\(employees, positions\)/);
+    assert.match(appSource, /total-acting-positions/);
+    assert.match(appSource, /employees\.length/);
+    assert.match(appSource, /getPositionDepartment\(position\)/);
     assert.match(appSource, /function renderVacancyReport\(\)/);
     assert.match(appSource, /function openVacancyReportModal\(\)/);
     assert.match(appSource, /function closeVacancyReportModal\(\)/);
