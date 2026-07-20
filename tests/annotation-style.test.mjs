@@ -39,6 +39,13 @@ test("annotation size controls apply while typing or committing", () => {
     assert.match(appSource, /fontSizeInput\?\.addEventListener\("input"/);
 });
 
+test("frames support canvas-sized dimensions", () => {
+    assert.match(appSource, /const ANNOTATION_MAX_WIDTH = 20000/);
+    assert.match(appSource, /const ANNOTATION_MAX_HEIGHT = 10000/);
+    assert.match(htmlSource, /id="annotation-width"[^>]+max="20000"/);
+    assert.match(htmlSource, /id="annotation-height"[^>]+max="10000"/);
+});
+
 test("annotation controls have compact responsive styling", () => {
     assert.match(styleSource, /\.annotation-style-controls/);
     assert.match(styleSource, /\.annotation-style-field input/);
