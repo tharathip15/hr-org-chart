@@ -51,6 +51,18 @@ test("text annotations support font sizes beyond the previous 48px cap", () => {
     assert.match(htmlSource, /id="annotation-font-size"[^>]+max="2000"/);
 });
 
+test("annotation toolbar exposes selected delete and lock actions", () => {
+    assert.match(htmlSource, /id="tool-delete-selected"/);
+    assert.match(htmlSource, /id="tool-toggle-lock"/);
+});
+
+test("annotation locks persist and block movement or resizing", () => {
+    assert.match(appSource, /function getAnnotationLocked\(annotation\)/);
+    assert.match(appSource, /annotation\.locked = !getAnnotationLocked\(annotation\)/);
+    assert.match(appSource, /if \(getAnnotationLocked\(annot\)\) return;/);
+    assert.match(appSource, /locked: false/);
+});
+
 test("annotation controls have compact responsive styling", () => {
     assert.match(styleSource, /\.annotation-style-controls/);
     assert.match(styleSource, /\.annotation-style-field input/);

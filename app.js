@@ -3805,6 +3805,10 @@ function getAnnotationColor(annotation) {
     return normalizeAnnotationColor(annotation?.color);
 }
 
+function getAnnotationLocked(annotation) {
+    return annotation?.locked === true;
+}
+
 function getAnnotationNumber(annotation, property, fallback, min, max) {
     const value = Number(annotation?.[property]);
     if (!Number.isFinite(value)) return fallback;
@@ -3836,7 +3840,7 @@ function selectAnnotation(id) {
     document.querySelectorAll(".annotation-card, .annotation-text-wrapper").forEach(element => {
         element.classList.toggle("selected", element.dataset.id === id);
     });
-    updateAnnotationStyleControls();
+    updateAnnotationToolbarButtons();
 }
 
 function updateAnnotationStyleControls() {
@@ -3984,8 +3988,21 @@ function redoAnnotation() {
 function updateAnnotationToolbarButtons() {
     const btnUndo = document.getElementById("tool-undo");
     const btnRedo = document.getElementById("tool-redo");
+    const btnDeleteSelected = document.getElementById("tool-delete-selected");
+    const btnToggleLock = document.getElementById("tool-toggle-lock");
+    const selected = getSelectedAnnotation();
+    const isLocked = getAnnotationLocked(selected);
+
     if (btnUndo) btnUndo.disabled = annotationHistory.length === 0;
     if (btnRedo) btnRedo.disabled = annotationRedoHistory.length === 0;
+    if (btnDeleteSelected) btnDeleteSelected.disabled = !selected;
+    if (btnToggleLock) {
+        btnToggleLock.disabled = !selected;
+        btnToggleLock.title = isLocked ? "Unlock Selected" : "Lock Selected";
+        btnToggleLock.setAttribute("aria-pressed", String(isLocked));
+        btnToggleLock.innerHTML = '<i data-lucide="' + (isLocked ? "lock-open" : "lock") + '"></i>';
+    }
+    if (window.lucide) window.lucide.createIcons();
     updateAnnotationStyleControls();
 }
 
@@ -4013,7 +4030,7 @@ function renderAnnotations() {
     filteredAnnots.forEach(annot => {
         if (annot.type === "frame") {
             const el = document.createElement("div");
-            el.className = "annotation-card";
+            el.className = `annotation-card${getAnnotationLocked(annot) ? " locked" : ""}`;
             el.dataset.id = annot.id;
             el.style.left = `${annot.x}px`;
             el.style.top = `${annot.y}px`;
@@ -4034,6 +4051,7 @@ function renderAnnotations() {
             
             // Edit title
             const titleEl = el.querySelector(".annotation-title");
+            titleEl.contentEditable = String(!getAnnotationLocked(annot));
             titleEl.addEventListener("blur", () => {
                 const text = titleEl.innerText.trim();
                 if (text !== annot.text) {
@@ -4059,6 +4077,7 @@ function renderAnnotations() {
             el.addEventListener("pointerdown", (e) => {
                 selectAnnotation(annot.id);
                 if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']") || e.target.closest(".annotation-delete-btn")) return;
+                if (getAnnotationLocked(annot)) return;
                 e.stopPropagation();
                 startDragAnnotation(e, annot, el);
             });
@@ -4066,20 +4085,22 @@ function renderAnnotations() {
             // Resize listener
             el.querySelector(".annotation-resize-handle").addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
+                selectAnnotation(annot.id);
+                if (getAnnotationLocked(annot)) return;
                 startResizeAnnotation(e, annot, el);
             });
             
             container.appendChild(el);
         } else if (annot.type === "text") {
             const wrapper = document.createElement("div");
-            wrapper.className = `annotation-text-wrapper ${annot.id === selectedAnnotationId ? "selected" : ""}`;
+            wrapper.className = `annotation-text-wrapper ${annot.id === selectedAnnotationId ? "selected" : ""}${getAnnotationLocked(annot) ? " locked" : ""}`;
             wrapper.dataset.id = annot.id;
             wrapper.style.left = `${annot.x}px`;
             wrapper.style.top = `${annot.y}px`;
             
             const txt = document.createElement("div");
             txt.className = "annotation-text";
-            txt.contentEditable = "true";
+            txt.contentEditable = String(!getAnnotationLocked(annot));
             txt.spellcheck = false;
             txt.innerText = annot.text || "ดับเบิ้ลคลิกแก้ไขข้อความ";
             txt.style.color = getAnnotationColor(annot);
@@ -4120,6 +4141,7 @@ function renderAnnotations() {
                 selectAnnotation(annot.id);
                 if (e.target.closest(".annotation-text-delete-btn")) return;
                 if (e.target === txt && document.activeElement === txt) return; // allow typing selection
+                if (getAnnotationLocked(annot)) return;
                 e.stopPropagation();
                 startDragAnnotation(e, annot, wrapper);
             });
@@ -4128,11 +4150,11 @@ function renderAnnotations() {
         }
     });
 
-    updateAnnotationStyleControls();
+    updateAnnotationToolbarButtons();
 }
 
 function startDragAnnotation(e, annot, el) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeDragAnnotation = { annot, el };
     
@@ -4171,7 +4193,7 @@ function handleDragAnnotationEnd(e) {
 }
 
 function startResizeAnnotation(e, annot, el) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeResizeAnnotation = { annot, el };
     
@@ -4223,6 +4245,21 @@ function deleteAnnotation(id) {
     saveAnnotations();
 }
 
+function deleteSelectedAnnotation() {
+    if (!selectedAnnotationId) return;
+    deleteAnnotation(selectedAnnotationId);
+}
+
+function toggleSelectedAnnotationLock() {
+    const annotation = getSelectedAnnotation();
+    if (!annotation) return;
+
+    pushAnnotationHistory();
+    annotation.locked = !getAnnotationLocked(annotation);
+    renderAnnotations();
+    saveAnnotations();
+}
+
 function setupAnnotationListeners() {
     const colorInput = document.getElementById("annotation-color-picker");
     const fontSizeInput = document.getElementById("annotation-font-size");
@@ -4268,6 +4305,7 @@ function setupAnnotationListeners() {
             width: 240,
             height: 160,
             color: ANNOTATION_DEFAULT_COLOR,
+            locked: false,
             text: "กรอบระบุกลุ่มงาน",
             department: selectedDept
         });
@@ -4290,6 +4328,7 @@ function setupAnnotationListeners() {
             y: Math.round(centerY),
             color: ANNOTATION_DEFAULT_COLOR,
             fontSize: ANNOTATION_DEFAULT_FONT_SIZE,
+            locked: false,
             text: "พิมพ์คำอธิบาย...",
             department: selectedDept
         });
@@ -4300,6 +4339,8 @@ function setupAnnotationListeners() {
     
     document.getElementById("tool-undo").addEventListener("click", undoAnnotation);
     document.getElementById("tool-redo").addEventListener("click", redoAnnotation);
+    document.getElementById("tool-delete-selected")?.addEventListener("click", deleteSelectedAnnotation);
+    document.getElementById("tool-toggle-lock")?.addEventListener("click", toggleSelectedAnnotationLock);
     
     document.getElementById("tool-clear").addEventListener("click", () => {
         const currentDeptsAnnots = annotations.filter(annot => (annot.department || "All") === selectedDept);

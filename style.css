@@ -2187,6 +2187,20 @@ body {
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25);
 }
 
+.annotation-card.locked,
+.annotation-text-wrapper.locked {
+    cursor: default;
+}
+
+.annotation-card.locked .annotation-title,
+.annotation-text-wrapper.locked .annotation-text {
+    cursor: default;
+}
+
+.annotation-card.locked .annotation-resize-handle {
+    display: none;
+}
+
 .annotation-card .annotation-header {
     display: flex;
     justify-content: space-between;
@@ -2310,6 +2324,16 @@ body {
     border-color: var(--accent-primary);
     background-color: var(--bg-secondary);
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+.annotation-text-wrapper.locked .annotation-text {
+    border-style: solid;
+    border-color: var(--border-color);
+}
+
+#tool-toggle-lock[aria-pressed="true"] {
+    background-color: var(--accent-light);
+    color: var(--accent-primary);
 }
 
 /* Toggle View Mode Button Active style */
