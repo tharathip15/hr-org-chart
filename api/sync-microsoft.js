@@ -1,6 +1,7 @@
 import { supabase } from "./_helpers/supabase.js";
 import { validateToken } from "./_helpers/auth.js";
 import { findExistingEmployee, isManualEmployee } from "./_helpers/employee_merge.js";
+import { buildPositionSyncUpdates } from "./_helpers/position_sync.js";
 
 const tenantId = process.env.MICROSOFT_TENANT_ID;
 const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -78,6 +79,23 @@ export default async function handler(request, response) {
 
     if (fetchError) {
       throw new Error(`Failed to fetch existing employees: ${fetchError.message}`);
+    }
+
+    // Positions are a separate source of truth, but occupied seats that still
+    // mirror an employee's old Microsoft role should follow that role update.
+    let existingPositions = [];
+    const { data: positionRows, error: positionsFetchError } = await supabase
+      .from("positions")
+      .select("id,title,department,employee_id");
+
+    if (positionsFetchError) {
+      if (isMissingTableError(positionsFetchError)) {
+        console.warn("Positions table unavailable; skipping position title sync.");
+      } else {
+        throw new Error(`Failed to fetch existing positions: ${positionsFetchError.message}`);
+      }
+    } else {
+      existingPositions = positionRows || [];
     }
 
     // 6. Map and merge users
@@ -168,6 +186,14 @@ export default async function handler(request, response) {
     dbRows.push(...manualEmployees);
     console.log(`Merged results: ${dbRows.length} total employees (${manualEmployees.length} manual, ${dbRows.length - manualEmployees.length} from AD).`);
 
+    const microsoftPersonIds = new Set(realPeople.map(user => user.id));
+    const positionUpdates = buildPositionSyncUpdates(
+      existingPositions,
+      existingEmployees || [],
+      dbRows,
+      microsoftPersonIds
+    );
+
     // 8. Re-insert to Supabase
     console.log("Replacing database rows...");
     const { error: deleteError } = await supabase
@@ -208,8 +234,26 @@ export default async function handler(request, response) {
       }
     }
 
+    for (const positionUpdate of positionUpdates) {
+      const { error: positionUpdateError } = await supabase
+        .from("positions")
+        .update({
+          title: positionUpdate.title,
+          department: positionUpdate.department
+        })
+        .eq("id", positionUpdate.id);
+
+      if (positionUpdateError) {
+        throw new Error(`Position sync failed: ${positionUpdateError.message}`);
+      }
+    }
+
     console.log("Microsoft sync complete!");
-    response.status(200).json({ ok: true, count: dbRows.length });
+    response.status(200).json({
+      ok: true,
+      count: dbRows.length,
+      positionUpdates: positionUpdates.length
+    });
   } catch (error) {
     console.error("Microsoft sync API error:", error);
     response.status(500).json({ ok: false, error: error.message });
@@ -264,4 +308,9 @@ function getDeptColor(dept) {
   }
   const index = Math.abs(hash) % colors.length;
   return colors[index];
+}
+
+function isMissingTableError(error) {
+  const message = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return message.includes("schema cache") || message.includes("does not exist");
 }
