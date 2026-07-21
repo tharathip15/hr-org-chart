@@ -46,6 +46,11 @@ test("frames support canvas-sized dimensions", () => {
     assert.match(htmlSource, /id="annotation-height"[^>]+max="10000"/);
 });
 
+test("text annotations support font sizes beyond the previous 48px cap", () => {
+    assert.match(appSource, /const ANNOTATION_MAX_FONT_SIZE = 2000/);
+    assert.match(htmlSource, /id="annotation-font-size"[^>]+max="2000"/);
+});
+
 test("annotation controls have compact responsive styling", () => {
     assert.match(styleSource, /\.annotation-style-controls/);
     assert.match(styleSource, /\.annotation-style-field input/);
