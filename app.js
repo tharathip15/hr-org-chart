@@ -1241,6 +1241,7 @@ function setupEventListeners() {
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (btnExpandAll) {
         btnExpandAll.addEventListener("click", async () => {
+            if (selectedDept !== "All") return;
             if (collapsedNodes.size === 0) return;
             collapsedNodes.clear();
             renderAll();
@@ -1750,6 +1751,7 @@ function focusAndHighlightEmployee(id) {
 
 // Recursively expand all managers of an employee so they are visible
 function expandPathToEmployee(id) {
+    if (selectedDept !== "All") return;
     let position = positions.find(position => position.employeeId === id) || positions.find(position => position.id === id);
     while (position && position.managerId) {
         collapsedNodes.delete(position.managerId);
@@ -1757,8 +1759,13 @@ function expandPathToEmployee(id) {
     }
 }
 
+function isOverallView() {
+    return selectedDept === "All";
+}
+
 // Expand / Collapse sub-tree toggle
 function toggleNode(id) {
+    if (selectedDept !== "All") return;
     if (collapsedNodes.has(id)) {
         collapsedNodes.delete(id);
     } else {
@@ -1793,6 +1800,18 @@ function renderAll() {
     if (vacancyReportModal?.classList.contains("active")) {
         renderVacancyReport();
     }
+
+    updateCollapseControls();
+}
+
+function updateCollapseControls() {
+    const btnExpandAll = document.getElementById("btn-expand-all");
+    if (!btnExpandAll) return;
+
+    btnExpandAll.disabled = !isOverallView();
+    btnExpandAll.title = isOverallView()
+        ? "Expand All Positions"
+        : "Available in Overall View only";
 }
 
 // Compute counts and populate sidebar
@@ -1873,6 +1892,7 @@ function selectDepartment(dept) {
     }
     
     renderSidebarDeptList();
+    updateCollapseControls();
     renderTree();
     fitToScreen();
 }
@@ -1989,7 +2009,7 @@ function buildNodeHTML(employee, reportsMap, options = {}) {
                     </div>
     `;
     
-    if (hasReports) {
+    if (hasReports && isOverallView()) {
         const isCollapsed = collapsedNodes.has(employee.id);
         html += `
             <button class="node-toggle-btn ${isCollapsed ? 'collapsed' : ''}" data-id="${employee.id}">
@@ -2003,7 +2023,7 @@ function buildNodeHTML(employee, reportsMap, options = {}) {
             </div>
     `;
     
-    if (hasReports) {
+    if (hasReports && isOverallView()) {
         const isCollapsed = collapsedNodes.has(employee.id);
         const childrenHTML = options.overview
             ? buildOverviewChildrenHTML(employee, reports, reportsMap)
@@ -2142,7 +2162,7 @@ function getPositionCardHTML(position) {
             </div>
     `;
 
-    if (hasReports) {
+    if (hasReports && isOverallView()) {
         cardHtml += `
             <button class="node-toggle-btn ${isCollapsed ? "collapsed" : ""}" data-id="${position.id}">
                 <i data-lucide="${isCollapsed ? "chevron-down" : "chevron-up"}"></i>
@@ -2171,7 +2191,9 @@ function renderTree() {
             }
         });
     }
-    collapsedNodes.forEach(id => markHidden(id));
+    if (isOverallView()) {
+        collapsedNodes.forEach(id => markHidden(id));
+    }
 
     // 2. Filter visible positions (and by department if selectedDept is not "All")
     let visiblePositions = positions.filter(position => !hiddenIds.has(position.id));
@@ -2277,7 +2299,9 @@ function calculateInitialCoordinates() {
             }
         });
     }
-    collapsedNodes.forEach(id => markHidden(id));
+    if (isOverallView()) {
+        collapsedNodes.forEach(id => markHidden(id));
+    }
     
     let activePositions = positions.filter(pos => !hiddenIds.has(pos.id));
     if (false && selectedDept !== "All") {
