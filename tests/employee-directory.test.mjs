@@ -205,8 +205,55 @@ test("viewer mode keeps employee browsing available but blocks employee mutation
     for (const functionName of ["openEmployeeForm", "handleFormSubmit", "deleteEmployee"]) {
         const source = appSource.match(new RegExp(`(?:async )?function ${functionName}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
         assert.ok(source, `${functionName} source was found`);
+        assert.match(source, /requireEditorAction\(\)/);
         assert.match(source, /document\.body\.classList\.contains\("role-viewer"\)/);
     }
+    for (const functionName of ["handlePositionFormSubmit", "deletePosition"]) {
+        const start = appSource.indexOf(`async function ${functionName}(`);
+        const source = appSource.slice(start, start + 220);
+        assert.ok(start >= 0, `${functionName} source was found`);
+        assert.match(source, /requireEditorAction\(\)/);
+    }
+});
+
+test("Viewer mode blocks backup import before parsing or mutating chart state", () => {
+    assert.match(styleSource, /body\.role-viewer #btn-import-trigger\s*,/);
+    const authControls = appSource.slice(
+        appSource.indexOf("function updateAuthControls()"),
+        appSource.indexOf("function showLoginOverlay"),
+    );
+    assert.match(authControls, /importButton\.hidden = !isAdmin/);
+    assert.match(authControls, /importButton\.disabled = !isAdmin/);
+
+    const importHandler = appSource.slice(
+        appSource.indexOf("async function handleImportFileChange"),
+        appSource.indexOf("// Set up UI and canvas event listeners"),
+    );
+    assert.ok(importHandler.length > 0);
+    assert.ok(
+        importHandler.indexOf("if (!requireEditorAction(")
+          < importHandler.indexOf("JSON.parse("),
+        "the editor guard must run before import parsing",
+    );
+    assert.match(
+        appSource,
+        /btn-import-trigger"\)\.addEventListener\("click", \(\) => \{\s*if \(!requireEditorAction\(/,
+    );
+});
+
+test("backup import reports success only after every collection write succeeds", () => {
+    const importHandler = appSource.slice(
+        appSource.indexOf("async function handleImportFileChange"),
+        appSource.indexOf("// Set up UI and canvas event listeners"),
+    );
+    assert.match(importHandler, /const writeResults = await Promise\.all\(\[/);
+    assert.match(importHandler, /if \(!writeResults\.every\(Boolean\)\) \{/);
+    assert.ok(
+        importHandler.indexOf("if (!writeResults.every(Boolean))")
+          < importHandler.indexOf("imported successfully"),
+        "success feedback must follow the all-writes check",
+    );
+    assert.match(importHandler, /restoreMutationSnapshot\(snapshot\)/);
 });
 
 test("profile link copy describes reusing an employee profile", () => {
