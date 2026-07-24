@@ -3,7 +3,9 @@
 ## Entra
 
 - The HR app is single-tenant.
-- Preview and Production origins are registered as SPA redirect URIs.
+- Register these exact HR SPA redirect URIs for Preview and Production:
+  - `https://hr-org-chart-two.vercel.app/`
+  - `https://hr-org-chart-tharathipi-1965-pfig.vercel.app/`
 - `PFIG.HR.Admin` and `PFIG.Portal.Admin` are enabled for Users/Groups.
 
 ## Vercel
@@ -17,6 +19,16 @@
   value.
 - `VITE_HR_ENABLED` is set as intended for each environment.
 - Existing Supabase and Blob variables remain unchanged.
+
+## Deployment order
+
+Deploy in this order: HR Preview -> HR Production -> Portal Preview -> Portal Production.
+
+## Silent SSO behavior
+
+For a `prompt=none` silent login, `login_required`, `interaction_required`,
+`consent_required`, and unexpected silent failures all continue as an anonymous
+Viewer without a blocking overlay or redirect loop.
 
 ## Smoke tests
 
