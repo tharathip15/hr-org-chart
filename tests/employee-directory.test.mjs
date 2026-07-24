@@ -241,6 +241,38 @@ test("Viewer mode blocks backup import before parsing or mutating chart state", 
     );
 });
 
+test("Viewer mode hides Microsoft sync and guards before any sync side effect", () => {
+    assert.match(styleSource, /body\.role-viewer #btn-sync-microsoft\s*,/);
+    const authControls = appSource.slice(
+        appSource.indexOf("function updateAuthControls()"),
+        appSource.indexOf("function showLoginOverlay"),
+    );
+    assert.match(authControls, /syncButton\.hidden = !isAdmin/);
+    assert.match(authControls, /syncButton\.disabled = !isAdmin/);
+
+    const handlerStart = appSource.indexOf(
+        'btnSync.addEventListener("click", async () => {',
+    );
+    const handlerEnd = appSource.indexOf(
+        "// Auto-Arrange Layout Button",
+        handlerStart,
+    );
+    const syncHandler = appSource.slice(handlerStart, handlerEnd);
+    assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+    const guardIndex = syncHandler.indexOf("if (!requireEditorAction()) return;");
+    assert.ok(guardIndex >= 0, "the sync click handler has an editor guard");
+    for (const sideEffect of [
+        "confirm(",
+        "btnSync.disabled = true",
+        'authenticatedFetch("/api/sync-microsoft"',
+    ]) {
+        assert.ok(
+            guardIndex < syncHandler.indexOf(sideEffect),
+            `the editor guard runs before ${sideEffect}`,
+        );
+    }
+});
+
 test("backup import reports success only after every collection write succeeds", () => {
     const importHandler = appSource.slice(
         appSource.indexOf("async function handleImportFileChange"),

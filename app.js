@@ -697,6 +697,11 @@ function updateAuthControls() {
         importButton.hidden = !isAdmin;
         importButton.disabled = !isAdmin;
     }
+    const syncButton = document.getElementById("btn-sync-microsoft");
+    if (syncButton) {
+        syncButton.hidden = !isAdmin;
+        syncButton.disabled = !isAdmin;
+    }
     if (window.lucide) window.lucide.createIcons();
 }
 
@@ -2026,6 +2031,7 @@ function setupEventListeners() {
     const btnSync = document.getElementById("btn-sync-microsoft");
     if (btnSync) {
         btnSync.addEventListener("click", async () => {
+            if (!requireEditorAction()) return;
             if (!confirm("ต้องการซิงค์ข้อมูลพนักงานกับ Microsoft 365 หรือไม่? ข้อมูลการจัดตำแหน่งและการตั้งค่าปัจจุบันอาจถูกแทนที่ด้วยข้อมูลจาก Azure AD")) return;
             
             btnSync.disabled = true;
