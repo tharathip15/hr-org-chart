@@ -510,9 +510,16 @@ let positions = [];
 let collapsedNodes = new Set();
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
+let chartMode = "current";
 let currentScale = 1.0;
 let panX = 0;
 let panY = 0;
+let isSidebarCollapsed = false;
+let isPresentationMode = false;
+let arePresentationControlsCollapsed = false;
+let isLayoutLocked = false;
+
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "hr_org_sidebar_collapsed";
 
 // Dragging state
 let isDragging = false;
@@ -523,10 +530,493 @@ let startY = 0;
 const viewport = document.getElementById("chart-viewport");
 const canvas = document.getElementById("chart-canvas");
 const svgOverlay = document.getElementById("svg-overlay");
+const alignmentGuidesOverlay = document.getElementById("alignment-guides-overlay");
 const treeContainer = document.getElementById("tree-container");
 const EMPLOYEES_API_URL = "/api/employees";
 const POSITIONS_API_URL = "/api/positions";
 const PREFERENCES_API_URL = "/api/preferences";
+const AUTH_STORAGE_KEY = "hr_org_auth_session";
+const SESSION_API_URL = "/api/session";
+const CONFIG_API_URL = "/api/config";
+let authSession = null;
+let hrEnabled = true;
+let appStarted = false;
+let runtimeConfig = { microsoft: { enabled: false, tenantId: "", clientId: "" } };
+
+function applyAuthSession(session) {
+    authSession = session && session.token
+        ? {
+            token: session.token,
+            role: session.role || "Viewer",
+            canEdit: session.canEdit === true
+        }
+        : null;
+    document.body.classList.toggle("role-viewer", !authSession?.canEdit);
+    updateAuthControls();
+    updateLayoutLockUI();
+}
+
+function updateAuthControls() {
+    const button = document.getElementById("btn-admin-login");
+    if (!button) return;
+    const isAdmin = authSession?.canEdit === true;
+    button.innerHTML = isAdmin
+        ? `<i data-lucide="log-out"></i> Sign out Admin`
+        : `<i data-lucide="shield-check"></i> Admin Sign in`;
+    button.title = isAdmin
+        ? "Return to anonymous Viewer mode"
+        : "Sign in with Microsoft as an administrator";
+    refreshDisplayModeIcons();
+}
+
+function persistAuthSession(session) {
+    applyAuthSession(session);
+    try {
+        if (authSession) {
+            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authSession));
+        } else {
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+    } catch (error) {
+        console.warn("Failed to persist authentication session:", error);
+    }
+}
+
+function readStoredAuthSession() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null");
+        if (stored?.token) applyAuthSession(stored);
+    } catch (error) {
+        console.warn("Failed to read authentication session:", error);
+        persistAuthSession(null);
+    }
+}
+
+function showLoginOverlay(message = "") {
+    const overlay = document.getElementById("login-overlay");
+    const error = document.getElementById("login-error-msg");
+    const errorText = error?.querySelector("span");
+    if (error && errorText && message) {
+        errorText.textContent = message;
+        error.style.display = "flex";
+    }
+    overlay?.classList.add("active");
+    document.getElementById("btn-login-sso")?.focus();
+}
+
+function hideLoginOverlay() {
+    document.getElementById("login-overlay")?.classList.remove("active");
+    const error = document.getElementById("login-error-msg");
+    if (error) error.style.display = "none";
+}
+
+async function authenticatedFetch(input, options = {}) {
+    const headers = new Headers(options.headers || {});
+    if (authSession?.token) headers.set("Authorization", `Bearer ${authSession.token}`);
+    const response = await fetch(input, { ...options, headers });
+    if (response.status === 401 && input !== SESSION_API_URL) {
+        persistAuthSession(null);
+        hideLoginOverlay();
+        showNotification("Admin session expired. You are now viewing as Anonymous Viewer.", "error");
+    }
+    if (response.status === 403) {
+        showNotification("Viewer access is read-only. An HR Admin or Portal Admin is required to edit.", "error");
+    }
+    return response;
+}
+
+async function validateStoredSession() {
+    if (!authSession?.token) return false;
+    try {
+        const response = await fetch(SESSION_API_URL, {
+            headers: { Authorization: `Bearer ${authSession.token}` }
+        });
+        if (!response.ok) {
+            persistAuthSession(null);
+            return false;
+        }
+        const session = await response.json();
+        applyAuthSession({ ...authSession, ...session });
+        persistAuthSession({ ...authSession, ...session });
+        return true;
+    } catch (error) {
+        console.warn("Unable to validate the current session:", error);
+        return false;
+    }
+}
+
+async function loadRuntimeConfig() {
+    try {
+        const response = await fetch(CONFIG_API_URL);
+        if (response.ok) {
+            const config = await response.json();
+            hrEnabled = config.hrEnabled !== false;
+            runtimeConfig = config;
+        }
+    } catch (error) {
+        console.warn("Runtime configuration unavailable; HR module remains enabled.", error);
+    }
+}
+
+function clearMicrosoftCallbackUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("code");
+    url.searchParams.delete("state");
+    url.searchParams.delete("error");
+    url.searchParams.delete("error_description");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+function beginMicrosoftSignIn() {
+    beginMicrosoftSignInAsync().catch(error => {
+        console.error("Microsoft sign-in setup failed:", error);
+        showLoginOverlay("Microsoft sign-in could not be started. Please try again.");
+    });
+}
+
+function toBase64Url(bytes) {
+    let binary = "";
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function createPkceChallenge(codeVerifier) {
+    const data = new TextEncoder().encode(codeVerifier);
+    const digest = await window.crypto.subtle.digest("SHA-256", data);
+    return toBase64Url(new Uint8Array(digest));
+}
+
+async function beginMicrosoftSignInAsync({ prompt = "", silent = false } = {}) {
+    const microsoft = runtimeConfig.microsoft || {};
+    if (!microsoft.enabled || !microsoft.tenantId || !microsoft.clientId) {
+        showLoginOverlay("Microsoft sign-in is not configured for this environment.");
+        return;
+    }
+
+    const state = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const nonce = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const verifierBytes = window.crypto.getRandomValues(new Uint8Array(32));
+    const codeVerifier = toBase64Url(verifierBytes);
+    const codeChallenge = await createPkceChallenge(codeVerifier);
+    try {
+        sessionStorage.setItem("hr_org_microsoft_state", JSON.stringify({ state, nonce, codeVerifier, silent }));
+    } catch (error) {
+        console.warn("Unable to persist Microsoft sign-in state:", error);
+    }
+
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const authorizeUrl = new URL(`https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/authorize`);
+    const authorizeParams = {
+        client_id: microsoft.clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        response_mode: "query",
+        scope: "openid profile email",
+        state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256"
+    };
+    if (prompt) authorizeParams.prompt = prompt;
+    authorizeUrl.search = new URLSearchParams(authorizeParams).toString();
+    window.location.assign(authorizeUrl.toString());
+}
+
+async function processMicrosoftCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const returnedState = params.get("state");
+    const error = params.get("error_description") || params.get("error");
+    if (!code && !error) return false;
+
+    let expectedState = "";
+    let expectedNonce = "";
+    let codeVerifier = "";
+    let silent = false;
+    try {
+        const storedState = JSON.parse(sessionStorage.getItem("hr_org_microsoft_state") || "null");
+        expectedState = storedState?.state || "";
+        expectedNonce = storedState?.nonce || "";
+        codeVerifier = storedState?.codeVerifier || "";
+        silent = storedState?.silent === true;
+        sessionStorage.removeItem("hr_org_microsoft_state");
+    } catch (storageError) {
+        console.warn("Unable to read Microsoft sign-in state:", storageError);
+    }
+    clearMicrosoftCallbackUrl();
+
+    if (error) {
+        if (silent) {
+            hideLoginOverlay();
+            return true;
+        }
+        showLoginOverlay(`Microsoft sign-in failed: ${error}`);
+        return true;
+    }
+    if (!code || !expectedState || !expectedNonce || !codeVerifier || returnedState !== expectedState) {
+        showLoginOverlay("Microsoft sign-in could not be verified. Please try again.");
+        return true;
+    }
+
+    try {
+        const microsoft = runtimeConfig.microsoft || {};
+        const redirectUri = `${window.location.origin}${window.location.pathname}`;
+        const tokenResponse = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+                client_id: microsoft.clientId,
+                code,
+                code_verifier: codeVerifier,
+                redirect_uri: redirectUri,
+                grant_type: "authorization_code",
+                scope: "openid profile email"
+            })
+        });
+        const tokenResult = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenResult.id_token) {
+            throw new Error(tokenResult.error_description || tokenResult.error || "Microsoft token exchange failed");
+        }
+
+        const response = await fetch("/api/login-sso", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                idToken: tokenResult.id_token,
+                nonce: expectedNonce
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "Microsoft sign-in failed");
+
+        if (result.canEdit === true && result.token) {
+            persistAuthSession(result);
+            hideLoginOverlay();
+        } else {
+            persistAuthSession(null);
+            if (silent) {
+                hideLoginOverlay();
+                return true;
+            }
+            const receivedRoles = Array.isArray(result.identityRoles) && result.identityRoles.length > 0
+                ? result.identityRoles.join(", ")
+                : "no application role";
+            showLoginOverlay(`Microsoft sign-in succeeded, but this account is Viewer. Received: ${receivedRoles}. Required: PFIG.HR.Admin or PFIG.Portal.Admin.`);
+        }
+    } catch (errorValue) {
+        persistAuthSession(null);
+        showLoginOverlay(errorValue.message || "Microsoft sign-in failed");
+    }
+    return true;
+}
+
+function setupAuthListeners() {
+    document.getElementById("btn-login-sso")?.addEventListener("click", beginMicrosoftSignIn);
+    document.getElementById("btn-continue-viewer")?.addEventListener("click", hideLoginOverlay);
+    document.getElementById("btn-admin-login")?.addEventListener("click", () => {
+        if (authSession?.canEdit) {
+            persistAuthSession(null);
+            hideLoginOverlay();
+            showNotification("Signed out. You are viewing as Anonymous Viewer.", "success");
+            return;
+        }
+        showLoginOverlay();
+    });
+}
+
+async function startApplication() {
+    if (appStarted) return;
+    await loadRuntimeConfig();
+    if (!hrEnabled) {
+        hideLoader();
+        showLoginOverlay("The HR Org Chart module is currently disabled.");
+        return;
+    }
+    const callbackHandled = await processMicrosoftCallback();
+    if (!authSession) readStoredAuthSession();
+    if (authSession) {
+        const isValidSession = await validateStoredSession();
+        if (!isValidSession) persistAuthSession(null);
+    }
+    if (!authSession) applyAuthSession({ role: "Viewer", canEdit: false });
+    if (
+        !callbackHandled
+        && !authSession
+        && runtimeConfig.microsoft?.enabled
+        && runtimeConfig.microsoft?.tenantId
+        && runtimeConfig.microsoft?.clientId
+        && new URL(window.location.href).searchParams.get("pfig_sso") === "1"
+    ) {
+        await beginMicrosoftSignInAsync({ prompt: "none", silent: true });
+        return;
+    }
+    if (!document.getElementById("login-overlay")?.classList.contains("active")) {
+        hideLoginOverlay();
+    }
+    appStarted = true;
+    await init();
+}
+
+function refreshDisplayModeIcons() {
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function updateSidebarControl() {
+    const appContainer = document.getElementById("app-container");
+    const button = document.getElementById("btn-toggle-sidebar");
+    if (!appContainer || !button) return;
+
+    appContainer.classList.toggle("sidebar-collapsed", isSidebarCollapsed);
+    button.setAttribute("aria-expanded", String(!isSidebarCollapsed));
+    button.title = isSidebarCollapsed ? "Show sidebar" : "Hide sidebar";
+    button.innerHTML = `
+        <i data-lucide="${isSidebarCollapsed ? "panel-left-open" : "panel-left-close"}"></i>
+        <span>${isSidebarCollapsed ? "Show sidebar" : "Hide sidebar"}</span>
+    `;
+    refreshDisplayModeIcons();
+}
+
+function setSidebarCollapsed(collapsed, { persist = true, refit = true } = {}) {
+    isSidebarCollapsed = Boolean(collapsed);
+    updateSidebarControl();
+
+    if (persist) {
+        try {
+            localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
+        } catch (error) {
+            console.warn("Failed to save sidebar state:", error);
+        }
+    }
+
+    if (refit) {
+        setTimeout(() => {
+            drawConnections();
+            fitToScreen();
+        }, 300);
+    }
+}
+
+function restoreWorkspaceDisplayState() {
+    let shouldCollapseSidebar = false;
+    try {
+        shouldCollapseSidebar = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true";
+    } catch (error) {
+        console.warn("Failed to load sidebar state:", error);
+    }
+    setSidebarCollapsed(shouldCollapseSidebar, { persist: false, refit: false });
+}
+
+function updatePresentationControl() {
+    const button = document.getElementById("btn-presentation");
+    const controlsToggle = document.getElementById("btn-toggle-presentation-controls");
+    document.body.classList.toggle("presentation-mode", isPresentationMode);
+    document.body.classList.toggle("presentation-controls-collapsed", isPresentationMode && arePresentationControlsCollapsed);
+    if (controlsToggle) {
+        const isCollapsed = isPresentationMode && arePresentationControlsCollapsed;
+        controlsToggle.setAttribute("aria-expanded", String(!isCollapsed));
+        controlsToggle.setAttribute("aria-label", isCollapsed ? "Show presentation controls" : "Hide presentation controls");
+        controlsToggle.title = isCollapsed ? "Show presentation controls" : "Hide presentation controls";
+        controlsToggle.innerHTML = `<i data-lucide="${isCollapsed ? "chevron-down" : "chevron-up"}"></i>`;
+    }
+    if (!button) return;
+
+    button.setAttribute("aria-pressed", String(isPresentationMode));
+    button.title = isPresentationMode ? "Exit presentation mode" : "Start presentation mode";
+    button.innerHTML = isPresentationMode
+        ? `<i data-lucide="x"></i><span>Exit Presentation</span><kbd>Esc</kbd>`
+        : `<i data-lucide="presentation"></i><span>Presentation</span><kbd>P</kbd>`;
+    refreshDisplayModeIcons();
+}
+
+function setPresentationMode(enabled, { syncFullscreen = true } = {}) {
+    isPresentationMode = Boolean(enabled);
+    if (!isPresentationMode) arePresentationControlsCollapsed = false;
+    updatePresentationControl();
+
+    if (syncFullscreen) {
+        if (isPresentationMode && !document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(() => {
+                // CSS presentation mode remains available when browser fullscreen is blocked.
+            });
+        } else if (!isPresentationMode && document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(() => {});
+        }
+    }
+
+    setTimeout(() => {
+        drawConnections();
+        fitToScreen();
+    }, 220);
+}
+
+function isViewerMode() {
+    return document.body.classList.contains("role-viewer");
+}
+
+function isLayoutEditingBlocked() {
+    return isLayoutLocked || isViewerMode();
+}
+
+function updateLayoutLockUI() {
+    const button = document.getElementById("btn-layout-lock");
+    const banner = document.getElementById("canvas-lock-banner");
+    const autoLayoutButton = document.getElementById("btn-auto-layout");
+    const viewer = isViewerMode();
+
+    document.body.classList.toggle("layout-locked", isLayoutLocked);
+    if (banner) banner.setAttribute("aria-hidden", String(!isLayoutLocked));
+
+    if (button) {
+        const actionLabel = isLayoutLocked ? "Unlock Layout" : "Lock Layout";
+        button.disabled = viewer;
+        button.classList.toggle("is-locked", isLayoutLocked);
+        button.setAttribute("aria-pressed", String(isLayoutLocked));
+        button.setAttribute("aria-label", viewer ? (isLayoutLocked ? "Layout locked" : "Layout unlocked") : actionLabel);
+        button.title = viewer
+            ? `Only editors can ${isLayoutLocked ? "unlock" : "lock"} the shared layout`
+            : `${actionLabel} editing`;
+        button.innerHTML = `<i data-lucide="${isLayoutLocked ? "lock" : "lock-open"}"></i>`;
+    }
+
+    if (autoLayoutButton) {
+        autoLayoutButton.disabled = isLayoutEditingBlocked();
+        autoLayoutButton.title = isLayoutEditingBlocked()
+            ? "Unlock the layout to restore saved positions"
+            : "Restore Latest Saved Layout";
+    }
+
+    if (typeof updateAnnotationToolbarButtons === "function") {
+        updateAnnotationToolbarButtons();
+    }
+    refreshDisplayModeIcons();
+}
+
+async function toggleLayoutLock() {
+    if (isViewerMode()) {
+        showNotification("Only editors can change the shared layout lock.", "error");
+        return;
+    }
+    const previousValue = isLayoutLocked;
+    isLayoutLocked = !isLayoutLocked;
+    updateLayoutLockUI();
+    renderAnnotations();
+
+    const saved = await savePreferences();
+    if (!saved) {
+        isLayoutLocked = previousValue;
+        updateLayoutLockUI();
+        renderAnnotations();
+        showNotification("Could not update the shared layout lock.", "error");
+        return;
+    }
+
+    showNotification(
+        isLayoutLocked
+            ? "Layout locked. Cards and annotations can no longer be moved."
+            : "Layout unlocked. Editing is available again.",
+        "success"
+    );
+}
 const PHOTO_MAX_SIZE = 256;
 const PHOTO_QUALITY = 0.82;
 
@@ -672,7 +1162,7 @@ async function compressAllEmployeePhotos() {
 // Load data from the server database. LocalStorage is only a fallback for file:// previews.
 async function loadData() {
     try {
-        const response = await fetch(EMPLOYEES_API_URL);
+        const response = await authenticatedFetch(EMPLOYEES_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -717,7 +1207,7 @@ async function saveData() {
     saveLocalBackup();
 
     try {
-        const response = await fetch(EMPLOYEES_API_URL, {
+        const response = await authenticatedFetch(EMPLOYEES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(employees)
@@ -772,6 +1262,9 @@ function normalizePosition(position, fallbackId) {
     let isManual = false;
     let manualLayouts = normalizeManualLayouts(position?.manualLayouts);
     let notesText = (position?.notes || "").trim();
+    let status = PositionLifecycle.normalizeStatus(position?.status);
+    let effectiveDate = PositionLifecycle.normalizeDate(position?.effectiveDate);
+    let statusReason = String(position?.statusReason || "").trim();
 
     // Check if notes contains layout style JSON
     if (notesText.startsWith("{") && notesText.endsWith("}")) {
@@ -783,6 +1276,9 @@ function normalizePosition(position, fallbackId) {
                 ...manualLayouts,
                 ...normalizeManualLayouts(parsed.manualLayouts)
             };
+            status = PositionLifecycle.normalizeStatus(parsed.status ?? status);
+            effectiveDate = PositionLifecycle.normalizeDate(parsed.effectiveDate ?? effectiveDate);
+            statusReason = String(parsed.statusReason ?? statusReason).trim();
             notesText = parsed.text || "";
         } catch (e) {
             // Not valid JSON, keep as is
@@ -800,6 +1296,9 @@ function normalizePosition(position, fallbackId) {
         layoutStyle,
         isManual: isManual || (position?.isManual === true),
         manualLayouts,
+        status,
+        effectiveDate,
+        statusReason,
         notes: notesText
     };
 }
@@ -862,7 +1361,7 @@ function saveLocalPositionsBackup() {
 
 async function loadPositions() {
     try {
-        const response = await fetch(POSITIONS_API_URL);
+        const response = await authenticatedFetch(POSITIONS_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -885,6 +1384,7 @@ async function loadPositions() {
                     // 1. Try to find a vacant position that matches the employee's role and department
                     const matchedVacant = positions.find(p => 
                         p.employeeId === null && 
+                        PositionLifecycle.normalizeStatus(p.status) === "active" &&
                         p.title.toLowerCase().trim() === employee.role.toLowerCase().trim() && 
                         p.department.toLowerCase().trim() === employee.department.toLowerCase().trim()
                     );
@@ -905,6 +1405,9 @@ async function loadPositions() {
                             employeeId: employee.id,
                             x: positionAutoPos.x,
                             y: positionAutoPos.y,
+                            status: "active",
+                            effectiveDate: "",
+                            statusReason: "",
                             notes: ""
                         });
                         assignedEmployeeIds.add(employee.id);
@@ -957,12 +1460,15 @@ async function savePositions() {
             layoutStyle: p.layoutStyle || "horizontal",
             isManual: !!p.isManual,
             manualLayouts: p.manualLayouts || {},
+            status: PositionLifecycle.normalizeStatus(p.status),
+            effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
+            statusReason: p.statusReason || "",
             text: p.notes || ""
         })
     }));
 
     try {
-        const response = await fetch(POSITIONS_API_URL, {
+        const response = await authenticatedFetch(POSITIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -991,19 +1497,22 @@ function sanitizeCollapsedNodeIds(value) {
 
 function applyPreferences(preferences) {
     collapsedNodes = new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIds));
+    isLayoutLocked = preferences?.layoutLocked === true;
+    updateLayoutLockUI();
 }
 
 function getPreferencesPayload() {
     return {
         collapsedNodeIds: [...collapsedNodes]
             .filter(id => Number.isInteger(id))
-            .sort((a, b) => a - b)
+            .sort((a, b) => a - b),
+        layoutLocked: isLayoutLocked
     };
 }
 
 async function loadPreferences() {
     try {
-        const response = await fetch(PREFERENCES_API_URL);
+        const response = await authenticatedFetch(PREFERENCES_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -1037,7 +1546,7 @@ async function savePreferences() {
     }
 
     try {
-        const response = await fetch(PREFERENCES_API_URL, {
+        const response = await authenticatedFetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(preferences)
@@ -1234,6 +1743,55 @@ function resizeImageFile(file) {
 
 // Set up UI and canvas event listeners
 function setupEventListeners() {
+    const layoutLockButton = document.getElementById("btn-layout-lock");
+    if (layoutLockButton) {
+        layoutLockButton.addEventListener("click", toggleLayoutLock);
+    }
+
+    const sidebarToggleButton = document.getElementById("btn-toggle-sidebar");
+    if (sidebarToggleButton) {
+        sidebarToggleButton.addEventListener("click", () => {
+            setSidebarCollapsed(!isSidebarCollapsed);
+        });
+    }
+
+    const presentationButton = document.getElementById("btn-presentation");
+    if (presentationButton) {
+        presentationButton.addEventListener("click", () => {
+            setPresentationMode(!isPresentationMode);
+        });
+    }
+
+    const presentationControlsToggle = document.getElementById("btn-toggle-presentation-controls");
+    if (presentationControlsToggle) {
+        presentationControlsToggle.addEventListener("click", () => {
+            if (!isPresentationMode) return;
+            arePresentationControlsCollapsed = !arePresentationControlsCollapsed;
+            updatePresentationControl();
+        });
+    }
+
+    document.addEventListener("fullscreenchange", () => {
+        if (!document.fullscreenElement && isPresentationMode) {
+            setPresentationMode(false, { syncFullscreen: false });
+        }
+    });
+
+    document.addEventListener("keydown", event => {
+        const target = event.target;
+        const isEditing = target instanceof HTMLElement && (
+            target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+        );
+        if (isEditing) return;
+
+        if (event.key.toLowerCase() === "p" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            setPresentationMode(!isPresentationMode);
+        } else if (event.key === "Escape" && isPresentationMode) {
+            setPresentationMode(false);
+        }
+    });
+
     // Zoom in/out buttons
     document.getElementById("zoom-in").addEventListener("click", () => zoom(1.2));
     document.getElementById("zoom-out").addEventListener("click", () => zoom(0.8));
@@ -1331,9 +1889,7 @@ function setupEventListeners() {
             employees: employees,
             positions: positions,
             annotations: annotations,
-            preferences: {
-                collapsedNodeIds: [...collapsedNodes]
-            }
+            preferences: getPreferencesPayload()
         };
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
         const downloadAnchor = document.createElement('a');
@@ -1366,7 +1922,7 @@ function setupEventListeners() {
                         employees = parsed.employees;
                         positions = parsed.positions;
                         annotations = parsed.annotations || [];
-                        collapsedNodes = new Set(sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || []));
+                        applyPreferences(parsed.preferences || {});
                         selectedDept = "All";
                         
                         // Compress photos on import to prevent 413 Payload Too Large
@@ -1427,7 +1983,7 @@ function setupEventListeners() {
             if (window.lucide) window.lucide.createIcons();
             
             try {
-                const response = await fetch("/api/sync-microsoft", { method: "POST" });
+                const response = await authenticatedFetch("/api/sync-microsoft", { method: "POST" });
                 const result = await response.json();
                 
                 if (response.ok && result.ok) {
@@ -1453,6 +2009,7 @@ function setupEventListeners() {
     const btnAutoLayout = document.getElementById("btn-auto-layout");
     if (btnAutoLayout) {
         btnAutoLayout.addEventListener("click", async () => {
+            if (isLayoutEditingBlocked()) return;
             if (!confirm("ต้องการคืนค่าตำแหน่งล่าสุดที่บันทึกไว้หรือไม่?")) return;
 
             btnAutoLayout.disabled = true;
@@ -1467,6 +2024,10 @@ function setupEventListeners() {
             }
         });
     }
+
+    document.querySelectorAll("[data-chart-mode]").forEach(button => {
+        button.addEventListener("click", () => setChartMode(button.dataset.chartMode));
+    });
 
     // Add Employee Button
     document.getElementById("btn-add-employee").addEventListener("click", () => {
@@ -1573,6 +2134,14 @@ function setupEventListeners() {
     // Close buttons for drawers/modals
     document.getElementById("close-detail-drawer").addEventListener("click", closeDetailDrawer);
     document.getElementById("detail-drawer-overlay").addEventListener("click", closeDetailDrawer);
+    document.getElementById("close-position-lifecycle-drawer").addEventListener("click", closePositionLifecycleDrawer);
+    document.getElementById("position-lifecycle-drawer-overlay").addEventListener("click", closePositionLifecycleDrawer);
+    document.querySelectorAll("[data-position-status]").forEach(button => {
+        button.addEventListener("click", () => setPositionLifecycleStatus(button.dataset.positionStatus));
+    });
+    document.getElementById("position-lifecycle-reason").addEventListener("input", updatePositionLifecycleReasonCount);
+    document.getElementById("btn-close-position").addEventListener("click", preparePositionClosure);
+    document.getElementById("btn-save-position-lifecycle").addEventListener("click", savePositionLifecycle);
     document.getElementById("close-form-modal").addEventListener("click", closeFormModal);
     document.getElementById("btn-cancel-form").addEventListener("click", closeFormModal);
     document.getElementById("form-modal-overlay").addEventListener("click", closeFormModal);
@@ -1581,12 +2150,25 @@ function setupEventListeners() {
     document.getElementById("close-employee-management-modal").addEventListener("click", closeEmployeeManagementModal);
     document.getElementById("employee-management-modal-overlay").addEventListener("click", closeEmployeeManagementModal);
     document.getElementById("vacant-positions-card").addEventListener("click", openVacancyReportModal);
+    document.getElementById("acting-positions-card").addEventListener("click", openActingReportModal);
     document.getElementById("close-vacancy-report-modal").addEventListener("click", closeVacancyReportModal);
     document.getElementById("vacancy-report-modal-overlay").addEventListener("click", closeVacancyReportModal);
+    document.getElementById("close-acting-report-modal").addEventListener("click", closeActingReportModal);
+    document.getElementById("acting-report-modal-overlay").addEventListener("click", closeActingReportModal);
     document.addEventListener("keydown", event => {
         const modal = document.getElementById("vacancy-report-modal");
         if (event.key === "Escape" && modal?.classList.contains("active")) {
             closeVacancyReportModal();
+        }
+
+        const actingModal = document.getElementById("acting-report-modal");
+        if (event.key === "Escape" && actingModal?.classList.contains("active")) {
+            closeActingReportModal();
+        }
+
+        const lifecycleDrawer = document.getElementById("position-lifecycle-drawer");
+        if (event.key === "Escape" && lifecycleDrawer?.classList.contains("active")) {
+            closePositionLifecycleDrawer();
         }
     });
     document.getElementById("employee-search").addEventListener("input", (event) => renderEmployeeList(event.target.value));
@@ -1786,7 +2368,83 @@ function clearHighlights() {
 
 /* Rendering Methods */
 
+function getChartModePositions() {
+    return PositionLifecycle.filterVisiblePositions(positions, chartMode);
+}
+
+function getChartDisplayPositions() {
+    const modePositions = getChartModePositions();
+    return selectedDept === "All"
+        ? modePositions
+        : modePositions.filter(position => position.department === selectedDept);
+}
+
+function getVisibleReportingManagerId(position, visiblePositionIds) {
+    return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
+}
+
+function getCollapsedHiddenPositionIds(modePositions) {
+    const hiddenIds = new Set();
+    if (!isOverallView()) return hiddenIds;
+
+    const visibleIds = new Set(modePositions.map(position => position.id));
+    const reportsMap = new Map();
+    modePositions.forEach(position => {
+        const managerId = getVisibleReportingManagerId(position, visibleIds);
+        if (managerId === null) return;
+        if (!reportsMap.has(managerId)) reportsMap.set(managerId, []);
+        reportsMap.get(managerId).push(position.id);
+    });
+
+    function markHidden(managerId, visited = new Set()) {
+        if (visited.has(managerId)) return;
+        visited.add(managerId);
+        (reportsMap.get(managerId) || []).forEach(childId => {
+            hiddenIds.add(childId);
+            markHidden(childId, visited);
+        });
+    }
+
+    collapsedNodes.forEach(positionId => {
+        if (visibleIds.has(positionId)) markHidden(positionId);
+    });
+    return hiddenIds;
+}
+
+function updateChartModeControls() {
+    document.querySelectorAll("[data-chart-mode]").forEach(button => {
+        const isActive = button.dataset.chartMode === chartMode;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+    });
+
+    const title = document.getElementById("current-view-title");
+    const desc = document.getElementById("current-view-desc");
+    title.innerText = selectedDept === "All" ? "Overall Organization" : `${selectedDept} Department`;
+    if (selectedDept === "All") {
+        desc.innerText = chartMode === "future"
+            ? "Showing approved active and future positions"
+            : "Showing the organization as of today";
+    } else {
+        desc.innerText = chartMode === "future"
+            ? `Showing the planned ${selectedDept} hierarchy`
+            : `Showing the current ${selectedDept} hierarchy`;
+    }
+}
+
+function setChartMode(mode) {
+    const nextMode = mode === "future" ? "future" : "current";
+    if (chartMode === nextMode) return;
+
+    chartMode = nextMode;
+    selectedAnnotationId = null;
+    closePositionLifecycleDrawer();
+    renderAll();
+    requestAnimationFrame(fitToScreen);
+}
+
 function renderAll() {
+    updateChartModeControls();
     renderSidebarStats();
     renderSidebarDeptList();
     renderTree();
@@ -1801,7 +2459,13 @@ function renderAll() {
         renderVacancyReport();
     }
 
+    const actingReportModal = document.getElementById("acting-report-modal");
+    if (actingReportModal?.classList.contains("active")) {
+        renderActingReport();
+    }
+
     updateCollapseControls();
+    updateLayoutLockUI();
 }
 
 function updateCollapseControls() {
@@ -1821,6 +2485,10 @@ function renderSidebarStats() {
     document.getElementById("total-positions").innerText = summary.positionCount;
     document.getElementById("total-acting-positions").innerText = summary.actingCount;
     document.getElementById("total-vacant-positions").innerText = summary.vacantCount;
+    document.getElementById("acting-positions-card").setAttribute(
+        "aria-label",
+        `View acting positions (${summary.actingCount})`
+    );
     document.getElementById("vacant-positions-card").setAttribute(
         "aria-label",
         `View vacant positions (${summary.vacantCount})`
@@ -1831,21 +2499,9 @@ function renderSidebarStats() {
 function renderSidebarDeptList() {
     const list = document.getElementById("sidebar-dept-list");
 
-    // Keep the department list aligned with planned positions, but count employee records.
-    const deptCounts = {};
-    positions.forEach(position => {
-        const department = getPositionDepartment(position);
-        if (!Object.prototype.hasOwnProperty.call(deptCounts, department)) {
-            deptCounts[department] = 0;
-        }
-    });
-
-    employees.forEach(employee => {
-        const department = String(employee?.department || "Unassigned").trim() || "Unassigned";
-        if (Object.prototype.hasOwnProperty.call(deptCounts, department)) {
-            deptCounts[department] += 1;
-        }
-    });
+    // Department navigation filters planned seats, so its badges count positions too.
+    const visibleChartPositions = getChartModePositions();
+    const deptCounts = EmployeeDirectory.getDepartmentCounts(visibleChartPositions);
     
     // Sort departments alphabetically
     const sortedDepts = Object.keys(deptCounts).sort();
@@ -1853,7 +2509,7 @@ function renderSidebarDeptList() {
     let html = `
         <li class="department-item ${selectedDept === "All" ? "active" : ""}" data-dept="All">
             <span>Overall View</span>
-            <span class="department-count">${employees.length}</span>
+            <span class="department-count">${visibleChartPositions.length}</span>
         </li>
     `;
     
@@ -1878,19 +2534,8 @@ function renderSidebarDeptList() {
 // Filter or focus by department
 function selectDepartment(dept) {
     selectedDept = dept;
-    
-    // Update heading labels
-    const title = document.getElementById("current-view-title");
-    const desc = document.getElementById("current-view-desc");
-    
-    if (dept === "All") {
-        title.innerText = "Overall Organization";
-        desc.innerText = "Showing complete hierarchy";
-    } else {
-        title.innerText = `${dept} Department`;
-        desc.innerText = `Focusing on ${dept} department hierarchy`;
-    }
-    
+
+    updateChartModeControls();
     renderSidebarDeptList();
     updateCollapseControls();
     renderTree();
@@ -2060,7 +2705,7 @@ function wireTreeInteractions() {
             if (employee) {
                 showEmployeeDetails(employee.id);
             } else if (position) {
-                openPositionsModal(id);
+                openPositionLifecycleDrawer(id);
             }
 
             document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
@@ -2089,8 +2734,7 @@ function getAssignedEmployee(position) {
 }
 
 function isActingPosition(position) {
-    const employee = getAssignedEmployee(position);
-    return Boolean(employee && !OrgHierarchy.isPrimaryEmployeePosition(positions, position.id, employee.id));
+    return EmployeeDirectory.isActingPosition(position);
 }
 
 function getPositionTitle(position) {
@@ -2099,6 +2743,10 @@ function getPositionTitle(position) {
 
 function getPositionDepartment(position) {
     return (position?.department || "Unassigned").trim();
+}
+
+function getPositionNote(position) {
+    return String(position?.notes || "").trim();
 }
 
 function getManualPositionCoordinates(position) {
@@ -2124,42 +2772,36 @@ function getPositionCardHTML(position) {
     const employee = getAssignedEmployee(position);
     const title = getPositionTitle(position);
     const department = getPositionDepartment(position);
-    const deptClass = getDeptClass(department);
-    const hasReports = positions.some(child => child.managerId === position.id);
+    const note = getPositionNote(position);
+    const displayPositions = getChartDisplayPositions();
+    const displayPositionIds = new Set(displayPositions.map(candidate => candidate.id));
+    const hasReports = displayPositions.some(child => getVisibleReportingManagerId(child, displayPositionIds) === position.id);
     const isCollapsed = collapsedNodes.has(position.id);
     const isVacant = !employee;
-    const isActing = isActingPosition(position);
-    const dualRoleCount = employee ? positions.filter(candidate => candidate.employeeId === employee.id).length : 0;
-    const isDualRole = dualRoleCount > 1;
-    const showDualRole = isDualRole && !isActing;
-    const occupancyStatus = isVacant ? "Open Position" : (isActing ? "" : "Filled");
+    const isFuturePlan = chartMode === "future" && PositionLifecycle.normalizeStatus(position.status) === "future";
     const displayName = employee ? employee.name : "VACANT";
     const avatarHTML = employee
         ? getAvatarHTML({ ...employee, department }, "avatar")
-        : `<div class="avatar position-vacant-avatar" style="background-color: #f43f5e;">OP</div>`;
+        : `<div class="avatar position-vacant-avatar ${isFuturePlan ? "is-future" : ""}">${isFuturePlan ? "FP" : "OP"}</div>`;
     const { x, y } = getRenderedPositionCoordinates(position);
 
     let cardHtml = `
-        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"}" data-id="${position.id}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
+        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"} ${isFuturePlan ? "position-card-future" : ""}" data-id="${position.id}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
+            ${isFuturePlan ? `<span class="position-future-marker" title="Future position${position.effectiveDate ? ` effective ${escapeHTML(position.effectiveDate)}` : ""}"><i data-lucide="calendar-days"></i></span>` : ""}
             <div class="card-header">
                 ${avatarHTML}
                 <div class="card-title-group">
                     <div class="card-name" style="display: flex; align-items: center; gap: 4px; overflow: visible;">
                         <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(displayName)}</span>
-                        ${showDualRole ? `<span class="dual-role-badge" title="Multiple assigned positions" style="font-size: 8px; color: var(--accent-primary); background-color: var(--accent-light); padding: 2px 4px; border-radius: 4px; font-weight: 700; text-transform: uppercase; line-height: 1; flex-shrink: 0;">Dual</span>` : ""}
                     </div>
                     <div class="card-role">${escapeHTML(title)}</div>
                 </div>
             </div>
-            <div class="position-card-footer">
-                <div class="card-department-badge ${deptClass}">
-                    ${escapeHTML(department)}
+            ${note ? `
+                <div class="position-card-footer">
+                    <span class="position-note-badge" title="${escapeHTML(note)}">${escapeHTML(note)}</span>
                 </div>
-                <div class="position-status-group">
-                    ${occupancyStatus ? `<span class="${isVacant ? "position-status-vacant" : "position-status-filled"}">${occupancyStatus}</span>` : ""}
-                    ${isActing ? `<span class="position-status-acting">Acting</span>` : ""}
-                </div>
-            </div>
+            ` : ""}
     `;
 
     if (hasReports && isOverallView()) {
@@ -2177,26 +2819,15 @@ function getPositionCardHTML(position) {
 function renderTree() {
     treeContainer.innerHTML = "";
     svgOverlay.innerHTML = "";
+    clearAlignmentGuides();
 
-    // 1. Calculate hidden IDs due to collapsed nodes
-    const hiddenIds = new Set();
-    function markHidden(mgrId, visited) {
-        if (!visited) visited = new Set();
-        if (visited.has(mgrId)) return;
-        visited.add(mgrId);
-        positions.forEach(position => {
-            if (position.managerId === mgrId) {
-                hiddenIds.add(position.id);
-                markHidden(position.id, visited);
-            }
-        });
-    }
-    if (isOverallView()) {
-        collapsedNodes.forEach(id => markHidden(id));
-    }
+    // 1. Calculate hidden IDs using the hierarchy visible in this chart mode.
+    // A hidden Future/Closed manager does not hide its active descendants.
+    const modePositions = getChartModePositions();
+    const hiddenIds = getCollapsedHiddenPositionIds(modePositions);
 
     // 2. Filter visible positions (and by department if selectedDept is not "All")
-    let visiblePositions = positions.filter(position => !hiddenIds.has(position.id));
+    let visiblePositions = modePositions.filter(position => !hiddenIds.has(position.id));
     if (selectedDept !== "All") {
         visiblePositions = visiblePositions.filter(position => position.department === selectedDept);
     }
@@ -2221,17 +2852,20 @@ function drawConnections() {
     visibleCards.forEach(card => visibleCardIds.add(parseInt(card.dataset.id)));
 
     positions.forEach(position => {
-        if (!visibleCardIds.has(position.id) || !position.managerId || !visibleCardIds.has(position.managerId)) return;
+        if (!visibleCardIds.has(position.id)) return;
+
+        const visibleManagerId = getVisibleReportingManagerId(position, visibleCardIds);
+        if (visibleManagerId === null) return;
 
         const childCard = document.querySelector(`.node-card[data-id="${position.id}"]`);
-        const parentCard = document.querySelector(`.node-card[data-id="${position.managerId}"]`);
+        const parentCard = document.querySelector(`.node-card[data-id="${visibleManagerId}"]`);
         if (!childCard || !parentCard) return;
 
         const pLocal = getCanvasLocalRect(parentCard);
         const cLocal = getCanvasLocalRect(childCard);
         if (pLocal.width === 0 || pLocal.height === 0 || cLocal.width === 0 || cLocal.height === 0) return;
 
-        const parentPosition = positions.find(p => p.id === position.managerId);
+        const parentPosition = positions.find(p => p.id === visibleManagerId);
         const isVerticalLayout = parentPosition && parentPosition.layoutStyle === "vertical";
 
         let pathParts;
@@ -2253,7 +2887,7 @@ function drawConnections() {
             const endY = cLocal.y;
 
             // Calculate the minimum Y among all visible children of this manager to keep the horizontal bus line at the sibling level
-            const childrenPositions = positions.filter(p => p.managerId === position.managerId && visibleCardIds.has(p.id));
+            const childrenPositions = positions.filter(p => visibleCardIds.has(p.id) && getVisibleReportingManagerId(p, visibleCardIds) === visibleManagerId);
             const childYs = childrenPositions.map(p => {
                 const card = document.querySelector(`.node-card[data-id="${p.id}"]`);
                 if (card) {
@@ -2277,8 +2911,10 @@ function drawConnections() {
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", pathParts.join(" "));
         path.setAttribute("class", "connection-path");
+        path.dataset.parentId = String(visibleManagerId);
+        path.dataset.childId = String(position.id);
         
-        if (highlightedConnections.has(`${position.managerId}-${position.id}`)) {
+        if (highlightedConnections.has(`${visibleManagerId}-${position.id}`) || highlightedConnections.has(`${position.managerId}-${position.id}`)) {
             path.setAttribute("class", "connection-path highlighted");
         }
         svgOverlay.appendChild(path);
@@ -2287,23 +2923,9 @@ function drawConnections() {
 
 function calculateInitialCoordinates() {
     // 1. Determine which positions are currently visible (active)
-    const hiddenIds = new Set();
-    function markHidden(mgrId, visited) {
-        if (!visited) visited = new Set();
-        if (visited.has(mgrId)) return;
-        visited.add(mgrId);
-        positions.forEach(pos => {
-            if (pos.managerId === mgrId) {
-                hiddenIds.add(pos.id);
-                markHidden(pos.id, visited);
-            }
-        });
-    }
-    if (isOverallView()) {
-        collapsedNodes.forEach(id => markHidden(id));
-    }
-    
-    let activePositions = positions.filter(pos => !hiddenIds.has(pos.id));
+    const modePositions = getChartModePositions();
+    const hiddenIds = getCollapsedHiddenPositionIds(modePositions);
+    let activePositions = modePositions.filter(pos => !hiddenIds.has(pos.id));
     if (false && selectedDept !== "All") {
         activePositions = activePositions.filter(pos => pos.department === selectedDept);
     }
@@ -2318,7 +2940,11 @@ function calculateInitialCoordinates() {
     const activeIds = new Set(activePositions.map(p => p.id));
     
     // 2. Find roots within active positions
-    const roots = activePositions.filter(position => position.managerId === null || !activeIds.has(position.managerId));
+    const effectiveManagerIds = new Map(activePositions.map(position => [
+        position.id,
+        getVisibleReportingManagerId(position, activeIds)
+    ]));
+    const roots = activePositions.filter(position => effectiveManagerIds.get(position.id) === null);
     
     // Dynamic spacing based on active positions count
     const totalCount = activePositions.length;
@@ -2342,9 +2968,10 @@ function calculateInitialCoordinates() {
 
     const reportsMap = {};
     activePositions.forEach(position => {
-        if (position.managerId !== null && activeIds.has(position.managerId)) {
-            if (!reportsMap[position.managerId]) reportsMap[position.managerId] = [];
-            reportsMap[position.managerId].push(position);
+        const managerId = effectiveManagerIds.get(position.id);
+        if (managerId !== null) {
+            if (!reportsMap[managerId]) reportsMap[managerId] = [];
+            reportsMap[managerId].push(position);
         }
     });
     for (let key in reportsMap) {
@@ -2493,6 +3120,11 @@ function updateCanvasBounds() {
     svgOverlay.setAttribute("width", width);
     svgOverlay.setAttribute("height", height);
     svgOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    if (alignmentGuidesOverlay) {
+        alignmentGuidesOverlay.setAttribute("width", width);
+        alignmentGuidesOverlay.setAttribute("height", height);
+        alignmentGuidesOverlay.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    }
 }
 
 
@@ -2677,6 +3309,145 @@ function closeDetailDrawer() {
     document.getElementById("detail-drawer-overlay").classList.remove("active");
     document.getElementById("detail-drawer").classList.remove("active");
     document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
+}
+
+function getSelectedPositionLifecycleStatus() {
+    return document.querySelector(".position-status-btn.active")?.dataset.positionStatus || "active";
+}
+
+function updatePositionLifecycleReasonCount() {
+    const reason = document.getElementById("position-lifecycle-reason");
+    document.getElementById("position-lifecycle-reason-count").innerText = `${reason.value.length}/250`;
+}
+
+function updatePositionLifecycleGuidance(status) {
+    const guidance = document.getElementById("position-lifecycle-guidance-text");
+    const messages = {
+        active: "Active positions appear in both Current Chart and Future Chart.",
+        future: "Future positions appear in Future Chart now and move into Current Chart on the effective date.",
+        closed: "Closed positions remain in history for audit and reporting. They disappear from Current Chart after the effective date."
+    };
+    guidance.innerText = messages[PositionLifecycle.normalizeStatus(status)];
+}
+
+function setPositionLifecycleStatus(status, force = false) {
+    const normalizedStatus = PositionLifecycle.normalizeStatus(status);
+    const positionId = parseInt(document.getElementById("position-lifecycle-id").value, 10);
+    const position = positions.find(candidate => candidate.id === positionId);
+
+    if (!force && normalizedStatus === "closed" && getAssignedEmployee(position)) {
+        showNotification("Unassign the employee before closing this position", "error");
+        return false;
+    }
+
+    document.querySelectorAll("[data-position-status]").forEach(button => {
+        const isActive = button.dataset.positionStatus === normalizedStatus;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-pressed", String(isActive));
+    });
+    updatePositionLifecycleGuidance(normalizedStatus);
+    return true;
+}
+
+function openPositionLifecycleDrawer(positionId) {
+    const position = positions.find(candidate => candidate.id === positionId);
+    if (!position) return;
+
+    const employee = getAssignedEmployee(position);
+    const manager = position.managerId !== null
+        ? positions.find(candidate => candidate.id === position.managerId)
+        : null;
+    const isViewer = document.body.classList.contains("role-viewer");
+
+    document.getElementById("position-lifecycle-id").value = position.id;
+    document.getElementById("position-lifecycle-title").innerText = getPositionTitle(position);
+    document.getElementById("position-lifecycle-department").innerText = getPositionDepartment(position);
+    document.getElementById("position-lifecycle-reporting").innerText = manager
+        ? `Reports to ${getPositionTitle(manager)}`
+        : "Top level position";
+    document.getElementById("position-lifecycle-assignment").innerText = employee?.name || "Vacant";
+    document.getElementById("position-lifecycle-date").value = PositionLifecycle.normalizeDate(position.effectiveDate);
+    document.getElementById("position-lifecycle-reason").value = position.statusReason || "";
+    setPositionLifecycleStatus(position.status, true);
+    updatePositionLifecycleReasonCount();
+
+    document.querySelectorAll("[data-position-status]").forEach(button => {
+        const closingFilledPosition = button.dataset.positionStatus === "closed" && Boolean(employee);
+        button.disabled = isViewer || closingFilledPosition;
+        if (closingFilledPosition) button.title = "Unassign the employee before closing this position";
+    });
+    document.getElementById("position-lifecycle-date").disabled = isViewer;
+    document.getElementById("position-lifecycle-reason").disabled = isViewer;
+    document.getElementById("btn-close-position").disabled = Boolean(employee) || isViewer;
+    document.getElementById("btn-close-position").title = employee
+        ? "Unassign the employee before closing this position"
+        : "Mark this vacant position as closed";
+
+    closeDetailDrawer();
+    document.getElementById("position-lifecycle-drawer-overlay").classList.add("active");
+    document.getElementById("position-lifecycle-drawer").classList.add("active");
+    document.getElementById("position-lifecycle-drawer").setAttribute("aria-hidden", "false");
+    document.getElementById("position-lifecycle-drawer").removeAttribute("inert");
+    if (window.lucide) window.lucide.createIcons();
+    document.getElementById("close-position-lifecycle-drawer").focus();
+}
+
+function closePositionLifecycleDrawer() {
+    document.getElementById("position-lifecycle-drawer-overlay").classList.remove("active");
+    document.getElementById("position-lifecycle-drawer").classList.remove("active");
+    document.getElementById("position-lifecycle-drawer").setAttribute("aria-hidden", "true");
+    document.getElementById("position-lifecycle-drawer").setAttribute("inert", "");
+    document.querySelectorAll(".node-card").forEach(card => card.classList.remove("selected-focus"));
+}
+
+function preparePositionClosure() {
+    const positionId = parseInt(document.getElementById("position-lifecycle-id").value, 10);
+    const position = positions.find(candidate => candidate.id === positionId);
+    if (!position) return;
+    if (getAssignedEmployee(position)) {
+        showNotification("Unassign the employee before closing this position", "error");
+        return;
+    }
+
+    if (!setPositionLifecycleStatus("closed")) return;
+    const dateInput = document.getElementById("position-lifecycle-date");
+    dateInput.value = PositionLifecycle.getTodayKey();
+    document.getElementById("position-lifecycle-reason").focus();
+}
+
+async function savePositionLifecycle() {
+    if (document.body.classList.contains("role-viewer")) return;
+
+    const positionId = parseInt(document.getElementById("position-lifecycle-id").value, 10);
+    const position = positions.find(candidate => candidate.id === positionId);
+    if (!position) return;
+
+    const status = getSelectedPositionLifecycleStatus();
+    const effectiveDate = PositionLifecycle.normalizeDate(document.getElementById("position-lifecycle-date").value);
+    const statusReason = document.getElementById("position-lifecycle-reason").value.trim();
+
+    if (status === "closed" && getAssignedEmployee(position)) {
+        showNotification("Unassign the employee before closing this position", "error");
+        return;
+    }
+    if (status !== "active" && !effectiveDate) {
+        showNotification("Choose an effective date for this lifecycle change", "error");
+        document.getElementById("position-lifecycle-date").focus();
+        return;
+    }
+
+    position.status = status;
+    position.effectiveDate = status === "active" ? "" : effectiveDate;
+    position.statusReason = statusReason;
+
+    const saved = await savePositions();
+    if (!saved) return;
+
+    closePositionLifecycleDrawer();
+    renderAll();
+    if (document.getElementById("position-modal")?.classList.contains("active")) renderPositionsList();
+    requestAnimationFrame(fitToScreen);
+    showNotification(`${getPositionTitle(position)} is now ${PositionLifecycle.getStatusLabel(status).toLowerCase()}`, "success");
 }
 
 /* Modals: CRUD Form management */
@@ -2891,7 +3662,7 @@ function getAutoPositionForPosition(managerId, excludePositionId = null) {
 
 function populatePositionFormLookups(excludePositionId = null) {
     const positionDeptList = document.getElementById("position-department-list");
-    const managerList = document.getElementById("form-position-manager");
+    const managerList = document.getElementById("position-manager-list");
     const employeeList = document.getElementById("position-employee-list");
 
     const departments = [...new Set([
@@ -2901,10 +3672,10 @@ function populatePositionFormLookups(excludePositionId = null) {
     positionDeptList.innerHTML = departments.map(department => `<option value="${escapeHTML(department)}">`).join("");
 
     const blockedIds = excludePositionId ? new Set([excludePositionId, ...getDescendantPositionIds(excludePositionId)]) : new Set();
-    managerList.innerHTML = `<option value="">Top Level</option>` + positions
+    managerList.innerHTML = `<option value="Top Level">` + positions
         .filter(position => !blockedIds.has(position.id))
         .sort((a, b) => getPositionTitle(a).localeCompare(getPositionTitle(b)))
-        .map(position => `<option value="${position.id}">${escapeHTML(getPositionOptionLabel(position))}</option>`)
+        .map(position => `<option value="${escapeHTML(getPositionOptionLabel(position))}">`)
         .join("");
 
     employeeList.innerHTML = employees
@@ -2918,6 +3689,9 @@ function resetPositionForm(editId = null) {
     const form = document.getElementById("position-form");
     form.reset();
     document.getElementById("form-position-id").value = "";
+    document.getElementById("form-position-status").value = "active";
+    document.getElementById("form-position-effective-date").value = "";
+    document.getElementById("form-position-status-reason").value = "";
     document.getElementById("btn-delete-position").disabled = true;
     populatePositionFormLookups(editId);
 
@@ -2931,9 +3705,13 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-department").value = getPositionDepartment(position);
     document.getElementById("form-position-layout").value = position.layoutStyle || "horizontal";
     document.getElementById("form-position-notes").value = position.notes || "";
+    document.getElementById("form-position-status").value = PositionLifecycle.normalizeStatus(position.status);
+    document.getElementById("form-position-effective-date").value = PositionLifecycle.normalizeDate(position.effectiveDate);
+    document.getElementById("form-position-status-reason").value = position.statusReason || "";
     document.getElementById("btn-delete-position").disabled = false;
 
-    document.getElementById("form-position-manager").value = position.managerId === null ? "" : String(position.managerId);
+    const manager = positions.find(candidate => candidate.id === position.managerId);
+    document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
 
     const employee = getAssignedEmployee(position);
     document.getElementById("form-position-employee").value = employee ? getEmployeeOptionLabel(employee) : "";
@@ -2999,6 +3777,52 @@ function closeVacancyReportModal() {
     document.getElementById("vacancy-report-modal-overlay").classList.remove("active");
     document.getElementById("vacancy-report-modal").classList.remove("active");
     document.getElementById("vacant-positions-card").focus();
+}
+
+function getActingPositions() {
+    return positions.filter(position => isActingPosition(position));
+}
+
+function renderActingReport() {
+    const actingPositions = getActingPositions();
+    const title = document.getElementById("acting-report-title");
+    const list = document.getElementById("acting-report-list");
+    title.innerText = `Acting positions (${actingPositions.length})`;
+
+    if (actingPositions.length === 0) {
+        list.innerHTML = `<div class="vacancy-report-empty">No acting positions</div>`;
+        return;
+    }
+
+    list.innerHTML = actingPositions.map(position => {
+        const employee = getAssignedEmployee(position);
+        return `
+            <div class="acting-report-card">
+                <div class="acting-report-card-main">
+                    <strong>${escapeHTML(getPositionTitle(position))}</strong>
+                    <small>${escapeHTML(getPositionDepartment(position))}</small>
+                </div>
+                <div class="acting-report-card-person">
+                    <span>${escapeHTML(employee?.name || "Unknown employee")}</span>
+                    <small>Acting</small>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function openActingReportModal() {
+    document.getElementById("acting-report-modal-overlay").classList.add("active");
+    document.getElementById("acting-report-modal").classList.add("active");
+    renderActingReport();
+    if (window.lucide) window.lucide.createIcons();
+    document.getElementById("close-acting-report-modal").focus();
+}
+
+function closeActingReportModal() {
+    document.getElementById("acting-report-modal-overlay").classList.remove("active");
+    document.getElementById("acting-report-modal").classList.remove("active");
+    document.getElementById("acting-positions-card").focus();
 }
 
 function getEmployeeListSearchText(employee) {
@@ -3069,7 +3893,7 @@ function renderPositionsList() {
     const filterInput = document.getElementById("position-list-search-input");
     const query = filterInput ? filterInput.value.toLowerCase().trim() : "";
 
-    const vacantCount = positions.filter(position => !getAssignedEmployee(position)).length;
+    const vacantCount = positions.filter(position => PositionLifecycle.normalizeStatus(position.status) !== "closed" && !getAssignedEmployee(position)).length;
 
     if (positions.length === 0) {
         summary.innerText = `0 positions - 0 vacant`;
@@ -3084,7 +3908,8 @@ function renderPositionsList() {
             const title = getPositionTitle(position).toLowerCase();
             const dept = getPositionDepartment(position).toLowerCase();
             const empName = employee ? employee.name.toLowerCase() : "";
-            return title.includes(query) || dept.includes(query) || empName.includes(query);
+            const lifecycleText = `${PositionLifecycle.getStatusLabel(position.status)} ${position.effectiveDate || ""} ${position.statusReason || ""}`.toLowerCase();
+            return title.includes(query) || dept.includes(query) || empName.includes(query) || lifecycleText.includes(query);
         });
     }
 
@@ -3110,8 +3935,10 @@ function renderPositionsList() {
             : null;
         const childCount = positions.filter(candidate => candidate.managerId === position.id).length;
         const childCountLabel = `${childCount} direct report${childCount === 1 ? "" : "s"}`;
+        const lifecycleLabel = PositionLifecycle.getStatusLabel(position.status);
+        const lifecycleDate = PositionLifecycle.normalizeDate(position.effectiveDate);
         return `
-            <button type="button" class="position-row ${employee ? "" : "is-vacant"}" data-id="${position.id}">
+            <button type="button" class="position-row ${employee ? "" : "is-vacant"} is-${PositionLifecycle.normalizeStatus(position.status)}" data-id="${position.id}">
                 <span class="position-row-main">
                     <strong>${escapeHTML(getPositionTitle(position))}</strong>
                     <small>${escapeHTML(getPositionDepartment(position))}</small>
@@ -3120,6 +3947,7 @@ function renderPositionsList() {
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
                     ${isActing ? `<small class="position-row-acting">Acting</small>` : ""}
                     <small>${manager ? `Reports to ${escapeHTML(getPositionTitle(manager))}` : "Top level"} - ${childCountLabel}</small>
+                    <small class="position-row-lifecycle">${escapeHTML(lifecycleLabel)}${lifecycleDate ? ` - ${escapeHTML(lifecycleDate)}` : ""}</small>
                 </span>
             </button>
         `;
@@ -3142,6 +3970,9 @@ async function handlePositionFormSubmit(e) {
     const managerInputVal = document.getElementById("form-position-manager").value.trim();
     const employeeInputVal = document.getElementById("form-position-employee").value.trim();
     const layoutStyle = document.getElementById("form-position-layout").value;
+    const status = PositionLifecycle.normalizeStatus(document.getElementById("form-position-status").value);
+    const effectiveDate = PositionLifecycle.normalizeDate(document.getElementById("form-position-effective-date").value);
+    const statusReason = document.getElementById("form-position-status-reason").value.trim();
     const notes = document.getElementById("form-position-notes").value.trim();
 
     if (!title || !department) {
@@ -3151,7 +3982,7 @@ async function handlePositionFormSubmit(e) {
 
     const currentId = idVal ? parseInt(idVal, 10) : null;
     let managerId = null;
-    if (managerInputVal) {
+    if (managerInputVal && managerInputVal.toLowerCase() !== "top level") {
         const manager = findPositionFromInput(managerInputVal);
         if (!manager) {
             showNotification("Reports To position is not valid", "error");
@@ -3183,6 +4014,16 @@ async function handlePositionFormSubmit(e) {
         employeeId = employee.id;
     }
 
+    if (status === "closed" && employeeId !== null) {
+        showNotification("Unassign the employee before closing this position", "error");
+        return;
+    }
+    if (status !== "active" && !effectiveDate) {
+        showNotification("Choose an effective date for this lifecycle change", "error");
+        document.getElementById("form-position-effective-date").focus();
+        return;
+    }
+
     if (currentId) {
         const index = positions.findIndex(position => position.id === currentId);
         if (index === -1) return;
@@ -3196,6 +4037,9 @@ async function handlePositionFormSubmit(e) {
             managerId,
             employeeId,
             layoutStyle,
+            status,
+            effectiveDate: status === "active" ? "" : effectiveDate,
+            statusReason,
             notes
         };
 
@@ -3226,6 +4070,9 @@ async function handlePositionFormSubmit(e) {
             managerId,
             employeeId,
             layoutStyle,
+            status,
+            effectiveDate: status === "active" ? "" : effectiveDate,
+            statusReason,
             x: autoPos.x,
             y: autoPos.y,
             notes
@@ -3624,7 +4471,102 @@ function getDragStartCoordinates(position, card) {
         : null;
 }
 
+function clearAlignmentGuides() {
+    if (alignmentGuidesOverlay) alignmentGuidesOverlay.innerHTML = "";
+}
+
+function createAlignmentSvgElement(name, attributes = {}) {
+    const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+    return element;
+}
+
+function renderAlignmentMeasurementSegment(measurement, y, label) {
+    if (!alignmentGuidesOverlay || !measurement || measurement.to - measurement.from < 12) return;
+
+    const group = createAlignmentSvgElement("g", { class: "alignment-measurement" });
+    group.appendChild(createAlignmentSvgElement("line", {
+        x1: measurement.from,
+        y1: y,
+        x2: measurement.to,
+        y2: y,
+        class: "alignment-measure-line"
+    }));
+    [measurement.from, measurement.to].forEach(x => {
+        group.appendChild(createAlignmentSvgElement("line", {
+            x1: x,
+            y1: y - 5,
+            x2: x,
+            y2: y + 5,
+            class: "alignment-measure-tick"
+        }));
+    });
+
+    const centerX = (measurement.from + measurement.to) / 2;
+    const labelWidth = Math.max(48, label.length * 7 + 16);
+    group.appendChild(createAlignmentSvgElement("rect", {
+        x: centerX - labelWidth / 2,
+        y: y - 24,
+        width: labelWidth,
+        height: 18,
+        rx: 9,
+        class: "alignment-measure-label-bg"
+    }));
+    const text = createAlignmentSvgElement("text", {
+        x: centerX,
+        y: y - 15,
+        class: "alignment-measure-label"
+    });
+    text.textContent = label;
+    group.appendChild(text);
+    alignmentGuidesOverlay.appendChild(group);
+}
+
+function renderAlignmentGuides(snapResult) {
+    clearAlignmentGuides();
+    if (!alignmentGuidesOverlay || !snapResult) return;
+
+    updateCanvasBounds();
+    (snapResult.guides || []).forEach(guide => {
+        const attributes = guide.axis === "x"
+            ? { x1: guide.value, y1: guide.start, x2: guide.value, y2: guide.end }
+            : { x1: guide.start, y1: guide.value, x2: guide.end, y2: guide.value };
+        alignmentGuidesOverlay.appendChild(createAlignmentSvgElement("line", {
+            ...attributes,
+            class: `alignment-guide-line${guide.kind === "grid" ? " is-grid" : ""}`
+        }));
+    });
+
+    const measurement = snapResult.measurement;
+    if (!measurement) return;
+    if (measurement.left) {
+        renderAlignmentMeasurementSegment(
+            measurement.left,
+            measurement.y,
+            measurement.equal ? `Equal ${measurement.left.gap}px` : `${measurement.left.gap}px`
+        );
+    }
+    if (measurement.right) {
+        renderAlignmentMeasurementSegment(measurement.right, measurement.y, `${measurement.right.gap}px`);
+    }
+}
+
+function getAlignmentCandidateBounds(position) {
+    const card = document.querySelector(`.node-card.absolute-card[data-id="${position.id}"]`);
+    if (!card || card.offsetWidth === 0 || card.offsetHeight === 0) return null;
+
+    const coordinates = getRenderedPositionCoordinates(position);
+    return {
+        id: position.id,
+        x: coordinates.x,
+        y: coordinates.y,
+        width: card.offsetWidth,
+        height: card.offsetHeight
+    };
+}
+
 function handleCardDragStart(e) {
+    if (isLayoutEditingBlocked()) return;
     if (e.button !== 0) return;
     if (e.target.closest(".node-toggle-btn") || e.target.closest("input") || e.target.closest("a")) return;
     
@@ -3655,6 +4597,7 @@ function handleCardDragStart(e) {
 
     activeDragCard = card;
     card.classList.add("dragging");
+    clearAlignmentGuides();
 
     const rootStart = dragStartCoordinates.get(draggedId);
     dragStartClientX = e.clientX;
@@ -3670,6 +4613,7 @@ function handleCardDragStart(e) {
 }
 
 function handleCardDragMove(e) {
+    if (isLayoutEditingBlocked()) return;
     if (!activeDragCard || draggedId === null) return;
 
     if (!cardDragMoved) {
@@ -3692,28 +4636,23 @@ function handleCardDragMove(e) {
     const newY = Math.round(e.clientY / currentScale - dragGrabOffsetY);
 
     // Magnetic snap (ดูดล็อคเป็นขั้นๆ) - Snap to other positions' X and Y if within 25px
-    const SNAP_THRESHOLD = 25;
-    let snappedX = newX;
-    let snappedY = newY;
-
     const draggedIds = new Set(draggedPositionIds);
-    const otherPositions = positions.filter(p => !draggedIds.has(p.id) && p.renderX !== undefined && p.renderY !== undefined);
-
-    // Check X snap
-    for (let other of otherPositions) {
-        if (Math.abs(newX - other.renderX) < SNAP_THRESHOLD) {
-            snappedX = other.renderX;
-            break;
-        }
-    }
-
-    // Check Y snap
-    for (let other of otherPositions) {
-        if (Math.abs(newY - other.renderY) < SNAP_THRESHOLD) {
-            snappedY = other.renderY;
-            break;
-        }
-    }
+    const alignmentCandidates = positions
+        .filter(position => !draggedIds.has(position.id))
+        .map(getAlignmentCandidateBounds)
+        .filter(Boolean);
+    const snapResult = AlignmentAssist.findSnap({
+        bounds: {
+            id: draggedId,
+            x: newX,
+            y: newY,
+            width: activeDragCard.offsetWidth || 240,
+            height: activeDragCard.offsetHeight || 120
+        },
+        candidates: alignmentCandidates
+    });
+    const snappedX = snapResult.x;
+    const snappedY = snapResult.y;
 
     const deltaX = snappedX - rootStart.x;
     const deltaY = snappedY - rootStart.y;
@@ -3733,6 +4672,7 @@ function handleCardDragMove(e) {
         }
     });
 
+    renderAlignmentGuides(snapResult);
     drawConnections();
 }
 
@@ -3741,7 +4681,7 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointerup", handleCardDragEnd);
     window.removeEventListener("pointercancel", handleCardDragEnd);
     
-    const shouldPersist = Boolean(activeDragCard && draggedId !== null && cardDragMoved);
+    const shouldPersist = !isLayoutEditingBlocked() && Boolean(activeDragCard && draggedId !== null && cardDragMoved);
     if (activeDragCard && draggedId !== null) {
         if (shouldPersist) {
             suppressCardClickId = draggedId;
@@ -3776,6 +4716,7 @@ function handleCardDragEnd(e) {
     
     draggedPositionIds = [];
     dragStartCoordinates.clear();
+    clearAlignmentGuides();
     draggedId = null;
     dragStartClientX = 0;
     dragStartClientY = 0;
@@ -3787,6 +4728,7 @@ function handleCardDragEnd(e) {
 }
 
 async function restoreSavedLayout() {
+    if (isLayoutEditingBlocked()) return;
     await latestPositionsSavePromise;
     await loadPositions();
     renderTree();
@@ -3795,7 +4737,9 @@ async function restoreSavedLayout() {
 // Run application on load
 // Run application on load
 window.addEventListener("DOMContentLoaded", () => {
-    init();
+    restoreWorkspaceDisplayState();
+    setupAuthListeners();
+    startApplication();
     
     const treeResizeObserver = new ResizeObserver(() => {
         drawConnections();
@@ -3819,6 +4763,31 @@ const ANNOTATION_MAX_WIDTH = 20000;
 const ANNOTATION_MIN_HEIGHT = 80;
 const ANNOTATION_MAX_HEIGHT = 10000;
 let selectedAnnotationId = null;
+
+function normalizeAnnotationChartMode(value) {
+    return value === "future" ? "future" : "current";
+}
+
+function getAnnotationChartMode(annotation) {
+    return normalizeAnnotationChartMode(annotation?.chartMode);
+}
+
+function normalizeAnnotationsList(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .filter(annotation => annotation && typeof annotation === "object")
+        .map(annotation => ({
+            ...annotation,
+            chartMode: getAnnotationChartMode(annotation)
+        }));
+}
+
+function getVisibleAnnotations() {
+    return annotations.filter(annotation =>
+        (annotation.department || "All") === selectedDept
+        && getAnnotationChartMode(annotation) === chartMode
+    );
+}
 
 function normalizeAnnotationColor(value) {
     const color = String(value || "").trim();
@@ -3875,24 +4844,25 @@ function updateAnnotationStyleControls() {
     const heightInput = document.getElementById("annotation-height");
     const selected = getSelectedAnnotation();
     const hasSelection = Boolean(selected);
+    const editingBlocked = isLayoutEditingBlocked();
 
     if (controls) controls.classList.toggle("has-selection", hasSelection);
     if (colorInput) {
-        colorInput.disabled = !hasSelection;
+        colorInput.disabled = !hasSelection || editingBlocked;
         colorInput.value = selected ? getAnnotationColor(selected) : ANNOTATION_DEFAULT_COLOR;
     }
     if (fontSizeInput) {
-        fontSizeInput.disabled = !selected || selected.type !== "text";
+        fontSizeInput.disabled = !selected || selected.type !== "text" || editingBlocked;
         fontSizeInput.value = selected ? getAnnotationFontSize(selected) : ANNOTATION_DEFAULT_FONT_SIZE;
     }
     if (widthInput) {
-        widthInput.disabled = !selected || selected.type !== "frame";
+        widthInput.disabled = !selected || selected.type !== "frame" || editingBlocked;
         widthInput.value = selected
             ? getAnnotationDimension(selected, "width", 240, ANNOTATION_MIN_WIDTH, ANNOTATION_MAX_WIDTH)
             : 240;
     }
     if (heightInput) {
-        heightInput.disabled = !selected || selected.type !== "frame";
+        heightInput.disabled = !selected || selected.type !== "frame" || editingBlocked;
         heightInput.value = selected
             ? getAnnotationDimension(selected, "height", 160, ANNOTATION_MIN_HEIGHT, ANNOTATION_MAX_HEIGHT)
             : 160;
@@ -3900,6 +4870,7 @@ function updateAnnotationStyleControls() {
 }
 
 function applySelectedAnnotationStyle(changes) {
+    if (isLayoutEditingBlocked()) return;
     const annotation = getSelectedAnnotation();
     if (!annotation) return;
 
@@ -3937,10 +4908,10 @@ function applySelectedAnnotationStyle(changes) {
 
 async function loadAnnotations() {
     try {
-        const response = await fetch(ANNOTATIONS_API_URL);
+        const response = await authenticatedFetch(ANNOTATIONS_API_URL);
         if (response.ok) {
             annotations = await response.json();
-            if (!Array.isArray(annotations)) annotations = [];
+            annotations = normalizeAnnotationsList(annotations);
         }
     } catch (err) {
         console.warn("Failed to load annotations from database, falling back to local storage", err);
@@ -3948,6 +4919,7 @@ async function loadAnnotations() {
         if (local) {
             try {
                 annotations = JSON.parse(local);
+                annotations = normalizeAnnotationsList(annotations);
             } catch (e) {
                 annotations = [];
             }
@@ -3964,7 +4936,7 @@ async function saveAnnotations() {
         console.warn("Failed to write annotations to localStorage:", error);
     }
     try {
-        const response = await fetch(ANNOTATIONS_API_URL, {
+        const response = await authenticatedFetch(ANNOTATIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(annotations)
@@ -3986,6 +4958,7 @@ function pushAnnotationHistory() {
 }
 
 function undoAnnotation() {
+    if (isLayoutEditingBlocked()) return;
     if (annotationHistory.length === 0) return;
     const currentState = JSON.stringify(annotations);
     annotationRedoHistory.push(currentState);
@@ -3998,6 +4971,7 @@ function undoAnnotation() {
 }
 
 function redoAnnotation() {
+    if (isLayoutEditingBlocked()) return;
     if (annotationRedoHistory.length === 0) return;
     const currentState = JSON.stringify(annotations);
     annotationHistory.push(currentState);
@@ -4016,12 +4990,19 @@ function updateAnnotationToolbarButtons() {
     const btnToggleLock = document.getElementById("tool-toggle-lock");
     const selected = getSelectedAnnotation();
     const isLocked = getAnnotationLocked(selected);
+    const editingBlocked = isLayoutEditingBlocked();
+    const btnAddFrame = document.getElementById("tool-add-frame");
+    const btnAddText = document.getElementById("tool-add-text");
+    const btnClear = document.getElementById("tool-clear");
 
-    if (btnUndo) btnUndo.disabled = annotationHistory.length === 0;
-    if (btnRedo) btnRedo.disabled = annotationRedoHistory.length === 0;
-    if (btnDeleteSelected) btnDeleteSelected.disabled = !selected;
+    if (btnAddFrame) btnAddFrame.disabled = editingBlocked;
+    if (btnAddText) btnAddText.disabled = editingBlocked;
+    if (btnClear) btnClear.disabled = editingBlocked;
+    if (btnUndo) btnUndo.disabled = editingBlocked || annotationHistory.length === 0;
+    if (btnRedo) btnRedo.disabled = editingBlocked || annotationRedoHistory.length === 0;
+    if (btnDeleteSelected) btnDeleteSelected.disabled = editingBlocked || !selected;
     if (btnToggleLock) {
-        btnToggleLock.disabled = !selected;
+        btnToggleLock.disabled = editingBlocked || !selected;
         btnToggleLock.title = isLocked ? "Unlock Selected" : "Lock Selected";
         btnToggleLock.setAttribute("aria-pressed", String(isLocked));
         btnToggleLock.innerHTML = '<i data-lucide="' + (isLocked ? "lock-open" : "lock") + '"></i>';
@@ -4044,13 +5025,15 @@ function renderAnnotations() {
     const container = document.getElementById("annotations-container");
     if (!container) return;
 
-    if (selectedAnnotationId && !annotations.some(annotation => annotation.id === selectedAnnotationId)) {
+    const visibleAnnotations = getVisibleAnnotations();
+    const layoutEditingBlocked = isLayoutEditingBlocked();
+    if (selectedAnnotationId && !visibleAnnotations.some(annotation => annotation.id === selectedAnnotationId)) {
         selectedAnnotationId = null;
     }
     
     container.innerHTML = "";
     
-    const filteredAnnots = annotations.filter(annot => (annot.department || "All") === selectedDept);
+    const filteredAnnots = visibleAnnotations;
     filteredAnnots.forEach(annot => {
         if (annot.type === "frame") {
             const el = document.createElement("div");
@@ -4075,8 +5058,9 @@ function renderAnnotations() {
             
             // Edit title
             const titleEl = el.querySelector(".annotation-title");
-            titleEl.contentEditable = String(!getAnnotationLocked(annot));
+            titleEl.contentEditable = String(!layoutEditingBlocked && !getAnnotationLocked(annot));
             titleEl.addEventListener("blur", () => {
+                if (isLayoutEditingBlocked()) return;
                 const text = titleEl.innerText.trim();
                 if (text !== annot.text) {
                     pushAnnotationHistory();
@@ -4092,14 +5076,18 @@ function renderAnnotations() {
             });
             
             // Delete btn
-            el.querySelector(".annotation-delete-btn").addEventListener("click", (e) => {
+            const deleteButton = el.querySelector(".annotation-delete-btn");
+            deleteButton.disabled = layoutEditingBlocked;
+            deleteButton.addEventListener("click", (e) => {
                 e.stopPropagation();
+                if (isLayoutEditingBlocked()) return;
                 deleteAnnotation(annot.id);
             });
             
             // Drag listeners
             el.addEventListener("pointerdown", (e) => {
                 selectAnnotation(annot.id);
+                if (isLayoutEditingBlocked()) return;
                 if (e.target.closest(".annotation-resize-handle") || e.target.closest("[contenteditable='true']") || e.target.closest(".annotation-delete-btn")) return;
                 if (getAnnotationLocked(annot)) return;
                 e.stopPropagation();
@@ -4110,6 +5098,7 @@ function renderAnnotations() {
             el.querySelector(".annotation-resize-handle").addEventListener("pointerdown", (e) => {
                 e.stopPropagation();
                 selectAnnotation(annot.id);
+                if (isLayoutEditingBlocked()) return;
                 if (getAnnotationLocked(annot)) return;
                 startResizeAnnotation(e, annot, el);
             });
@@ -4124,7 +5113,7 @@ function renderAnnotations() {
             
             const txt = document.createElement("div");
             txt.className = "annotation-text";
-            txt.contentEditable = String(!getAnnotationLocked(annot));
+            txt.contentEditable = String(!layoutEditingBlocked && !getAnnotationLocked(annot));
             txt.spellcheck = false;
             txt.innerText = annot.text || "ดับเบิ้ลคลิกแก้ไขข้อความ";
             txt.style.color = getAnnotationColor(annot);
@@ -4134,12 +5123,14 @@ function renderAnnotations() {
             del.className = "annotation-text-delete-btn";
             del.innerHTML = "&times;";
             del.title = "ลบ";
+            del.disabled = layoutEditingBlocked;
             
             wrapper.appendChild(txt);
             wrapper.appendChild(del);
             
             // Edit text
             txt.addEventListener("blur", () => {
+                if (isLayoutEditingBlocked()) return;
                 const text = txt.innerText.trim();
                 if (text !== annot.text) {
                     pushAnnotationHistory();
@@ -4157,12 +5148,14 @@ function renderAnnotations() {
             // Delete btn
             del.addEventListener("click", (e) => {
                 e.stopPropagation();
+                if (isLayoutEditingBlocked()) return;
                 deleteAnnotation(annot.id);
             });
             
             // Drag listeners
             wrapper.addEventListener("pointerdown", (e) => {
                 selectAnnotation(annot.id);
+                if (isLayoutEditingBlocked()) return;
                 if (e.target.closest(".annotation-text-delete-btn")) return;
                 if (e.target === txt && document.activeElement === txt) return; // allow typing selection
                 if (getAnnotationLocked(annot)) return;
@@ -4178,7 +5171,7 @@ function renderAnnotations() {
 }
 
 function startDragAnnotation(e, annot, el) {
-    if (e.button !== 0 || getAnnotationLocked(annot)) return;
+    if (isLayoutEditingBlocked() || e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeDragAnnotation = { annot, el };
     
@@ -4190,6 +5183,7 @@ function startDragAnnotation(e, annot, el) {
 }
 
 function handleDragAnnotationMove(e) {
+    if (isLayoutEditingBlocked()) return;
     if (!activeDragAnnotation) return;
     const { annot, el } = activeDragAnnotation;
     
@@ -4217,7 +5211,7 @@ function handleDragAnnotationEnd(e) {
 }
 
 function startResizeAnnotation(e, annot, el) {
-    if (e.button !== 0 || getAnnotationLocked(annot)) return;
+    if (isLayoutEditingBlocked() || e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeResizeAnnotation = { annot, el };
     
@@ -4231,6 +5225,7 @@ function startResizeAnnotation(e, annot, el) {
 }
 
 function handleResizeAnnotationMove(e) {
+    if (isLayoutEditingBlocked()) return;
     if (!activeResizeAnnotation) return;
     const { annot, el } = activeResizeAnnotation;
     
@@ -4262,6 +5257,7 @@ function handleResizeAnnotationEnd(e) {
 }
 
 function deleteAnnotation(id) {
+    if (isLayoutEditingBlocked()) return;
     pushAnnotationHistory();
     if (selectedAnnotationId === id) selectedAnnotationId = null;
     annotations = annotations.filter(a => a.id !== id);
@@ -4270,11 +5266,13 @@ function deleteAnnotation(id) {
 }
 
 function deleteSelectedAnnotation() {
+    if (isLayoutEditingBlocked()) return;
     if (!selectedAnnotationId) return;
     deleteAnnotation(selectedAnnotationId);
 }
 
 function toggleSelectedAnnotationLock() {
+    if (isLayoutEditingBlocked()) return;
     const annotation = getSelectedAnnotation();
     if (!annotation) return;
 
@@ -4314,6 +5312,7 @@ function setupAnnotationListeners() {
 
     // Toolbar buttons
     document.getElementById("tool-add-frame").addEventListener("click", () => {
+        if (isLayoutEditingBlocked()) return;
         pushAnnotationHistory();
         const id = `annot-${Date.now()}`;
         // Position it centered in current viewport
@@ -4331,7 +5330,8 @@ function setupAnnotationListeners() {
             color: ANNOTATION_DEFAULT_COLOR,
             locked: false,
             text: "กรอบระบุกลุ่มงาน",
-            department: selectedDept
+            department: selectedDept,
+            chartMode
         });
         selectedAnnotationId = id;
         renderAnnotations();
@@ -4339,6 +5339,7 @@ function setupAnnotationListeners() {
     });
     
     document.getElementById("tool-add-text").addEventListener("click", () => {
+        if (isLayoutEditingBlocked()) return;
         pushAnnotationHistory();
         const id = `annot-${Date.now()}`;
         const rect = viewport.getBoundingClientRect();
@@ -4354,7 +5355,8 @@ function setupAnnotationListeners() {
             fontSize: ANNOTATION_DEFAULT_FONT_SIZE,
             locked: false,
             text: "พิมพ์คำอธิบาย...",
-            department: selectedDept
+            department: selectedDept,
+            chartMode
         });
         selectedAnnotationId = id;
         renderAnnotations();
@@ -4367,11 +5369,15 @@ function setupAnnotationListeners() {
     document.getElementById("tool-toggle-lock")?.addEventListener("click", toggleSelectedAnnotationLock);
     
     document.getElementById("tool-clear").addEventListener("click", () => {
-        const currentDeptsAnnots = annotations.filter(annot => (annot.department || "All") === selectedDept);
+        if (isLayoutEditingBlocked()) return;
+        const currentDeptsAnnots = getVisibleAnnotations();
         if (currentDeptsAnnots.length === 0) return;
         if (confirm("คุณแน่ใจหรือไม่ว่าต้องการลบกรอบและข้อความทั้งหมดของหน้าจอนี้?")) {
             pushAnnotationHistory();
-            annotations = annotations.filter(annot => (annot.department || "All") !== selectedDept);
+            annotations = annotations.filter(annot =>
+                (annot.department || "All") !== selectedDept
+                || getAnnotationChartMode(annot) !== chartMode
+            );
             selectedAnnotationId = null;
             renderAnnotations();
             saveAnnotations();

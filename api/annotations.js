@@ -1,10 +1,10 @@
 import { supabase } from "./_helpers/supabase.js";
-import { validateToken } from "./_helpers/auth.js";
+import { validateToken, requireEditor } from "./_helpers/auth.js";
 
 const MAX_BODY_SIZE = 512 * 1024;
 
 export default async function handler(request, response) {
-  if (!validateToken(request)) {
+  if (request.method !== "GET" && !validateToken(request)) {
     response.status(401).json({ ok: false, error: "Unauthorized" });
     return;
   }
@@ -15,6 +15,7 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "PUT") {
+    if (!requireEditor(request, response)) return;
     await handlePut(request, response);
     return;
   }

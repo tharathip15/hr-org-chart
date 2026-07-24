@@ -1,5 +1,5 @@
 import { put } from "@vercel/blob";
-import { validateToken } from "./_helpers/auth.js";
+import { validateToken, requireEditor } from "./_helpers/auth.js";
 
 export const config = {
   api: {
@@ -18,6 +18,8 @@ export default async function handler(request, response) {
     response.status(405).json({ ok: false, error: "Method not allowed" });
     return;
   }
+
+  if (!requireEditor(request, response)) return;
 
   try {
     const filename = request.headers["x-filename"] || `avatar-${Date.now()}.jpg`;

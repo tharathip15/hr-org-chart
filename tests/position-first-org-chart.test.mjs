@@ -22,12 +22,14 @@ test("app has a shared position-first data model", () => {
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
-test("app exposes a login surface before authenticated initialization", () => {
+test("app exposes Microsoft-only admin sign-in with anonymous viewing", () => {
     assert.match(htmlSource, /id="login-overlay"/);
-    assert.match(htmlSource, /id="login-form"/);
-    assert.match(htmlSource, /id="login-password"/);
-    assert.match(htmlSource, /id="btn-login-submit"/);
-    assert.match(serverSource, /if path != "\/api\/login":/);
+    assert.match(htmlSource, /id="btn-login-sso"/);
+    assert.match(htmlSource, /id="btn-continue-viewer"/);
+    assert.doesNotMatch(htmlSource, /id="login-form"/);
+    assert.doesNotMatch(htmlSource, /id="login-password"/);
+    assert.doesNotMatch(htmlSource, /id="btn-login-submit"/);
+    assert.doesNotMatch(serverSource, /\/api\/login/);
 });
 
 test("positions can be managed in a dedicated UI", () => {
@@ -49,23 +51,31 @@ test("org chart renders positions and clearly marks vacant seats", () => {
     assert.match(appSource, /positions\.forEach\(position =>/);
     assert.match(appSource, /position\.managerId/);
     assert.match(cssSource, /\.node-card\.position-card-vacant/);
-    assert.match(cssSource, /\.position-status-vacant/);
 });
 
-test("non-primary assigned positions are rendered as Acting", () => {
-    assert.match(appSource, /function isActingPosition\(position\) \{[\s\S]+OrgHierarchy\.isPrimaryEmployeePosition\(positions, position\.id, employee\.id\)/);
-    assert.match(appSource, /const isActing = isActingPosition\(position\);/);
-    assert.match(appSource, /position-status-acting/);
+test("acting positions are determined from their position notes", () => {
+    assert.match(appSource, /function isActingPosition\(position\) \{[\s\S]+EmployeeDirectory\.isActingPosition\(position\)/);
+    assert.doesNotMatch(appSource, /function isActingPosition\(position\) \{[\s\S]+OrgHierarchy\.isPrimaryEmployeePosition/);
     assert.match(appSource, /position-row-acting/);
-    assert.match(cssSource, /\.position-status-acting/);
     assert.match(cssSource, /\.position-row-acting/);
 });
 
-test("acting position cards hide duplicate and filled labels", () => {
-    assert.match(appSource, /const showDualRole = isDualRole && !isActing;/);
-    assert.match(appSource, /const occupancyStatus = isVacant \? "Open Position" : \(isActing \? "" : "Filled"\);/);
-    assert.match(appSource, /\$\{showDualRole \?/);
-    assert.match(appSource, /\$\{occupancyStatus \?/);
+test("position cards show only a note badge when a note is present", () => {
+    const cardRendererSource = appSource.slice(
+        appSource.indexOf("function getPositionCardHTML"),
+        appSource.indexOf("function renderTree")
+    );
+
+    assert.match(appSource, /function getPositionNote\(position\)/);
+    assert.match(cardRendererSource, /const note = getPositionNote\(position\);/);
+    assert.match(cardRendererSource, /position-note-badge/);
+    assert.match(cardRendererSource, /\$\{note \?/);
+    assert.match(cardRendererSource, /title="\$\{escapeHTML\(note\)\}">\$\{escapeHTML\(note\)\}/);
+    assert.doesNotMatch(cardRendererSource, /card-department-badge/);
+    assert.doesNotMatch(cardRendererSource, /dual-role-badge/);
+    assert.doesNotMatch(cardRendererSource, /position-status-(vacant|filled|acting)/);
+    assert.doesNotMatch(cssSource, /\.position-status-(vacant|filled|acting)/);
+    assert.match(cssSource, /\.position-note-badge/);
 });
 
 test("local and deployed APIs expose positions", () => {
@@ -90,12 +100,14 @@ test("position edits use shared parent validation", () => {
     assert.match(appSource, /OrgHierarchy\.validatePositionParent\(/);
 });
 
-test("position parent control uses stable position IDs instead of free-form text", () => {
-    assert.match(htmlSource, /<select[^>]+id="form-position-manager"/);
-    assert.doesNotMatch(htmlSource, /id="form-position-manager"[^>]+list="position-manager-list"/);
+test("position parent control supports search while retaining stable position IDs", () => {
+    assert.match(htmlSource, /<input[^>]+id="form-position-manager"[^>]+list="position-manager-list"/);
+    assert.match(htmlSource, /<datalist id="position-manager-list"><\/datalist>/);
     assert.match(htmlSource, /Top Level/);
-    assert.match(appSource, /managerList\.innerHTML = [\s\S]*positions/);
-    assert.match(appSource, /value="\$\{position\.id\}"/);
+    assert.match(appSource, /document\.getElementById\("position-manager-list"\)/);
+    assert.match(appSource, /getPositionOptionLabel\(position\)/);
+    assert.match(appSource, /findPositionFromInput\(managerInputVal\)/);
+    assert.match(appSource, /managerId = manager\.id;/);
 });
 
 test("position list exposes parent and child counts", () => {

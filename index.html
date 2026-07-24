@@ -54,21 +54,11 @@
                 <i data-lucide="lock-keyhole"></i>
             </div>
             <h2 id="login-title">Sign in</h2>
-            <p>Enter your access password to open the organization chart.</p>
-            <form id="login-form" class="login-form">
-                <div class="form-group">
-                    <label for="login-password">Password</label>
-                    <input type="password" id="login-password" autocomplete="current-password" required placeholder="Enter password">
-                </div>
-                <div id="login-error-msg" class="login-error" role="alert" style="display: none;">
-                    <i data-lucide="alert-circle"></i>
-                    <span>Incorrect password. Please try again.</span>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block" id="btn-login-submit">
-                    <i data-lucide="log-in"></i> Sign In
-                </button>
-            </form>
-            <div class="login-divider"><span>or</span></div>
+            <p>Anyone can view the organization chart. Administrators sign in with Microsoft to edit.</p>
+            <div id="login-error-msg" class="login-error" role="alert" style="display: none;">
+                <i data-lucide="alert-circle"></i>
+                <span>Microsoft sign-in failed. Please try again.</span>
+            </div>
             <button type="button" class="btn btn-secondary btn-block" id="btn-login-sso">
                 <svg viewBox="0 0 23 23" width="16" height="16" fill="currentColor" aria-hidden="true">
                     <path d="M0 0h11v11H0z" fill="#f25022"></path>
@@ -78,12 +68,15 @@
                 </svg>
                 Sign in with Microsoft
             </button>
+            <button type="button" class="btn btn-secondary btn-block" id="btn-continue-viewer">
+                Continue as Viewer
+            </button>
         </div>
     </div>
 
-    <div class="app-container">
+    <div class="app-container" id="app-container">
         <!-- Sidebar -->
-        <aside class="sidebar">
+        <aside class="sidebar" id="app-sidebar">
             <div class="sidebar-header">
                 <div class="logo">
                     <i data-lucide="network" class="logo-icon"></i>
@@ -102,14 +95,13 @@
                         <span class="stat-value" id="total-positions">0</span>
                         <span class="stat-label">Positions</span>
                     </div>
-                    <div class="stat-card stat-card-acting">
+                    <button type="button" class="stat-card stat-card-action stat-card-acting" id="acting-positions-card" aria-controls="acting-report-modal" aria-haspopup="dialog" aria-label="View acting positions (0)">
                         <span class="stat-value" id="total-acting-positions">0</span>
-                        <span class="stat-label">Acting positions</span>
-                    </div>
+                        <span class="stat-label">Acting</span>
+                    </button>
                     <button type="button" class="stat-card stat-card-action stat-card-vacant" id="vacant-positions-card" aria-controls="vacancy-report-modal" aria-haspopup="dialog" aria-label="View vacant positions (0)">
                         <span class="stat-value" id="total-vacant-positions">0</span>
-                        <span class="stat-label">Vacant positions</span>
-                        <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+                        <span class="stat-label">Vacant</span>
                     </button>
                 </div>
             </div>
@@ -137,6 +129,11 @@
         <main class="main-content">
             <!-- Header -->
             <header class="top-header">
+                <button type="button" class="btn btn-secondary sidebar-toggle-btn" id="btn-toggle-sidebar" aria-controls="app-sidebar" aria-expanded="true" title="Hide sidebar">
+                    <i data-lucide="panel-left-close"></i>
+                    <span>Hide sidebar</span>
+                </button>
+
                 <div class="search-container">
                     <i data-lucide="search" class="search-icon"></i>
                     <input type="text" id="search-input" placeholder="Search employees by name, role or department...">
@@ -159,6 +156,9 @@
                     <button class="btn btn-secondary" id="btn-sync-microsoft" style="margin-right: 8px;">
                         <i data-lucide="refresh-cw"></i> Sync Microsoft 365
                     </button>
+                    <button class="btn btn-secondary" id="btn-admin-login" style="margin-right: 8px;">
+                        <i data-lucide="shield-check"></i> Admin Sign in
+                    </button>
                     <button class="btn btn-primary" id="btn-add-employee">
                         <i data-lucide="user-plus"></i> Add Employee
                     </button>
@@ -166,20 +166,41 @@
             </header>
 
             <!-- Chart Control Bar -->
-            <div class="chart-controls">
-                <div class="view-info">
-                    <h2 id="current-view-title">Overall Organization</h2>
-                    <span id="current-view-desc">Showing complete hierarchy</span>
+            <div class="chart-controls" id="chart-controls">
+                <div class="chart-view-heading">
+                    <div class="view-info">
+                        <h2 id="current-view-title">Overall Organization</h2>
+                        <span id="current-view-desc">Showing the organization as of today</span>
+                    </div>
+                    <div class="chart-mode-switch" role="group" aria-label="Organization chart timeframe">
+                        <button type="button" class="chart-mode-btn active" data-chart-mode="current" aria-pressed="true">Current Chart</button>
+                        <button type="button" class="chart-mode-btn" data-chart-mode="future" aria-pressed="false">Future Chart</button>
+                    </div>
                 </div>
-                <div class="zoom-controls">
-                    <button class="zoom-btn" id="zoom-out" title="Zoom Out"><i data-lucide="minus"></i></button>
-                    <span class="zoom-level" id="zoom-percent">100%</span>
-                    <button class="zoom-btn" id="zoom-in" title="Zoom In"><i data-lucide="plus"></i></button>
-                    <button class="zoom-btn" id="zoom-fit" title="Fit to Screen"><i data-lucide="maximize-2"></i></button>
-                    <button class="zoom-btn" id="btn-auto-layout" title="Restore Latest Saved Layout"><i data-lucide="history"></i></button>
-                    <button class="zoom-btn" id="btn-expand-all" title="Expand All Positions"><i data-lucide="unfold-vertical"></i></button>
+                <div class="chart-control-actions">
+                    <span class="presentation-status" id="presentation-status" aria-live="polite">
+                        <span class="presentation-status-dot"></span>
+                        Presenting
+                    </span>
+                    <button type="button" class="btn btn-presentation" id="btn-presentation" aria-pressed="false" title="Start presentation mode">
+                        <i data-lucide="presentation"></i>
+                        <span>Presentation</span>
+                        <kbd>P</kbd>
+                    </button>
+                    <div class="zoom-controls">
+                        <button class="zoom-btn" id="zoom-out" title="Zoom Out"><i data-lucide="minus"></i></button>
+                        <span class="zoom-level" id="zoom-percent">100%</span>
+                        <button class="zoom-btn" id="zoom-in" title="Zoom In"><i data-lucide="plus"></i></button>
+                        <button class="zoom-btn" id="zoom-fit" title="Fit to Screen"><i data-lucide="maximize-2"></i></button>
+                        <button type="button" class="zoom-btn layout-lock-toggle" id="btn-layout-lock" aria-label="Lock Layout" aria-pressed="false" title="Lock layout editing"><i data-lucide="lock-open"></i></button>
+                        <button class="zoom-btn" id="btn-auto-layout" title="Restore Latest Saved Layout"><i data-lucide="history"></i></button>
+                        <button class="zoom-btn" id="btn-expand-all" title="Expand All Positions"><i data-lucide="unfold-vertical"></i></button>
+                    </div>
                 </div>
             </div>
+            <button type="button" class="presentation-controls-toggle" id="btn-toggle-presentation-controls" aria-controls="chart-controls" aria-expanded="true" aria-label="Hide presentation controls" title="Hide presentation controls">
+                <i data-lucide="chevron-up"></i>
+            </button>
 
             <!-- Chart Container (Viewport) -->
             <div class="chart-viewport" id="chart-viewport">
@@ -215,6 +236,14 @@
                     <button class="tool-btn tool-danger" id="tool-clear" title="Clear All (ล้างทั้งหมด)"><i data-lucide="trash-2"></i></button>
                 </div>
 
+                <div class="canvas-lock-banner" id="canvas-lock-banner" role="status" aria-live="polite" aria-hidden="true">
+                    <i data-lucide="shield-check"></i>
+                    <div>
+                        <strong>Layout locked</strong>
+                        <span>Pan, zoom and open details without moving the chart.</span>
+                    </div>
+                </div>
+
                 <!-- Instruction tooltip -->
                 <div class="canvas-tip">
                     <i data-lucide="info"></i> Drag to pan. Scroll to zoom. Click card to view details.
@@ -224,6 +253,9 @@
                 <div class="chart-canvas" id="chart-canvas">
                     <!-- SVG Overlay for connector lines -->
                     <svg class="connections-overlay" id="svg-overlay"></svg>
+
+                    <!-- Temporary drag alignment guides -->
+                    <svg class="alignment-guides-overlay" id="alignment-guides-overlay" aria-hidden="true"></svg>
 
                     <!-- Annotations Overlay -->
                     <div id="annotations-container" class="annotations-container" style="position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; z-index: 5;"></div>
@@ -261,10 +293,9 @@
                 <div class="form-row two-cols">
                     <div class="form-group">
                         <label for="form-position-manager">Reports To Position</label>
-                        <select id="form-position-manager">
-                            <option value="">Top Level</option>
-                        </select>
-                        <small class="form-help-text">Choose the position this seat reports directly to.</small>
+                        <input type="search" id="form-position-manager" list="position-manager-list" autocomplete="off" placeholder="Top Level - type to search a position">
+                        <datalist id="position-manager-list"></datalist>
+                        <small class="form-help-text">Leave empty for Top Level, or search by position, department, or employee.</small>
                     </div>
                     <div class="form-group">
                         <label for="form-position-employee">Assigned Employee</label>
@@ -281,6 +312,32 @@
                         </select>
                     </div>
                     <div class="form-group">
+                    </div>
+                </div>
+                <div class="position-lifecycle-form-section">
+                    <div class="position-form-section-title">
+                        <span>Position lifecycle</span>
+                        <small>Plan when this position appears or leaves the chart.</small>
+                    </div>
+                    <div class="form-row two-cols">
+                        <div class="form-group">
+                            <label for="form-position-status">Status</label>
+                            <select id="form-position-status">
+                                <option value="active">Active</option>
+                                <option value="future">Future plan</option>
+                                <option value="closed">Closed</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="form-position-effective-date">Effective date</label>
+                            <input type="date" id="form-position-effective-date">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="form-position-status-reason">Reason / lifecycle note</label>
+                            <textarea id="form-position-status-reason" rows="2" maxlength="250" placeholder="e.g. Approved headcount for Q4 or role consolidated"></textarea>
+                        </div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -322,6 +379,20 @@
         </div>
         <div class="vacancy-report-body">
             <div class="vacancy-report-list" id="vacancy-report-list"></div>
+        </div>
+    </div>
+
+    <!-- Acting Position Report Modal -->
+    <div class="modal-overlay" id="acting-report-modal-overlay"></div>
+    <div class="modal vacancy-report-modal" id="acting-report-modal" role="dialog" aria-modal="true" aria-labelledby="acting-report-title">
+        <div class="modal-header">
+            <h3 id="acting-report-title">Acting positions (0)</h3>
+            <button type="button" class="close-btn" id="close-acting-report-modal" aria-label="Close acting position report">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+        <div class="vacancy-report-body">
+            <div class="acting-report-list" id="acting-report-list"></div>
         </div>
     </div>
 
@@ -369,6 +440,56 @@
             </button>
         </div>
     </div>
+
+    <!-- Position Lifecycle Drawer -->
+    <div class="drawer-overlay" id="position-lifecycle-drawer-overlay"></div>
+    <aside class="drawer position-lifecycle-drawer" id="position-lifecycle-drawer" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="position-lifecycle-drawer-title" inert>
+        <div class="drawer-header">
+            <h3 id="position-lifecycle-drawer-title">Position details</h3>
+            <button type="button" class="close-btn" id="close-position-lifecycle-drawer" aria-label="Close position details"><i data-lucide="x"></i></button>
+        </div>
+        <div class="drawer-body position-lifecycle-drawer-body">
+            <input type="hidden" id="position-lifecycle-id">
+            <div class="position-lifecycle-summary">
+                <span class="position-lifecycle-icon"><i data-lucide="briefcase-business"></i></span>
+                <div>
+                    <h4 id="position-lifecycle-title">Open Position</h4>
+                    <p id="position-lifecycle-department">Unassigned</p>
+                    <small id="position-lifecycle-reporting">Top level position</small>
+                </div>
+            </div>
+            <div class="position-lifecycle-assignment">
+                <span>Assigned employee</span>
+                <strong id="position-lifecycle-assignment">Vacant</strong>
+            </div>
+            <div class="position-lifecycle-divider"></div>
+            <div class="form-group">
+                <span class="form-label lifecycle-label">Position status <i data-lucide="info" aria-hidden="true"></i></span>
+                <div class="position-status-switch" role="group" aria-label="Position status">
+                    <button type="button" class="position-status-btn active" data-position-status="active" aria-pressed="true">Active</button>
+                    <button type="button" class="position-status-btn" data-position-status="future" aria-pressed="false">Future plan</button>
+                    <button type="button" class="position-status-btn is-closed" data-position-status="closed" aria-pressed="false">Closed</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="position-lifecycle-date">Effective date</label>
+                <input type="date" id="position-lifecycle-date">
+            </div>
+            <div class="form-group">
+                <label for="position-lifecycle-reason">Reason / note <span class="optional-label">(optional)</span></label>
+                <textarea id="position-lifecycle-reason" rows="5" maxlength="250" placeholder="Describe why this position is changing"></textarea>
+                <small class="character-count" id="position-lifecycle-reason-count">0/250</small>
+            </div>
+            <div class="position-lifecycle-guidance">
+                <i data-lucide="info"></i>
+                <p id="position-lifecycle-guidance-text">Closed positions remain in history for audit and reporting. They disappear from the Current Chart after the effective date.</p>
+            </div>
+        </div>
+        <div class="drawer-footer position-lifecycle-footer">
+            <button type="button" class="btn btn-danger btn-close-position" id="btn-close-position"><i data-lucide="archive"></i> Close position</button>
+            <button type="button" class="btn btn-primary" id="btn-save-position-lifecycle">Save changes</button>
+        </div>
+    </aside>
 
     <!-- Employee Form Modal -->
     <div class="modal-overlay" id="form-modal-overlay"></div>
@@ -456,6 +577,8 @@
 
     <script src="hierarchy-utils.js?v=1"></script>
     <script src="employee-utils.js?v=1"></script>
-    <script src="app.js?v=3.6"></script>
+    <script src="position-lifecycle.js?v=1"></script>
+    <script src="alignment-utils.js?v=1"></script>
+    <script src="app.js?v=3.8"></script>
 </body>
 </html>

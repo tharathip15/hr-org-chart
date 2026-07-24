@@ -2,16 +2,87 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
 import json
 import sqlite3
+import base64
+import hashlib
+import hmac
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "hr_org_chart.sqlite3"
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin1234")
-READER_PASSWORD = os.environ.get("READER_PASSWORD", "viewer1234")
 AUTH_SECRET_ADMIN = os.environ.get("AUTH_SECRET_ADMIN", "admin-secret-2026")
 AUTH_SECRET_VIEWER = os.environ.get("AUTH_SECRET_VIEWER", "viewer-secret-2026")
+TOKEN_TTL_SECONDS = 8 * 60 * 60
+EDITOR_ROLES = {"admin", "pfig.hr.admin", "pfig.portal.admin", "portal admin", "portal.admin"}
+
+
+def normalize_role(role):
+    return " ".join(str(role or "").strip().lower().split())
+
+
+def is_editor_role(role):
+    return normalize_role(role) in EDITOR_ROLES
+
+
+def canonical_role(role):
+    return "PFIG.HR.Admin" if is_editor_role(role) else "Viewer"
+
+
+def b64url_encode(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def b64url_decode(value):
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
+def sign_token(encoded_payload, secret):
+    return b64url_encode(hmac.new(secret.encode("utf-8"), encoded_payload.encode("ascii"), hashlib.sha256).digest())
+
+
+def create_token(role, subject="password-user"):
+    normalized_role = canonical_role(role)
+    now = int(time.time())
+    payload = {
+        "sub": subject,
+        "role": normalized_role,
+        "iat": now,
+        "exp": now + TOKEN_TTL_SECONDS,
+    }
+    encoded_payload = b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    secret = AUTH_SECRET_ADMIN if is_editor_role(normalized_role) else AUTH_SECRET_VIEWER
+    return f"{encoded_payload}.{sign_token(encoded_payload, secret)}"
+
+
+def get_auth_context(handler):
+    authorization = handler.headers.get("Authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[7:].strip()
+    parts = token.split(".")
+    if len(parts) != 2:
+        return None
+    try:
+        payload = json.loads(b64url_decode(parts[0]).decode("utf-8"))
+        role = canonical_role(payload.get("role"))
+        if payload.get("role") != role:
+            return None
+        secret = AUTH_SECRET_ADMIN if is_editor_role(role) else AUTH_SECRET_VIEWER
+        if not hmac.compare_digest(parts[1], sign_token(parts[0], secret)):
+            return None
+        now = int(time.time())
+        if not isinstance(payload.get("iat"), int) or not isinstance(payload.get("exp"), int):
+            return None
+        if payload["iat"] > now + 60 or payload["exp"] <= now:
+            return None
+        payload["role"] = role
+        payload["canEdit"] = is_editor_role(role)
+        return payload
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
 
 
 def init_db():
@@ -54,8 +125,12 @@ def load_preferences():
             ("preferences",),
         ).fetchone()
     if not row:
-        return {"collapsedNodeIds": []}
-    return json.loads(row[0])
+        return {"collapsedNodeIds": [], "layoutLocked": False}
+    preferences = json.loads(row[0])
+    return {
+        "collapsedNodeIds": preferences.get("collapsedNodeIds", []),
+        "layoutLocked": preferences.get("layoutLocked") is True,
+    }
 
 
 def load_positions():
@@ -129,7 +204,14 @@ def save_preferences(preferences):
     if not isinstance(collapsed_node_ids, list):
         raise ValueError("Expected collapsedNodeIds to be an array")
 
-    save_app_data("preferences", {"collapsedNodeIds": collapsed_node_ids})
+    layout_locked = preferences.get("layoutLocked", False)
+    if not isinstance(layout_locked, bool):
+        raise ValueError("Expected layoutLocked to be a boolean")
+
+    save_app_data(
+        "preferences",
+        {"collapsedNodeIds": collapsed_node_ids, "layoutLocked": layout_locked},
+    )
 
 
 def save_positions(positions):
@@ -156,6 +238,32 @@ class OrgChartHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/config":
+            self.send_json({
+                "ok": True,
+                "hrEnabled": os.environ.get("VITE_HR_ENABLED", "true").lower() == "true",
+                "microsoft": {
+                    "enabled": bool(os.environ.get("MICROSOFT_TENANT_ID") and os.environ.get("MICROSOFT_CLIENT_ID")),
+                    "tenantId": os.environ.get("MICROSOFT_TENANT_ID", ""),
+                    "clientId": os.environ.get("MICROSOFT_CLIENT_ID", ""),
+                },
+            })
+            return
+        if path == "/api/session":
+            auth = get_auth_context(self)
+            if not auth:
+                if self.headers.get("Authorization"):
+                    self.send_json({"ok": False, "error": "Unauthorized"}, status=401)
+                    return
+                self.send_json({"ok": True, "anonymous": True, "role": "Viewer", "canEdit": False})
+                return
+            self.send_json({
+                "ok": True,
+                "role": auth["role"],
+                "canEdit": auth["canEdit"],
+                "expiresAt": auth["exp"],
+            })
+            return
         if path == "/api/employees":
             self.send_json(load_employees())
             return
@@ -177,30 +285,20 @@ class OrgChartHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
-        path = urlparse(self.path).path
-        if path != "/api/login":
-            self.send_error(404, "Not found")
-            return
-
-        try:
-            body = self.read_json_body(max_bytes=1024)
-            password = body.get("password") if isinstance(body, dict) else None
-
-            if password == ADMIN_PASSWORD:
-                self.send_json({"ok": True, "token": AUTH_SECRET_ADMIN, "role": "admin"})
-                return
-            if password == READER_PASSWORD:
-                self.send_json({"ok": True, "token": AUTH_SECRET_VIEWER, "role": "viewer"})
-                return
-
-            self.send_json({"ok": False, "error": "Incorrect password"}, status=401)
-        except (json.JSONDecodeError, ValueError) as exc:
-            self.send_json({"ok": False, "error": str(exc)}, status=400)
+        self.send_error(404, "Not found")
 
     def do_PUT(self):
         path = urlparse(self.path).path
         if path not in ("/api/employees", "/api/preferences", "/api/positions", "/api/annotations"):
             self.send_error(404, "Not found")
+            return
+
+        auth = get_auth_context(self)
+        if not auth:
+            self.send_json({"ok": False, "error": "Unauthorized"}, status=401)
+            return
+        if not auth["canEdit"]:
+            self.send_json({"ok": False, "error": "Editor access required"}, status=403)
             return
 
         try:

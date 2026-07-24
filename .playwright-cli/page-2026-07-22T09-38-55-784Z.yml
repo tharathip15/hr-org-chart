@@ -1,0 +1,261 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e15]:
+      - heading "HR Org Chart" [level=2] [ref=e16]
+      - generic [ref=e17]: กำลังเริ่มต้นระบบ...
+    - generic [ref=e19]: 0%
+  - dialog "Sign in":
+    - generic:
+      - heading "Sign in" [level=2]
+      - paragraph: Anyone can view the organization chart. Administrators sign in with Microsoft to edit.
+      - button "Sign in with Microsoft"
+      - button "Continue as Viewer"
+  - generic [ref=e22]:
+    - complementary [ref=e23]:
+      - generic [ref=e24]: HR Org Chart
+      - generic [ref=e32]:
+        - heading "Statistics" [level=3] [ref=e33]
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e36]: "0"
+            - text: Employees
+          - generic [ref=e37]:
+            - generic [ref=e38]: "0"
+            - text: Positions
+          - button "View acting positions (0)" [ref=e39] [cursor=pointer]:
+            - generic [ref=e40]: "0"
+            - text: Acting
+          - button "View vacant positions (0)" [ref=e41] [cursor=pointer]:
+            - generic [ref=e42]: "0"
+            - text: Vacant
+      - generic [ref=e43]:
+        - heading "Departments" [level=3] [ref=e44]
+        - list
+      - generic [ref=e45]:
+        - button "Export Backup (.json)" [ref=e46] [cursor=pointer]
+        - button "Import Backup (.json)" [ref=e50] [cursor=pointer]
+    - main [ref=e54]:
+      - generic [ref=e55]:
+        - button "Hide sidebar" [expanded] [ref=e56] [cursor=pointer]
+        - textbox "Search employees by name, role or department..." [ref=e65]
+        - generic [ref=e66]: Saved to Cloud
+        - generic [ref=e70]:
+          - button "Employees" [ref=e71] [cursor=pointer]
+          - button "Positions" [ref=e77] [cursor=pointer]
+          - button "Sync Microsoft 365" [ref=e82] [cursor=pointer]
+          - button "Admin Sign in" [ref=e88] [cursor=pointer]
+          - button "Add Employee" [ref=e92] [cursor=pointer]
+      - generic [ref=e96]:
+        - generic [ref=e97]:
+          - generic [ref=e98]:
+            - heading "Overall Organization" [level=2] [ref=e99]
+            - text: Showing the organization as of today
+          - group "Organization chart timeframe" [ref=e100]:
+            - button "Current Chart" [pressed] [ref=e101] [cursor=pointer]
+            - button "Future Chart" [ref=e102] [cursor=pointer]
+        - generic [ref=e103]:
+          - button "Presentation P" [ref=e104] [cursor=pointer]:
+            - generic [ref=e108]: Presentation
+            - generic [ref=e109]: P
+          - generic [ref=e110]:
+            - button "Zoom Out" [ref=e111] [cursor=pointer]
+            - generic [ref=e113]: 100%
+            - button "Zoom In" [ref=e114] [cursor=pointer]
+            - button "Fit to Screen" [ref=e116] [cursor=pointer]
+            - button "Lock Layout" [ref=e122] [cursor=pointer]
+            - button "Restore Latest Saved Layout" [ref=e126] [cursor=pointer]
+            - button "Expand All Positions" [ref=e131] [cursor=pointer]
+      - generic [ref=e135]:
+        - generic [ref=e136]:
+          - button "Add Frame (เพิ่มกรอบ)" [ref=e137] [cursor=pointer]
+          - button "Add Text (เพิ่มข้อความอิสระ)" [ref=e140] [cursor=pointer]
+          - generic "Annotation style controls":
+            - generic "Annotation color" [ref=e143]:
+              - generic [ref=e144]: Color
+              - textbox "Annotation color" [disabled] [ref=e145] [cursor=pointer]: "#4f46e5"
+            - generic "Text size" [ref=e146]:
+              - generic [ref=e147]: Text
+              - spinbutton "Text size in pixels" [disabled] [ref=e148]: "15"
+            - generic "Frame width" [ref=e149]:
+              - generic [ref=e150]: W
+              - spinbutton "Frame width in pixels" [disabled] [ref=e151]: "240"
+            - generic "Frame height" [ref=e152]:
+              - generic [ref=e153]: H
+              - spinbutton "Frame height in pixels" [disabled] [ref=e154]: "160"
+          - button "Undo (ย้อนกลับ)" [disabled] [ref=e156]
+          - button "Redo (ทำซ้ำ)" [disabled] [ref=e160]
+          - button "Lock Selected" [disabled] [ref=e165]
+          - button "Delete Selected" [disabled] [ref=e169]
+          - button "Clear All (ล้างทั้งหมด)" [ref=e174] [cursor=pointer]
+        - generic: Drag to pan. Scroll to zoom. Click card to view details.
+  - generic:
+    - generic:
+      - heading "Manage Positions" [level=3]
+      - button
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - generic: Position Title *
+            - textbox "Position Title *":
+              - /placeholder: e.g. Senior Officer
+          - generic:
+            - generic: Department *
+            - combobox "Department *"
+        - generic:
+          - generic:
+            - generic: Reports To Position
+            - combobox "Reports To Position"
+            - generic: Leave empty for Top Level, or search by position, department, or employee.
+          - generic:
+            - generic: Assigned Employee
+            - combobox "Assigned Employee"
+        - generic:
+          - generic:
+            - generic: Subordinate Layout Style (รูปแบบการจัดวางลูกน้อง)
+            - combobox "Subordinate Layout Style (รูปแบบการจัดวางลูกน้อง)":
+              - option "Horizontal (แนวนอน)" [selected]
+              - option "Staircase / Vertical (ขั้นบันได / แนวตั้ง)"
+        - generic:
+          - generic:
+            - generic: Position lifecycle
+            - generic: Plan when this position appears or leaves the chart.
+          - generic:
+            - generic:
+              - generic: Status
+              - combobox "Status":
+                - option "Active" [selected]
+                - option "Future plan"
+                - option "Closed"
+            - generic:
+              - generic: Effective date
+              - textbox "Effective date"
+          - generic:
+            - generic:
+              - generic: Reason / lifecycle note
+              - textbox "Reason / lifecycle note":
+                - /placeholder: e.g. Approved headcount for Q4 or role consolidated
+        - generic:
+          - generic:
+            - generic: Notes
+            - textbox "Notes":
+              - /placeholder: Optional notes for this planned seat...
+        - generic:
+          - button "New Position"
+          - button "Delete"
+          - button "Save Position"
+      - generic:
+        - generic:
+          - heading "Position Plan" [level=4]
+          - generic: 0 positions
+        - generic:
+          - generic:
+            - textbox "ค้นหาตามตำแหน่ง, แผนก หรือชื่อ..."
+  - dialog "Vacant positions (0)":
+    - generic:
+      - heading "Vacant positions (0)" [level=3]
+      - button "Close vacant position report"
+  - dialog "Acting positions (0)":
+    - generic:
+      - heading "Acting positions (0)" [level=3]
+      - button "Close acting position report"
+  - dialog "Manage Employees":
+    - generic:
+      - heading "Manage Employees" [level=3]
+      - button "Close employee management"
+    - generic:
+      - generic:
+        - generic:
+          - searchbox "Search employees"
+        - button "New Employee"
+      - generic:
+        - heading "Employee Directory" [level=4]
+        - generic: 0 employees
+  - generic [ref=e179]:
+    - generic [ref=e180]:
+      - heading "Employee Profile" [level=3] [ref=e181]
+      - button [ref=e182] [cursor=pointer]
+    - generic [ref=e187]:
+      - button "Edit Details" [ref=e188] [cursor=pointer]
+      - button "Delete Employee" [ref=e192] [cursor=pointer]
+  - dialog [ref=e196]:
+    - generic [ref=e197]:
+      - heading [level=3] [ref=e198]: Position details
+      - button [ref=e199] [cursor=pointer]
+    - generic [ref=e203]:
+      - generic [ref=e210]:
+        - heading [level=4] [ref=e211]: Open Position
+        - paragraph [ref=e212]: Unassigned
+        - text: Top level position
+      - generic [ref=e213]:
+        - generic [ref=e214]: Assigned employee
+        - strong [ref=e215]: Vacant
+      - generic [ref=e217]:
+        - generic [ref=e218]: Position status
+        - group [ref=e221]:
+          - button [pressed] [ref=e222] [cursor=pointer]: Active
+          - button [ref=e223] [cursor=pointer]: Future plan
+          - button [ref=e224] [cursor=pointer]: Closed
+      - generic [ref=e225]:
+        - generic [ref=e226]: Effective date
+        - textbox [ref=e227]
+      - generic [ref=e228]:
+        - generic [ref=e229]: Reason / note (optional)
+        - textbox [ref=e230]:
+          - /placeholder: Describe why this position is changing
+        - generic [ref=e231]: 0/250
+      - paragraph [ref=e235]: Closed positions remain in history for audit and reporting. They disappear from the Current Chart after the effective date.
+    - generic [ref=e236]:
+      - button [ref=e237] [cursor=pointer]: Close position
+      - button [ref=e241] [cursor=pointer]: Save changes
+  - generic:
+    - generic:
+      - heading "Add New Employee" [level=3]
+      - button
+    - generic:
+      - generic:
+        - generic:
+          - generic:
+            - button "Employee Photo Upload a clear headshot":
+              - generic:
+                - strong: Employee Photo
+                - generic: Upload a clear headshot
+            - button "Remove"
+        - generic:
+          - generic:
+            - generic: Employee Profile / Multiple Positions
+            - combobox "Employee Profile / Multiple Positions"
+        - generic:
+          - generic:
+            - generic: Full Name *
+            - textbox "Full Name *":
+              - /placeholder: e.g. John Doe
+        - generic:
+          - generic:
+            - generic: Job Title *
+            - textbox "Job Title *":
+              - /placeholder: e.g. Senior Software Engineer
+        - generic:
+          - generic:
+            - generic: Department *
+            - combobox "Department *"
+          - generic:
+            - generic: Reporting Line
+            - paragraph: Managed from Position Management using position-to-position relationships.
+        - generic:
+          - generic:
+            - generic: Email Address
+            - textbox "Email Address":
+              - /placeholder: e.g. john.doe@company.com
+          - generic:
+            - generic: Phone Number
+            - textbox "Phone Number":
+              - /placeholder: e.g. 081-234-5678
+        - generic:
+          - generic:
+            - generic: Bio / Notes
+            - textbox "Bio / Notes":
+              - /placeholder: Brief description of responsibilities or bio...
+      - generic:
+        - button "Cancel"
+        - button "Save Employee"

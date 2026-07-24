@@ -65,6 +65,22 @@
         ));
     }
 
+    function getPositionNoteText(position) {
+        const rawNote = String(position?.notes || "").trim();
+        if (!rawNote.startsWith("{") || !rawNote.endsWith("}")) return rawNote;
+
+        try {
+            const parsed = JSON.parse(rawNote);
+            return String(parsed?.text || "").trim();
+        } catch (error) {
+            return rawNote;
+        }
+    }
+
+    function isActingPosition(position) {
+        return /\bacting\b|รักษาการ/i.test(getPositionNoteText(position));
+    }
+
     function getStaffingSummary(employees, positions) {
         const people = Array.isArray(employees) ? employees : [];
         const seats = Array.isArray(positions) ? positions : [];
@@ -73,8 +89,6 @@
                 .map(employee => employee?.id)
                 .filter(employeeId => employeeId !== null && employeeId !== undefined)
         );
-        const assignedEmployeeIds = new Set();
-        let actingCount = 0;
         const vacantPositions = seats
             .filter(position => {
                 if (position?.employeeId === null || position?.employeeId === undefined) return true;
@@ -92,15 +106,7 @@
                     : a.title.localeCompare(b.title);
             });
 
-        seats.forEach(position => {
-            const employeeId = position?.employeeId;
-            if (employeeId === null || employeeId === undefined || !resolvedEmployeeIds.has(employeeId)) return;
-            if (assignedEmployeeIds.has(employeeId)) {
-                actingCount += 1;
-            } else {
-                assignedEmployeeIds.add(employeeId);
-            }
-        });
+        const actingCount = seats.filter(isActingPosition).length;
 
         return {
             employeeCount: people.length,
@@ -111,6 +117,14 @@
         };
     }
 
+    function getDepartmentCounts(positions) {
+        return (positions || []).reduce((counts, position) => {
+            const department = String(position?.department || "Unassigned").trim() || "Unassigned";
+            counts[department] = (counts[department] || 0) + 1;
+            return counts;
+        }, {});
+    }
+
     root.EmployeeDirectory = Object.freeze({
         createManualPersonId,
         getEmployeeSource,
@@ -119,6 +133,9 @@
         createManualEmployee,
         addManualEmployee,
         detachEmployeeFromPositions,
-        getStaffingSummary
+        getPositionNoteText,
+        isActingPosition,
+        getStaffingSummary,
+        getDepartmentCounts
     });
 })(globalThis);
