@@ -811,6 +811,7 @@ function clearMicrosoftCallbackUrl() {
     const url = new URL(window.location.href);
     url.searchParams.delete("code");
     url.searchParams.delete("state");
+    url.searchParams.delete("session_state");
     url.searchParams.delete("error");
     url.searchParams.delete("error_description");
     url.searchParams.delete("pfig_sso");

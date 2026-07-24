@@ -345,7 +345,7 @@ test("OAuth state, nonce, and verifier use only Web Crypto entropy", () => {
 
 test("expected silent callbacks clear OAuth intent and continue without a modal", async () => {
   const harness = createAuthHarness({
-    url: "https://hr.example.test/?pfig_sso=1&error=login_required&error_description=No+session&state=expected-state",
+    url: "https://hr.example.test/?pfig_sso=1&error=login_required&error_description=No+session&state=expected-state&session_state=microsoft-session",
     fetchImpl: async (input) => {
       if (String(input) === "/api/config") {
         return jsonResponse({
