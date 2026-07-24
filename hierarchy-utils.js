@@ -186,31 +186,6 @@
         };
     }
 
-    function matchBestSplitIndex(childTitle, childDept, titles) {
-        const text = (childTitle + " " + childDept).toLowerCase();
-        const tokens = text.split(/\s+/).filter(t => t.length > 2);
-        if (tokens.length === 0) return 0;
-
-        let bestIndex = 0;
-        let maxScore = -1;
-
-        titles.forEach((title, index) => {
-            const titleTokens = title.toLowerCase().split(/\s+/).filter(t => t.length > 2);
-            let score = 0;
-            tokens.forEach(ct => {
-                if (titleTokens.some(tt => tt.includes(ct) || ct.includes(tt))) {
-                    score += 1;
-                }
-            });
-            if (score > maxScore) {
-                maxScore = score;
-                bestIndex = index;
-            }
-        });
-
-        return bestIndex;
-    }
-
     function splitPosition(sourcePositions, positionId, splitTitles, options = {}) {
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
@@ -232,7 +207,7 @@
         const primaryPosition = positions.find(position => toInteger(position.id) === targetId);
         primaryPosition.title = titles[0];
 
-        const allSplitPositions = [primaryPosition];
+        const createdPositions = [];
         let maxId = Math.max(...positions.map(p => toInteger(p.id) || 0), 0);
 
         for (let i = 1; i < titles.length; i++) {
@@ -249,26 +224,8 @@
                 y: primaryPosition.y || 150
             };
             positions.push(newPos);
-            allSplitPositions.push(newPos);
+            createdPositions.push(newPos);
         }
-
-        const reportAssignments = options.reportAssignments || {};
-        const directReports = positions.filter(p => toInteger(p.managerId) === targetId && !allSplitPositions.some(sp => toInteger(sp.id) === toInteger(p.id)));
-
-        directReports.forEach(child => {
-            const childId = toInteger(child.id);
-            let assignedIndex = 0;
-
-            if (reportAssignments[childId] !== undefined) {
-                assignedIndex = Number(reportAssignments[childId]);
-            } else {
-                assignedIndex = matchBestSplitIndex(child.title || "", child.department || "", titles);
-            }
-
-            if (allSplitPositions[assignedIndex]) {
-                child.managerId = allSplitPositions[assignedIndex].id;
-            }
-        });
 
         const repairResult = repairPositionHierarchy(positions);
 
@@ -276,7 +233,7 @@
             positions: repairResult.positions,
             changed: true,
             primaryPosition,
-            createdPositions: allSplitPositions.slice(1)
+            createdPositions
         };
     }
 

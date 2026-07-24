@@ -493,6 +493,7 @@
         </div>
                 <div class="drawer-footer position-lifecycle-footer">
             <button type="button" class="btn btn-danger btn-close-position" id="btn-close-position"><i data-lucide="archive"></i> Close position</button>
+            <button type="button" class="btn btn-secondary" id="btn-split-position-lifecycle"><i data-lucide="scissors"></i> Split position</button>
             <button type="button" class="btn btn-primary" id="btn-save-position-lifecycle">Save changes</button>
         </div>
     </aside>
@@ -567,11 +568,6 @@
                     <label for="split-title-2">ตำแหน่งที่ 2 (ตำแหน่งที่แยกเพิ่ม):</label>
                     <input type="text" id="split-title-2" class="form-input" placeholder="เช่น Procurement Manager">
                 </div>
-            </div>
-
-            <div id="split-reports-section" style="display: none; flex-direction: column; gap: 8px;">
-                <label class="form-label" style="font-weight: 600;">การเลือกสายการบังคับบัญชาของผู้ใต้บังคับบัญชา (Direct Reports):</label>
-                <div id="split-reports-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 160px; overflow-y: auto; padding-right: 4px;"></div>
             </div>
 
             <div style="display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--text-secondary); background: rgba(99, 102, 241, 0.08); padding: 10px; border-radius: var(--radius-md);">
