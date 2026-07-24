@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -98,6 +98,15 @@ function microsoftIdToken({
     signingKey,
   ).toString("base64url");
   return `${header}.${payload}.${signature}`;
+}
+
+function readSources(directory, extension) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === "node_modules" || entry.name === ".git") return [];
+    const url = new URL(`${entry.name}${entry.isDirectory() ? "/" : ""}`, directory);
+    if (entry.isDirectory()) return readSources(url, extension);
+    return entry.name.endsWith(extension) ? [readFileSync(url, "utf8")] : [];
+  });
 }
 
 async function runMicrosoftLogin({
@@ -703,4 +712,46 @@ test("legacy password and bearer authentication routes are removed", () => {
     loginSsoSource,
     /ADMIN_PASSWORD|READER_PASSWORD|AUTH_SECRET|Bearer/,
   );
+});
+
+test("the legacy Python password and bearer mutation server is decommissioned", () => {
+  const projectRoot = new URL("../", import.meta.url);
+  assert.equal(
+    existsSync(new URL("server.py", projectRoot)),
+    false,
+    "server.py must not expose a browser-reachable legacy API",
+  );
+
+  const pythonSources = readSources(projectRoot, ".py").join("\n");
+  const legacyNames = [
+    ["ADMIN", "PASSWORD"].join("_"),
+    ["READER", "PASSWORD"].join("_"),
+    ["AUTH", "SECRET", "ADMIN"].join("_"),
+    ["AUTH", "SECRET", "VIEWER"].join("_"),
+  ];
+  assert.doesNotMatch(pythonSources, new RegExp(legacyNames.join("|")));
+  assert.doesNotMatch(
+    pythonSources,
+    new RegExp(["def do", "PUT"].join("_")),
+  );
+});
+
+test("local development runs the Vercel Functions boundary", () => {
+  const packageSource = readFileSync(
+    new URL("../package.json", import.meta.url),
+    "utf8",
+  );
+  assert.match(packageSource, /"dev":\s*"npx vercel dev"/);
+});
+
+test("local documentation does not direct developers to the Python server", () => {
+  const documentation = readSources(
+    new URL("../docs/", import.meta.url),
+    ".md",
+  ).join("\n");
+  assert.doesNotMatch(
+    documentation,
+    /python(?:\.exe)?[^\r\n]*server\.py|python server\.py|existing local server|run `?server\.py/i,
+  );
+  assert.match(documentation, /npx vercel dev/);
 });

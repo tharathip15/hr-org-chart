@@ -225,7 +225,7 @@ Files:
 
 Expected: syntax succeeds, every test passes, and diff check reports no whitespace errors.
 
-- [ ] Step 2: Start the existing local server with python server.py and use the available Browser plugin.
+- [ ] Step 2: Run `npx vercel dev` and use the available Browser plugin against the local Vercel Functions instance.
 
 - [ ] Step 3: Exercise this flow: app loads -> Overall Organization renders -> drag a manager -> child and grandchild move by the same visual delta -> release -> reload -> the subtree remains aligned.
 

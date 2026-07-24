@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const cssSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
-const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf8");
+const loginSsoApiPath = new URL("../api/login-sso.js", import.meta.url);
 const positionsApiPath = new URL("../api/positions.js", import.meta.url);
 const hierarchyUtilsPath = new URL("../hierarchy-utils.js", import.meta.url);
 
@@ -27,7 +27,7 @@ test("app exposes a login surface before authenticated initialization", () => {
     assert.match(htmlSource, /id="login-form"/);
     assert.match(htmlSource, /id="login-password"/);
     assert.match(htmlSource, /id="btn-login-submit"/);
-    assert.match(serverSource, /if path != "\/api\/login":/);
+    assert.equal(existsSync(loginSsoApiPath), true);
 });
 
 test("positions can be managed in a dedicated UI", () => {
@@ -68,10 +68,7 @@ test("acting position cards hide duplicate and filled labels", () => {
     assert.match(appSource, /\$\{occupancyStatus \?/);
 });
 
-test("local and deployed APIs expose positions", () => {
-    assert.match(serverSource, /if path == "\/api\/positions":/);
-    assert.match(serverSource, /load_positions\(\)/);
-    assert.match(serverSource, /save_positions\(positions\)/);
+test("the Vercel API exposes positions", () => {
     assert.equal(existsSync(positionsApiPath), true);
 
     const positionsApiSource = readFileSync(positionsApiPath, "utf8");
