@@ -120,15 +120,19 @@ function readSources(directory, extension) {
 async function runMicrosoftLogin({
   payloadOverrides,
   requestNonce = MICROSOFT_NONCE,
+  sessionSecret = TEST_SESSION_SECRET,
   signingKey,
 } = {}) {
   const originalFetch = globalThis.fetch;
   const originalConsoleError = console.error;
+  const originalSessionSecret = process.env.HR_SESSION_SECRET;
   globalThis.fetch = async () => ({
     ok: true,
     async json() { return { keys: [microsoftJwk] }; },
   });
   console.error = () => {};
+  if (sessionSecret === null) delete process.env.HR_SESSION_SECRET;
+  else process.env.HR_SESSION_SECRET = sessionSecret;
 
   try {
     const { default: loginSso } = await import("../api/login-sso.js");
@@ -141,6 +145,11 @@ async function runMicrosoftLogin({
   } finally {
     globalThis.fetch = originalFetch;
     console.error = originalConsoleError;
+    if (originalSessionSecret === undefined) {
+      delete process.env.HR_SESSION_SECRET;
+    } else {
+      process.env.HR_SESSION_SECRET = originalSessionSecret;
+    }
   }
 }
 
@@ -298,7 +307,11 @@ test("session secrets need 32 characters and cookies have secure defaults", asyn
   try {
     assert.throws(
       () => session.createSession({ oid: "oid", tid: "tid", roles: [] }),
-      /HR_SESSION_SECRET must contain at least 32 characters/,
+      (error) => {
+        assert.equal(error instanceof session.SessionConfigurationError, true);
+        assert.equal(error.message, "HR session configuration is invalid.");
+        return true;
+      },
     );
   } finally {
     process.env.HR_SESSION_SECRET = originalSecret;
@@ -312,6 +325,22 @@ test("session secrets need 32 characters and cookies have secure defaults", asyn
     session.expiredSessionCookie(),
     /^pfig_hr_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0(?:; Secure)?$/,
   );
+});
+
+test("deployed HR session cookies retain all browser security attributes", async () => {
+  const session = await sessionModulePromise;
+  const originalVercel = process.env.VERCEL;
+  process.env.VERCEL = "1";
+
+  try {
+    assert.equal(
+      session.sessionCookie("signed.token"),
+      "pfig_hr_session=signed.token; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800; Secure",
+    );
+  } finally {
+    if (originalVercel === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = originalVercel;
+  }
 });
 
 test("HR SSO APIs use an HttpOnly cookie and never return a bearer token", () => {
@@ -395,7 +424,33 @@ test("Microsoft SSO rejects invalid identity tokens without setting a cookie", a
     await t.test(name, async () => {
       const response = await runMicrosoftLogin(options);
       assert.equal(response.statusCode, 401);
+      assert.deepEqual(response.payload, {
+        ok: false,
+        error: "Microsoft identity token validation failed",
+      });
       assert.equal(response.headers["Set-Cookie"], undefined);
+    });
+  }
+});
+
+test("Microsoft SSO reports invalid session configuration without setting a cookie", async (t) => {
+  for (const { name, sessionSecret } of [
+    { name: "missing secret", sessionSecret: null },
+    { name: "short secret", sessionSecret: "too-short-secret" },
+  ]) {
+    await t.test(name, async () => {
+      const response = await runMicrosoftLogin({ sessionSecret });
+
+      assert.equal(response.statusCode, 500);
+      assert.deepEqual(response.payload, {
+        ok: false,
+        error: "HR session configuration is invalid.",
+      });
+      assert.equal(response.headers["Set-Cookie"], undefined);
+      assert.doesNotMatch(
+        JSON.stringify(response.payload),
+        /HR_SESSION_SECRET|too-short-secret/,
+      );
     });
   }
 });

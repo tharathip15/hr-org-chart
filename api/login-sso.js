@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import {
   createSession,
+  SessionConfigurationError,
   sessionCookie,
 } from "./_helpers/session.js";
 
@@ -61,6 +62,13 @@ export default async function handler(request, response) {
     });
   } catch (error) {
     console.error("SSO Login error:", error);
+    if (error instanceof SessionConfigurationError) {
+      response.status(500).json({
+        ok: false,
+        error: "HR session configuration is invalid.",
+      });
+      return;
+    }
     response.status(401).json({
       ok: false,
       error: "Microsoft identity token validation failed",

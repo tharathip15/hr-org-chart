@@ -5,10 +5,17 @@ export const SESSION_COOKIE_NAME = "pfig_hr_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const EDITOR_ROLES = new Set(["PFIG.HR.Admin", "PFIG.Portal.Admin"]);
 
+export class SessionConfigurationError extends Error {
+  constructor() {
+    super("HR session configuration is invalid.");
+    this.name = "SessionConfigurationError";
+  }
+}
+
 function getSessionSecret() {
   const secret = String(process.env.HR_SESSION_SECRET || "");
   if (secret.length < 32) {
-    throw new Error("HR_SESSION_SECRET must contain at least 32 characters");
+    throw new SessionConfigurationError();
   }
   return secret;
 }
