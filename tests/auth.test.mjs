@@ -21,7 +21,23 @@ const TEST_SESSION_SECRET =
   "test-only-hr-session-secret-with-at-least-32-characters";
 process.env.HR_SESSION_SECRET = TEST_SESSION_SECRET;
 
+const MICROSOFT_TENANT_ID = "22222222-2222-4222-8222-222222222222";
+const MICROSOFT_CLIENT_ID = "33333333-3333-4333-8333-333333333333";
+const MICROSOFT_NONCE = "expected-nonce";
+process.env.MICROSOFT_TENANT_ID = MICROSOFT_TENANT_ID;
+process.env.MICROSOFT_CLIENT_ID = MICROSOFT_CLIENT_ID;
+
 const sessionModulePromise = import("../api/_helpers/session.js");
+const microsoftKeyPair = crypto.generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+});
+const invalidMicrosoftKeyPair = crypto.generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+});
+const microsoftJwk = microsoftKeyPair.publicKey.export({ format: "jwk" });
+microsoftJwk.kid = "test-key";
+microsoftJwk.alg = "RS256";
+microsoftJwk.use = "sig";
 
 function signedToken(payload) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -50,6 +66,65 @@ function jsonRequest(method, body, headers = {}) {
   return request;
 }
 
+function microsoftIdToken({
+  payloadOverrides = {},
+  signingKey = microsoftKeyPair.privateKey,
+} = {}) {
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({
+    alg: "RS256",
+    kid: microsoftJwk.kid,
+    typ: "JWT",
+  });
+  const payload = encode({
+    oid: "11111111-1111-4111-8111-111111111111",
+    tid: MICROSOFT_TENANT_ID,
+    iss: `https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/v2.0`,
+    aud: MICROSOFT_CLIENT_ID,
+    exp: Math.floor(Date.now() / 1000) + 300,
+    nbf: Math.floor(Date.now() / 1000) - 10,
+    nonce: MICROSOFT_NONCE,
+    name: "PFIG Admin",
+    email: "admin@example.test",
+    roles: ["PFIG.HR.Admin"],
+    ...payloadOverrides,
+  });
+  const signature = crypto.sign(
+    "RSA-SHA256",
+    Buffer.from(`${header}.${payload}`),
+    signingKey,
+  ).toString("base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+async function runMicrosoftLogin({
+  payloadOverrides,
+  requestNonce = MICROSOFT_NONCE,
+  signingKey,
+} = {}) {
+  const originalFetch = globalThis.fetch;
+  const originalConsoleError = console.error;
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() { return { keys: [microsoftJwk] }; },
+  });
+  console.error = () => {};
+
+  try {
+    const { default: loginSso } = await import("../api/login-sso.js");
+    const response = responseRecorder();
+    await loginSso(jsonRequest("POST", {
+      idToken: microsoftIdToken({ payloadOverrides, signingKey }),
+      nonce: requestNonce,
+    }), response);
+    return response;
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalConsoleError;
+  }
+}
+
 test("signed HR sessions preserve identity and editor roles", async () => {
   const session = await sessionModulePromise;
   const { token, payload } = session.createSession({
@@ -71,6 +146,25 @@ test("Portal Admin is an HR editor and an ordinary identity is Viewer", async ()
   const session = await sessionModulePromise;
   assert.equal(session.hasEditorRole(["PFIG.Portal.Admin"]), true);
   assert.equal(session.hasEditorRole(["PFIG.Employee"]), false);
+});
+
+test("editor role matching rejects lowercase and whitespace near misses", async () => {
+  const session = await sessionModulePromise;
+
+  for (const role of [
+    "pfig.hr.admin",
+    " PFIG.HR.Admin",
+    "PFIG.HR.Admin ",
+    "pfig.portal.admin",
+    " PFIG.Portal.Admin ",
+  ]) {
+    assert.equal(session.hasEditorRole([role]), false, role);
+    assert.equal(session.createSession({
+      oid: "11111111-1111-4111-8111-111111111111",
+      tid: "22222222-2222-4222-8222-222222222222",
+      roles: [role],
+    }).payload.canEdit, false, role);
+  }
 });
 
 test("arbitrary configured roles cannot become HR editors", async () => {
@@ -227,62 +321,60 @@ test("HR SSO verifies Microsoft ID tokens before creating a session", () => {
 });
 
 test("Microsoft SSO issues an HttpOnly HR session without a bearer token", async () => {
-  const tenantId = "22222222-2222-4222-8222-222222222222";
-  const clientId = "33333333-3333-4333-8333-333333333333";
-  const nonce = "expected-nonce";
-  process.env.MICROSOFT_TENANT_ID = tenantId;
-  process.env.MICROSOFT_CLIENT_ID = clientId;
+  const response = await runMicrosoftLogin();
 
-  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
-  const jwk = publicKey.export({ format: "jwk" });
-  jwk.kid = "test-key";
-  jwk.alg = "RS256";
-  jwk.use = "sig";
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers["Set-Cookie"], /^pfig_hr_session=/);
+  assert.match(response.headers["Set-Cookie"], /;\s*HttpOnly(?:;|$)/);
+  assert.equal("token" in response.payload, false);
+  assert.equal(response.payload.identity.oid, "11111111-1111-4111-8111-111111111111");
+  assert.equal(response.payload.identity.canEdit, true);
+  assert.equal(typeof response.payload.csrfToken, "string");
+});
 
-  const encode = (value) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
-  const header = encode({ alg: "RS256", kid: jwk.kid, typ: "JWT" });
-  const payload = encode({
-    oid: "11111111-1111-4111-8111-111111111111",
-    tid: tenantId,
-    iss: `https://login.microsoftonline.com/${tenantId}/v2.0`,
-    aud: clientId,
-    exp: Math.floor(Date.now() / 1000) + 300,
-    nbf: Math.floor(Date.now() / 1000) - 10,
-    nonce,
-    name: "PFIG Admin",
-    email: "admin@example.test",
-    roles: ["PFIG.HR.Admin"],
-  });
-  const signature = crypto.sign(
-    "RSA-SHA256",
-    Buffer.from(`${header}.${payload}`),
-    privateKey,
-  ).toString("base64url");
-  const idToken = `${header}.${payload}.${signature}`;
+test("Microsoft SSO rejects invalid identity tokens without setting a cookie", async (t) => {
+  const now = Math.floor(Date.now() / 1000);
+  const cases = [
+    {
+      name: "invalid signature",
+      options: { signingKey: invalidMicrosoftKeyPair.privateKey },
+    },
+    {
+      name: "wrong tenant",
+      options: { payloadOverrides: { tid: "wrong-tenant" } },
+    },
+    {
+      name: "wrong issuer",
+      options: { payloadOverrides: { iss: "https://issuer.example.test" } },
+    },
+    {
+      name: "wrong audience",
+      options: { payloadOverrides: { aud: "wrong-audience" } },
+    },
+    {
+      name: "expired exp",
+      options: { payloadOverrides: { exp: now - 1 } },
+    },
+    {
+      name: "future nbf",
+      options: { payloadOverrides: { nbf: now + 61 } },
+    },
+    {
+      name: "nonce mismatch",
+      options: { payloadOverrides: { nonce: "wrong-nonce" } },
+    },
+    {
+      name: "missing oid",
+      options: { payloadOverrides: { oid: undefined } },
+    },
+  ];
 
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    async json() { return { keys: [jwk] }; },
-  });
-
-  try {
-    const { default: loginSso } = await import("../api/login-sso.js");
-    const response = responseRecorder();
-    await loginSso(jsonRequest("POST", { idToken, nonce }), response);
-
-    assert.equal(response.statusCode, 200);
-    assert.match(response.headers["Set-Cookie"], /^pfig_hr_session=/);
-    assert.match(response.headers["Set-Cookie"], /;\s*HttpOnly(?:;|$)/);
-    assert.equal("token" in response.payload, false);
-    assert.equal(response.payload.identity.oid, "11111111-1111-4111-8111-111111111111");
-    assert.equal(response.payload.identity.canEdit, true);
-    assert.equal(typeof response.payload.csrfToken, "string");
-  } finally {
-    globalThis.fetch = originalFetch;
+  for (const { name, options } of cases) {
+    await t.test(name, async () => {
+      const response = await runMicrosoftLogin(options);
+      assert.equal(response.statusCode, 401);
+      assert.equal(response.headers["Set-Cookie"], undefined);
+    });
   }
 });
 
@@ -314,6 +406,25 @@ test("session discovery reads identity from the HR cookie", async () => {
   assert.equal(response.payload.csrfToken, payload.csrf);
 });
 
+test("session discovery rejects missing and invalid HR cookies", async (t) => {
+  const { default: discoverSession } = await import("../api/session.js");
+
+  for (const { name, headers } of [
+    { name: "missing cookie", headers: {} },
+    {
+      name: "invalid cookie",
+      headers: { cookie: "pfig_hr_session=invalid-session" },
+    },
+  ]) {
+    await t.test(name, () => {
+      const response = responseRecorder();
+      discoverSession({ method: "GET", headers }, response);
+      assert.equal(response.statusCode, 401);
+      assert.equal(response.headers["Set-Cookie"], undefined);
+    });
+  }
+});
+
 test("logout requires CSRF and expires only the HR session cookie", async () => {
   const session = await sessionModulePromise;
   const { token, payload } = session.createSession({
@@ -324,10 +435,20 @@ test("logout requires CSRF and expires only the HR session cookie", async () => 
   const cookie = `${session.SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`;
   const { default: logout } = await import("../api/logout.js");
 
-  const rejectedResponse = responseRecorder();
-  logout({ method: "POST", headers: { cookie } }, rejectedResponse);
-  assert.equal(rejectedResponse.statusCode, 403);
-  assert.equal(rejectedResponse.headers["Set-Cookie"], undefined);
+  for (const { name, headers, statusCode } of [
+    { name: "missing session", headers: {}, statusCode: 401 },
+    { name: "missing CSRF", headers: { cookie }, statusCode: 403 },
+    {
+      name: "wrong CSRF",
+      headers: { cookie, "x-csrf-token": "wrong-csrf" },
+      statusCode: 403,
+    },
+  ]) {
+    const rejectedResponse = responseRecorder();
+    logout({ method: "POST", headers }, rejectedResponse);
+    assert.equal(rejectedResponse.statusCode, statusCode, name);
+    assert.equal(rejectedResponse.headers["Set-Cookie"], undefined, name);
+  }
 
   const response = responseRecorder();
   logout({

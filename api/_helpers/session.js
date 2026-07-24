@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "pfig_hr_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
-const EDITOR_ROLES = new Set(["pfig.hr.admin", "pfig.portal.admin"]);
+const EDITOR_ROLES = new Set(["PFIG.HR.Admin", "PFIG.Portal.Admin"]);
 
 function getSessionSecret() {
   const secret = String(process.env.HR_SESSION_SECRET || "");
@@ -29,7 +29,7 @@ function safeEqual(left, right) {
 
 export function hasEditorRole(roles) {
   return (Array.isArray(roles) ? roles : [])
-    .some((role) => EDITOR_ROLES.has(String(role).trim().toLowerCase()));
+    .some((role) => EDITOR_ROLES.has(role));
 }
 
 export function createSession(
