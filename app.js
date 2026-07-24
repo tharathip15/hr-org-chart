@@ -2177,6 +2177,15 @@ function setupEventListeners() {
     if (cancelCombineBtn) cancelCombineBtn.addEventListener("click", closeCombinePositionsModal);
     const submitCombineBtn = document.getElementById("btn-submit-combine");
     if (submitCombineBtn) submitCombineBtn.addEventListener("click", handleCombinePositionsSubmit);
+
+    const closeSplitBtn = document.getElementById("close-split-positions-modal");
+    if (closeSplitBtn) closeSplitBtn.addEventListener("click", closeSplitPositionModal);
+    const splitOverlay = document.getElementById("split-positions-modal-overlay");
+    if (splitOverlay) splitOverlay.addEventListener("click", closeSplitPositionModal);
+    const cancelSplitBtn = document.getElementById("btn-cancel-split");
+    if (cancelSplitBtn) cancelSplitBtn.addEventListener("click", closeSplitPositionModal);
+    const submitSplitBtn = document.getElementById("btn-submit-split");
+    if (submitSplitBtn) submitSplitBtn.addEventListener("click", handleSplitPositionSubmit);
     document.getElementById("vacant-positions-card").addEventListener("click", openVacancyReportModal);
     document.getElementById("acting-positions-card").addEventListener("click", openActingReportModal);
     document.getElementById("close-vacancy-report-modal").addEventListener("click", closeVacancyReportModal);
@@ -3391,6 +3400,12 @@ function showEmployeeDetails(id) {
         `;
     }
     
+    const splitButtonHTML = primaryPosition ? `
+        <button type="button" class="btn btn-secondary" id="btn-open-split-modal" style="margin-top: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
+            <i data-lucide="scissors"></i> แยกตำแหน่งงานออกเป็น 2 ตำแหน่ง (Split Position)
+        </button>
+    ` : "";
+
     const body = document.getElementById("detail-drawer-body");
     const deptClass = getDeptClass(emp.department);
     
@@ -3398,13 +3413,11 @@ function showEmployeeDetails(id) {
         <div class="profile-card-large">
             ${getAvatarHTML(emp, "avatar-lg")}
             <div class="profile-name">${escapeHTML(emp.name)}</div>
-            <div class="profile-role">${escapeHTML(emp.role)}</div>
-            <div class="card-department-badge ${deptClass}">${escapeHTML(emp.department)}</div>
+            <div class="profile-role">${escapeHTML(primaryPosition ? getPositionTitle(primaryPosition) : emp.role)}</div>
+            <span class="profile-dept-badge ${deptClass}">${escapeHTML(primaryPosition ? getPositionDepartment(primaryPosition) : emp.department)}</span>
         </div>
         
-        <div>
-            <div class="info-section-title">Contact Details</div>
-            
+        <div class="info-section">
             <div class="info-item">
                 <div class="info-icon-wrapper"><i data-lucide="mail"></i></div>
                 <div class="info-content">
@@ -3433,6 +3446,7 @@ function showEmployeeDetails(id) {
         </div>
         
         ${siblingsHTML}
+        ${splitButtonHTML}
         
         ${emp.bio ? `
             <div>
@@ -4038,6 +4052,88 @@ async function handleCombinePositionsSubmit() {
     requestAnimationFrame(fitToScreen);
 
     showNotification(`รวมตำแหน่งเป็น "${newTitle}" เรียบร้อยแล้ว`, "success");
+}
+
+function openSplitPositionModal(positionId) {
+    if (document.body.classList.contains("role-viewer")) return false;
+
+    const pos = positions.find(p => p.id === positionId);
+    if (!pos) return false;
+
+    const emp = getAssignedEmployee(pos);
+    const title = getPositionTitle(pos);
+
+    const modal = document.getElementById("split-positions-modal");
+    const titleEl = document.getElementById("split-current-title");
+    const nameEl = document.getElementById("split-employee-name");
+
+    if (titleEl) titleEl.innerText = `${title} (#${pos.id})`;
+    if (nameEl) nameEl.innerText = emp ? emp.name : "Vacant / ไม่ระบุ";
+
+    const suggestedSplits = EmployeeDirectory.suggestSplitTitles
+        ? EmployeeDirectory.suggestSplitTitles(title)
+        : [title, `${title} (Secondary)`];
+
+    const input1 = document.getElementById("split-title-1");
+    const input2 = document.getElementById("split-title-2");
+
+    if (input1) input1.value = suggestedSplits[0] || title;
+    if (input2) input2.value = suggestedSplits[1] || `${title} (Secondary)`;
+
+    if (modal) modal.dataset.positionId = positionId;
+
+    const overlay = document.getElementById("split-positions-modal-overlay");
+    if (overlay) overlay.classList.add("active");
+    if (modal) modal.classList.add("active");
+    if (window.lucide) window.lucide.createIcons();
+    return true;
+}
+
+function closeSplitPositionModal() {
+    const overlay = document.getElementById("split-positions-modal-overlay");
+    const modal = document.getElementById("split-positions-modal");
+    if (overlay) overlay.classList.remove("active");
+    if (modal) modal.classList.remove("active");
+}
+
+async function handleSplitPositionSubmit() {
+    if (document.body.classList.contains("role-viewer")) return;
+
+    const modal = document.getElementById("split-positions-modal");
+    if (!modal) return;
+
+    const positionId = parseInt(modal.dataset.positionId, 10);
+    if (!positionId) return;
+
+    const input1 = document.getElementById("split-title-1");
+    const input2 = document.getElementById("split-title-2");
+
+    const title1 = input1 ? input1.value.trim() : "";
+    const title2 = input2 ? input2.value.trim() : "";
+
+    if (!title1 || !title2) {
+        showNotification("กรุณาระบุชื่อตำแหน่งทั้ง 2 ตำแหน่ง", "error");
+        return;
+    }
+
+    const result = OrgHierarchy.splitPosition(positions, positionId, [title1, title2]);
+    if (!result.changed) {
+        showNotification("ไม่สามารถแยกตำแหน่งได้: " + (result.error || "unknown_error"), "error");
+        return;
+    }
+
+    positions = result.positions;
+
+    const saved = await savePositions();
+    if (!saved) return;
+
+    closeSplitPositionModal();
+    closeDetailDrawer();
+    closePositionLifecycleDrawer();
+    renderAll();
+    requestAnimationFrame(fitToScreen);
+
+    showNotification(`แยกตำแหน่งสำเร็จเป็น "${title1}" และ "${title2}"`, "success");
 }
 
 function renderVacancyReport() {

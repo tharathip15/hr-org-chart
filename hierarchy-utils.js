@@ -186,13 +186,66 @@
         };
     }
 
+    function splitPosition(sourcePositions, positionId, splitTitles, options = {}) {
+        const positions = Array.isArray(sourcePositions)
+            ? sourcePositions.map(position => ({ ...position }))
+            : [];
+
+        const targetId = toInteger(positionId);
+        if (targetId === null || !positions.some(position => toInteger(position.id) === targetId)) {
+            return { positions, changed: false, error: "invalid_position_id" };
+        }
+
+        const titles = (Array.isArray(splitTitles) ? splitTitles : [])
+            .map(t => String(t || "").trim())
+            .filter(Boolean);
+
+        if (titles.length < 2) {
+            return { positions, changed: false, error: "need_at_least_two_titles" };
+        }
+
+        const primaryPosition = positions.find(position => toInteger(position.id) === targetId);
+        primaryPosition.title = titles[0];
+
+        const createdPositions = [];
+        let maxId = Math.max(...positions.map(p => toInteger(p.id) || 0), 0);
+
+        for (let i = 1; i < titles.length; i++) {
+            maxId += 1;
+            const newPos = {
+                id: maxId,
+                title: titles[i],
+                department: primaryPosition.department,
+                employeeId: primaryPosition.employeeId,
+                managerId: primaryPosition.managerId,
+                status: primaryPosition.status || "active",
+                notes: primaryPosition.notes || "",
+                x: (primaryPosition.x || 200) + (i * 260),
+                y: primaryPosition.y || 150
+            };
+            positions.push(newPos);
+            createdPositions.push(newPos);
+        }
+
+        const repairResult = repairPositionHierarchy(positions);
+
+        return {
+            positions: repairResult.positions,
+            changed: true,
+            primaryPosition,
+            createdPositions
+        };
+    }
+
     root.OrgHierarchy = Object.freeze({
         repairPositionHierarchy,
         validatePositionParent,
         repairEmployeeManagers,
         isPrimaryEmployeePosition,
         getDescendantPositionIds,
-        combinePositions
+        combinePositions,
+        splitPosition
     });
 })(globalThis);
+
 

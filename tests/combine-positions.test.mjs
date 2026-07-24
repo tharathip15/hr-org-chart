@@ -61,3 +61,40 @@ test("combinePositions merges two positions and preserves child reporting lines"
     assert.equal(officer25.managerId, 17);
     assert.equal(officer26.managerId, 17);
 });
+
+test("suggestSplitTitles parses combined titles into separate titles", () => {
+    const { suggestSplitTitles } = globalThis.EmployeeDirectory || {};
+    assert.equal(typeof suggestSplitTitles, "function");
+
+    assert.deepEqual(
+        suggestSplitTitles("Procurement and Logistics Manager"),
+        ["Procurement Manager", "Logistics Manager"]
+    );
+
+    assert.deepEqual(
+        suggestSplitTitles("Manager of Sales & Marketing"),
+        ["Manager of Sales", "Manager of Marketing"]
+    );
+});
+
+test("splitPosition splits a combined position into two separate positions", () => {
+    const { splitPosition } = globalThis.OrgHierarchy || {};
+    assert.equal(typeof splitPosition, "function");
+
+    const sourcePositions = [
+        { id: 10, title: "Director of Operations", managerId: null, department: "Operations" },
+        { id: 17, title: "Procurement and Logistics Manager", managerId: 10, department: "Procurement & Logistics", employeeId: 6 }
+    ];
+
+    const result = splitPosition(sourcePositions, 17, ["Procurement Manager", "Logistics Manager"]);
+
+    assert.equal(result.changed, true);
+    assert.equal(result.positions.length, 3);
+    assert.equal(result.positions.find(p => p.id === 17).title, "Procurement Manager");
+    
+    const newPos = result.positions.find(p => p.id === 18);
+    assert.ok(newPos);
+    assert.equal(newPos.title, "Logistics Manager");
+    assert.equal(newPos.employeeId, 6);
+    assert.equal(newPos.managerId, 10);
+});

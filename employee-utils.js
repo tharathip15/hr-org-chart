@@ -164,6 +164,38 @@
         return cleanTitles.join(" & ");
     }
 
+    function suggestSplitTitles(combinedTitle) {
+        const str = String(combinedTitle || "").trim();
+        if (!str) return [];
+
+        const andMatch = str.match(/^(.+?)\s+(?:and|&)\s+(.+?)\s+([A-Za-z0-9\s]+)$/i);
+        if (andMatch) {
+            const prefix1 = andMatch[1].trim();
+            const prefix2 = andMatch[2].trim();
+            const suffix = andMatch[3].trim();
+            if (prefix1 && prefix2 && suffix) {
+                return [`${prefix1} ${suffix}`, `${prefix2} ${suffix}`];
+            }
+        }
+
+        const prefixMatch = str.match(/^([A-Za-z0-9\s]+?\s+of)\s+(.+?)\s+&\s+(.+)$/i);
+        if (prefixMatch) {
+            const prefix = prefixMatch[1].trim();
+            const suffix1 = prefixMatch[2].trim();
+            const suffix2 = prefixMatch[3].trim();
+            if (prefix && suffix1 && suffix2) {
+                return [`${prefix} ${suffix1}`, `${prefix} ${suffix2}`];
+            }
+        }
+
+        const parts = str.split(/\s*(?:&|and)\s*/i).map(p => p.trim()).filter(Boolean);
+        if (parts.length >= 2) {
+            return parts;
+        }
+
+        return [str, `${str} (Secondary)`];
+    }
+
     root.EmployeeDirectory = Object.freeze({
         createManualPersonId,
         getEmployeeSource,
@@ -176,6 +208,7 @@
         isActingPosition,
         getStaffingSummary,
         getDepartmentCounts,
-        suggestCombinedTitle
+        suggestCombinedTitle,
+        suggestSplitTitles
     });
 })(globalThis);
