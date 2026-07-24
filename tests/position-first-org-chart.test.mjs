@@ -22,11 +22,16 @@ test("app has a shared position-first data model", () => {
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
-test("app exposes a login surface before authenticated initialization", () => {
+test("app exposes optional Microsoft Admin sign-in without blocking Viewers", () => {
     assert.match(htmlSource, /id="login-overlay"/);
-    assert.match(htmlSource, /id="login-form"/);
-    assert.match(htmlSource, /id="login-password"/);
-    assert.match(htmlSource, /id="btn-login-submit"/);
+    assert.match(htmlSource, /id="btn-login-sso"/);
+    assert.match(htmlSource, /id="btn-continue-viewer"/);
+    assert.match(htmlSource, /id="btn-admin-login"/);
+    assert.doesNotMatch(
+        htmlSource,
+        /id="login-form"|id="login-password"|id="btn-login-submit"/
+    );
+    assert.match(appSource, /hideLoginOverlay\(\);[\s\S]+appStarted = true;[\s\S]+await init\(\)/);
     assert.equal(existsSync(loginSsoApiPath), true);
 });
 

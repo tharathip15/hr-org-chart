@@ -54,21 +54,11 @@
                 <i data-lucide="lock-keyhole"></i>
             </div>
             <h2 id="login-title">Sign in</h2>
-            <p>Enter your access password to open the organization chart.</p>
-            <form id="login-form" class="login-form">
-                <div class="form-group">
-                    <label for="login-password">Password</label>
-                    <input type="password" id="login-password" autocomplete="current-password" required placeholder="Enter password">
-                </div>
-                <div id="login-error-msg" class="login-error" role="alert" style="display: none;">
-                    <i data-lucide="alert-circle"></i>
-                    <span>Incorrect password. Please try again.</span>
-                </div>
-                <button type="submit" class="btn btn-primary btn-block" id="btn-login-submit">
-                    <i data-lucide="log-in"></i> Sign In
-                </button>
-            </form>
-            <div class="login-divider"><span>or</span></div>
+            <p>Anyone can view the organization chart. Administrators sign in with Microsoft to edit.</p>
+            <div id="login-error-msg" class="login-error" role="alert" style="display: none;">
+                <i data-lucide="alert-circle"></i>
+                <span>Microsoft sign-in failed. Please try again.</span>
+            </div>
             <button type="button" class="btn btn-secondary btn-block" id="btn-login-sso">
                 <svg viewBox="0 0 23 23" width="16" height="16" fill="currentColor" aria-hidden="true">
                     <path d="M0 0h11v11H0z" fill="#f25022"></path>
@@ -77,6 +67,9 @@
                     <path d="M12 12h11v11H12z" fill="#ffb900"></path>
                 </svg>
                 Sign in with Microsoft
+            </button>
+            <button type="button" class="btn btn-secondary btn-block" id="btn-continue-viewer">
+                Continue as Viewer
             </button>
         </div>
     </div>
@@ -158,6 +151,9 @@
                     </button>
                     <button class="btn btn-secondary" id="btn-sync-microsoft" style="margin-right: 8px;">
                         <i data-lucide="refresh-cw"></i> Sync Microsoft 365
+                    </button>
+                    <button class="btn btn-secondary" id="btn-admin-login" style="margin-right: 8px;">
+                        <i data-lucide="shield-check"></i> Admin Sign in
                     </button>
                     <button class="btn btn-primary" id="btn-add-employee">
                         <i data-lucide="user-plus"></i> Add Employee
@@ -456,6 +452,6 @@
 
     <script src="hierarchy-utils.js?v=1"></script>
     <script src="employee-utils.js?v=1"></script>
-    <script src="app.js?v=3.6"></script>
+    <script src="app.js?v=3.9"></script>
 </body>
 </html>

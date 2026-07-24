@@ -530,6 +530,410 @@ const PREFERENCES_API_URL = "/api/preferences";
 const PHOTO_MAX_SIZE = 256;
 const PHOTO_QUALITY = 0.82;
 
+// Authentication and cookie SSO
+const SESSION_API_URL = "/api/session";
+const CONFIG_API_URL = "/api/config";
+const MICROSOFT_STATE_STORAGE_KEY = "hr_org_microsoft_state";
+const EXPECTED_SILENT_ERRORS = new Set([
+    "login_required",
+    "interaction_required",
+    "consent_required"
+]);
+let authSession = null;
+let appStarted = false;
+let runtimeConfig = {
+    microsoft: {
+        enabled: false,
+        tenantId: "",
+        clientId: ""
+    }
+};
+
+function applyAuthSession(session) {
+    authSession = session?.identity
+        ? {
+            identity: session.identity,
+            csrfToken: session.csrfToken || "",
+            canEdit: session.identity.canEdit === true
+        }
+        : null;
+    document.body.classList.toggle("role-viewer", !authSession?.canEdit);
+    updateAuthControls();
+}
+
+function updateAuthControls() {
+    const button = document.getElementById("btn-admin-login");
+    if (!button) return;
+    const isAdmin = authSession?.canEdit === true;
+    button.innerHTML = isAdmin
+        ? `<i data-lucide="log-out"></i> Sign out Admin`
+        : `<i data-lucide="shield-check"></i> Admin Sign in`;
+    button.title = isAdmin
+        ? "Sign out of the HR Org Chart only"
+        : "Sign in with Microsoft as an administrator";
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function showLoginOverlay(message = "") {
+    const overlay = document.getElementById("login-overlay");
+    const error = document.getElementById("login-error-msg");
+    const errorText = error?.querySelector("span");
+    if (error && errorText) {
+        errorText.textContent = message || "Microsoft sign-in failed. Please try again.";
+        error.style.display = message ? "flex" : "none";
+    }
+    overlay?.classList.add("active");
+    document.getElementById("btn-login-sso")?.focus();
+}
+
+function hideLoginOverlay() {
+    document.getElementById("login-overlay")?.classList.remove("active");
+    const error = document.getElementById("login-error-msg");
+    if (error) error.style.display = "none";
+}
+
+async function authenticatedFetch(input, options = {}) {
+    const {
+        suppressAuthFeedback = false,
+        ...fetchOptions
+    } = options;
+    const method = String(fetchOptions.method || "GET").toUpperCase();
+    const headers = new Headers(fetchOptions.headers || {});
+    if (
+        !["GET", "HEAD", "OPTIONS"].includes(method)
+        && authSession?.csrfToken
+    ) {
+        headers.set("X-CSRF-Token", authSession.csrfToken);
+    }
+
+    const response = await fetch(input, {
+        ...fetchOptions,
+        method,
+        headers,
+        credentials: "same-origin"
+    });
+    if (!suppressAuthFeedback && response.status === 401) {
+        applyAuthSession(null);
+        hideLoginOverlay();
+        showNotification(
+            "Admin session expired. You are now viewing as Anonymous Viewer.",
+            "error"
+        );
+    } else if (!suppressAuthFeedback && response.status === 403) {
+        showNotification(
+            "Viewer access is read-only. An HR Admin or Portal Admin is required to edit.",
+            "error"
+        );
+    }
+    return response;
+}
+
+async function readServerSession() {
+    try {
+        const response = await authenticatedFetch(SESSION_API_URL, {
+            suppressAuthFeedback: true,
+            headers: { Accept: "application/json" }
+        });
+        if (!response.ok) {
+            applyAuthSession(null);
+            return null;
+        }
+        const session = await response.json();
+        applyAuthSession(session);
+        return session;
+    } catch (error) {
+        console.warn("Unable to read the current HR session:", error);
+        applyAuthSession(null);
+        return null;
+    }
+}
+
+async function loadRuntimeConfig() {
+    try {
+        const response = await authenticatedFetch(CONFIG_API_URL, {
+            suppressAuthFeedback: true,
+            headers: { Accept: "application/json" }
+        });
+        if (!response.ok) return;
+        const config = await response.json();
+        const microsoft = config.microsoft || {
+            tenantId: config.tenantId,
+            clientId: config.clientId
+        };
+        const tenantId = microsoft.tenantId || "";
+        const clientId = microsoft.clientId || "";
+        runtimeConfig = {
+            ...config,
+            microsoft: {
+                ...microsoft,
+                enabled: microsoft.enabled !== false && Boolean(tenantId && clientId),
+                tenantId,
+                clientId
+            }
+        };
+    } catch (error) {
+        console.warn("Runtime configuration unavailable; continuing as Viewer.", error);
+    }
+}
+
+function clearMicrosoftCallbackUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("code");
+    url.searchParams.delete("state");
+    url.searchParams.delete("error");
+    url.searchParams.delete("error_description");
+    url.searchParams.delete("pfig_sso");
+    window.history.replaceState(
+        {},
+        document.title,
+        `${url.pathname}${url.search}${url.hash}`
+    );
+}
+
+function beginMicrosoftSignIn() {
+    beginMicrosoftSignInAsync().catch(error => {
+        console.error("Microsoft sign-in setup failed:", error);
+        showLoginOverlay("Microsoft sign-in could not be started. Please try again.");
+    });
+}
+
+function toBase64Url(bytes) {
+    let binary = "";
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+async function createPkceChallenge(codeVerifier) {
+    const data = new TextEncoder().encode(codeVerifier);
+    const digest = await window.crypto.subtle.digest("SHA-256", data);
+    return toBase64Url(new Uint8Array(digest));
+}
+
+async function beginMicrosoftSignInAsync({ prompt = "", silent = false } = {}) {
+    const microsoft = runtimeConfig.microsoft || {};
+    if (!microsoft.enabled || !microsoft.tenantId || !microsoft.clientId) {
+        if (!silent) {
+            showLoginOverlay("Microsoft sign-in is not configured for this environment.");
+        }
+        return false;
+    }
+
+    const state = window.crypto?.randomUUID?.()
+        || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const nonce = window.crypto?.randomUUID?.()
+        || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const verifierBytes = window.crypto.getRandomValues(new Uint8Array(32));
+    const codeVerifier = toBase64Url(verifierBytes);
+    const codeChallenge = await createPkceChallenge(codeVerifier);
+    sessionStorage.setItem(
+        MICROSOFT_STATE_STORAGE_KEY,
+        JSON.stringify({ state, nonce, codeVerifier, silent })
+    );
+
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const authorizeUrl = new URL(
+        `https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/authorize`
+    );
+    const authorizeParams = {
+        client_id: microsoft.clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        response_mode: "query",
+        scope: "openid profile email",
+        state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256"
+    };
+    if (prompt) authorizeParams.prompt = prompt;
+    authorizeUrl.search = new URLSearchParams(authorizeParams).toString();
+    window.location.assign(authorizeUrl.toString());
+    return true;
+}
+
+async function processMicrosoftCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code") || "";
+    const returnedState = params.get("state") || "";
+    const authErrorCode = params.get("error") || "";
+    const authErrorDescription = params.get("error_description") || "";
+    if (!code && !authErrorCode && !authErrorDescription) {
+        return { handled: false, session: null };
+    }
+
+    let savedState = null;
+    try {
+        savedState = JSON.parse(
+            sessionStorage.getItem(MICROSOFT_STATE_STORAGE_KEY) || "null"
+        );
+    } catch (storageError) {
+        console.warn("Unable to read Microsoft sign-in state:", storageError);
+    }
+    sessionStorage.removeItem(MICROSOFT_STATE_STORAGE_KEY);
+    const silentIntent = savedState?.silent === true
+        || params.get("pfig_sso") === "1";
+    clearMicrosoftCallbackUrl();
+
+    try {
+        if (authErrorCode || authErrorDescription) {
+            if (
+                savedState?.silent
+                && EXPECTED_SILENT_ERRORS.has(authErrorCode)
+            ) {
+                return { handled: true, session: null };
+            }
+            throw new Error(authErrorDescription || authErrorCode);
+        }
+        if (
+            !code
+            || !savedState?.state
+            || !savedState?.nonce
+            || !savedState?.codeVerifier
+            || returnedState !== savedState.state
+        ) {
+            throw new Error(
+                "Microsoft sign-in could not be verified. Please try again."
+            );
+        }
+
+        const microsoft = runtimeConfig.microsoft || {};
+        const redirectUri = `${window.location.origin}${window.location.pathname}`;
+        const tokenResponse = await fetch(
+            `https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/token`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                    client_id: microsoft.clientId,
+                    code,
+                    code_verifier: savedState.codeVerifier,
+                    redirect_uri: redirectUri,
+                    grant_type: "authorization_code",
+                    scope: "openid profile email"
+                })
+            }
+        );
+        const tokenResult = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenResult.id_token) {
+            throw new Error(
+                tokenResult.error_description
+                || tokenResult.error
+                || "Microsoft token exchange failed"
+            );
+        }
+
+        const response = await authenticatedFetch("/api/login-sso", {
+            method: "POST",
+            suppressAuthFeedback: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                idToken: tokenResult.id_token,
+                nonce: savedState.nonce
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.error || "Microsoft sign-in failed");
+        }
+
+        applyAuthSession(result);
+        hideLoginOverlay();
+        return { handled: true, session: result };
+    } catch (errorValue) {
+        if (savedState?.silent || silentIntent) {
+            console.warn("Silent Microsoft sign-in failed:", errorValue);
+            applyAuthSession(null);
+            hideLoginOverlay();
+            showNotification(
+                "Microsoft sign-in could not be completed. Continuing as Anonymous Viewer.",
+                "error"
+            );
+            return { handled: true, session: null };
+        }
+        applyAuthSession(null);
+        showLoginOverlay(errorValue.message || "Microsoft sign-in failed");
+        return { handled: true, session: null };
+    }
+}
+
+async function signOutHrAdmin() {
+    if (authSession?.csrfToken) {
+        const response = await authenticatedFetch("/api/logout", {
+            method: "POST"
+        });
+        if (!response.ok) {
+            throw new Error(`HR sign-out failed with status ${response.status}`);
+        }
+    }
+    applyAuthSession(null);
+    hideLoginOverlay();
+    showNotification(
+        "Signed out. You are viewing as Anonymous Viewer.",
+        "success"
+    );
+}
+
+function setupAuthListeners() {
+    document.getElementById("btn-login-sso")
+        ?.addEventListener("click", beginMicrosoftSignIn);
+    document.getElementById("btn-continue-viewer")
+        ?.addEventListener("click", hideLoginOverlay);
+    document.getElementById("btn-admin-login")?.addEventListener("click", () => {
+        if (authSession?.canEdit) {
+            signOutHrAdmin().catch(error => {
+                console.error("HR sign-out failed:", error);
+                showNotification(
+                    "HR sign-out could not be completed. Please try again.",
+                    "error"
+                );
+            });
+            return;
+        }
+        beginMicrosoftSignIn();
+    });
+}
+
+async function startApplication() {
+    if (appStarted) return;
+    await loadRuntimeConfig();
+    const callback = await processMicrosoftCallback();
+    const serverSession = callback.session || await readServerSession();
+
+    if (
+        !callback.handled
+        && !serverSession
+        && runtimeConfig.microsoft?.enabled
+        && new URL(window.location.href).searchParams.get("pfig_sso") === "1"
+    ) {
+        try {
+            const redirected = await beginMicrosoftSignInAsync({
+                prompt: "none",
+                silent: true
+            });
+            if (redirected) return;
+        } catch (error) {
+            console.warn("Silent Microsoft sign-in could not be started:", error);
+            applyAuthSession(null);
+            hideLoginOverlay();
+            showNotification(
+                "Microsoft sign-in could not be completed. Continuing as Anonymous Viewer.",
+                "error"
+            );
+        }
+    }
+
+    clearMicrosoftCallbackUrl();
+    if (!authSession) applyAuthSession(null);
+    if (!document.getElementById("login-overlay")?.classList.contains("active")) {
+        hideLoginOverlay();
+    }
+    appStarted = true;
+    await init();
+}
+
 // Loader helper functions
 function setLoaderProgress(percent, statusText) {
     const progressBar = document.getElementById("loader-progress-bar");
@@ -672,7 +1076,7 @@ async function compressAllEmployeePhotos() {
 // Load data from the server database. LocalStorage is only a fallback for file:// previews.
 async function loadData() {
     try {
-        const response = await fetch(EMPLOYEES_API_URL);
+        const response = await authenticatedFetch(EMPLOYEES_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -717,7 +1121,7 @@ async function saveData() {
     saveLocalBackup();
 
     try {
-        const response = await fetch(EMPLOYEES_API_URL, {
+        const response = await authenticatedFetch(EMPLOYEES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(employees)
@@ -862,7 +1266,7 @@ function saveLocalPositionsBackup() {
 
 async function loadPositions() {
     try {
-        const response = await fetch(POSITIONS_API_URL);
+        const response = await authenticatedFetch(POSITIONS_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -962,7 +1366,7 @@ async function savePositions() {
     }));
 
     try {
-        const response = await fetch(POSITIONS_API_URL, {
+        const response = await authenticatedFetch(POSITIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -1003,7 +1407,7 @@ function getPreferencesPayload() {
 
 async function loadPreferences() {
     try {
-        const response = await fetch(PREFERENCES_API_URL);
+        const response = await authenticatedFetch(PREFERENCES_API_URL);
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
@@ -1037,7 +1441,7 @@ async function savePreferences() {
     }
 
     try {
-        const response = await fetch(PREFERENCES_API_URL, {
+        const response = await authenticatedFetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(preferences)
@@ -1427,7 +1831,7 @@ function setupEventListeners() {
             if (window.lucide) window.lucide.createIcons();
             
             try {
-                const response = await fetch("/api/sync-microsoft", { method: "POST" });
+                const response = await authenticatedFetch("/api/sync-microsoft", { method: "POST" });
                 const result = await response.json();
                 
                 if (response.ok && result.ok) {
@@ -3625,6 +4029,7 @@ function getDragStartCoordinates(position, card) {
 }
 
 function handleCardDragStart(e) {
+    if (document.body.classList.contains("role-viewer")) return;
     if (e.button !== 0) return;
     if (e.target.closest(".node-toggle-btn") || e.target.closest("input") || e.target.closest("a")) return;
     
@@ -3795,7 +4200,8 @@ async function restoreSavedLayout() {
 // Run application on load
 // Run application on load
 window.addEventListener("DOMContentLoaded", () => {
-    init();
+    setupAuthListeners();
+    startApplication();
     
     const treeResizeObserver = new ResizeObserver(() => {
         drawConnections();
@@ -3937,7 +4343,7 @@ function applySelectedAnnotationStyle(changes) {
 
 async function loadAnnotations() {
     try {
-        const response = await fetch(ANNOTATIONS_API_URL);
+        const response = await authenticatedFetch(ANNOTATIONS_API_URL);
         if (response.ok) {
             annotations = await response.json();
             if (!Array.isArray(annotations)) annotations = [];
@@ -3964,7 +4370,7 @@ async function saveAnnotations() {
         console.warn("Failed to write annotations to localStorage:", error);
     }
     try {
-        const response = await fetch(ANNOTATIONS_API_URL, {
+        const response = await authenticatedFetch(ANNOTATIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(annotations)

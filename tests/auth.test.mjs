@@ -16,6 +16,14 @@ const logoutSource = readFileSync(
   new URL("../api/logout.js", import.meta.url),
   "utf8",
 );
+const browserSource = readFileSync(
+  new URL("../app.js", import.meta.url),
+  "utf8",
+);
+const browserHtml = readFileSync(
+  new URL("../index.html", import.meta.url),
+  "utf8",
+);
 
 const TEST_SESSION_SECRET =
   "test-only-hr-session-secret-with-at-least-32-characters";
@@ -712,6 +720,19 @@ test("legacy password and bearer authentication routes are removed", () => {
     loginSsoSource,
     /ADMIN_PASSWORD|READER_PASSWORD|AUTH_SECRET|Bearer/,
   );
+});
+
+test("the browser exposes no legacy password or bearer session surface", () => {
+  assert.doesNotMatch(
+    browserHtml,
+    /id="login-form"|id="login-password"|id="btn-login-submit"/,
+  );
+  assert.doesNotMatch(
+    browserSource,
+    /hr_org_auth_session|Authorization.*Bearer|persistAuthSession|readStoredAuthSession/,
+  );
+  assert.match(browserSource, /credentials:\s*"same-origin"/);
+  assert.match(browserSource, /X-CSRF-Token/);
 });
 
 test("the legacy Python password and bearer mutation server is decommissioned", () => {
