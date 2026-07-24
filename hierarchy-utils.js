@@ -143,11 +143,56 @@
         return result;
     }
 
+    function combinePositions(sourcePositions, primaryPositionId, secondaryPositionIds, options = {}) {
+        const positions = Array.isArray(sourcePositions)
+            ? sourcePositions.map(position => ({ ...position }))
+            : [];
+
+        const primaryId = toInteger(primaryPositionId);
+        const secIds = new Set(
+            (Array.isArray(secondaryPositionIds) ? secondaryPositionIds : [secondaryPositionIds])
+                .map(toInteger)
+                .filter(id => id !== null && id !== primaryId)
+        );
+
+        if (primaryId === null || !positions.some(position => toInteger(position.id) === primaryId)) {
+            return { positions, changed: false, error: "invalid_primary_id" };
+        }
+
+        const primaryPosition = positions.find(position => toInteger(position.id) === primaryId);
+
+        if (options.title) primaryPosition.title = String(options.title).trim();
+        if (options.department) primaryPosition.department = String(options.department).trim();
+        if (options.notes !== undefined) primaryPosition.notes = String(options.notes).trim();
+        if (options.managerId !== undefined) {
+            const managerId = toInteger(options.managerId);
+            if (managerId !== primaryId) primaryPosition.managerId = managerId;
+        }
+
+        positions.forEach(position => {
+            const currentManagerId = toInteger(position.managerId);
+            if (currentManagerId !== null && secIds.has(currentManagerId)) {
+                position.managerId = primaryId;
+            }
+        });
+
+        const nextPositions = positions.filter(position => !secIds.has(toInteger(position.id)));
+        const repairResult = repairPositionHierarchy(nextPositions);
+
+        return {
+            positions: repairResult.positions,
+            changed: true,
+            primaryPosition: repairResult.positions.find(position => toInteger(position.id) === primaryId) || primaryPosition
+        };
+    }
+
     root.OrgHierarchy = Object.freeze({
         repairPositionHierarchy,
         validatePositionParent,
         repairEmployeeManagers,
         isPrimaryEmployeePosition,
-        getDescendantPositionIds
+        getDescendantPositionIds,
+        combinePositions
     });
 })(globalThis);
+

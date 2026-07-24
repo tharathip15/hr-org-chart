@@ -172,9 +172,15 @@
                         <h2 id="current-view-title">Overall Organization</h2>
                         <span id="current-view-desc">Showing the organization as of today</span>
                     </div>
-                    <div class="chart-mode-switch" role="group" aria-label="Organization chart timeframe">
-                        <button type="button" class="chart-mode-btn active" data-chart-mode="current" aria-pressed="true">Current Chart</button>
-                        <button type="button" class="chart-mode-btn" data-chart-mode="future" aria-pressed="false">Future Chart</button>
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <div class="chart-mode-switch" role="group" aria-label="Organization chart timeframe">
+                            <button type="button" class="chart-mode-btn active" data-chart-mode="current" aria-pressed="true">Current Chart</button>
+                            <button type="button" class="chart-mode-btn" data-chart-mode="future" aria-pressed="false">Future Chart</button>
+                        </div>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-consolidate-roles" aria-pressed="true" title="สลับการแสดงผล: รวบคนที่มีหลายตำแหน่งเป็น Card เดียวบน Overview" style="height: 34px; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-md); font-weight: 600; cursor: pointer; transition: all var(--transition-fast);">
+                            <i data-lucide="layers" style="width: 14px; height: 14px;"></i>
+                            <span>รวบคนที่มีหลายตำแหน่ง</span>
+                        </button>
                     </div>
                 </div>
                 <div class="chart-control-actions">
@@ -485,11 +491,59 @@
                 <p id="position-lifecycle-guidance-text">Closed positions remain in history for audit and reporting. They disappear from the Current Chart after the effective date.</p>
             </div>
         </div>
-        <div class="drawer-footer position-lifecycle-footer">
+                <div class="drawer-footer position-lifecycle-footer">
             <button type="button" class="btn btn-danger btn-close-position" id="btn-close-position"><i data-lucide="archive"></i> Close position</button>
             <button type="button" class="btn btn-primary" id="btn-save-position-lifecycle">Save changes</button>
         </div>
     </aside>
+
+    <!-- Combine Positions Modal -->
+    <div class="modal-overlay" id="combine-positions-modal-overlay"></div>
+    <div class="modal combine-positions-modal" id="combine-positions-modal" role="dialog" aria-modal="true" aria-labelledby="combine-modal-title">
+        <div class="modal-header">
+            <h3 id="combine-modal-title">รวบตำแหน่งงาน (Combine Dual Positions)</h3>
+            <button class="close-btn" id="close-combine-positions-modal" type="button" aria-label="Close modal"><i data-lucide="x"></i></button>
+        </div>
+        <div class="modal-body" style="padding: 20px;">
+            <div style="margin-bottom: 16px; background-color: var(--bg-tertiary); padding: 12px 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+                <div style="font-size: 11px; color: var(--text-tertiary); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">พนักงาน (Employee)</div>
+                <div id="combine-employee-name" style="font-size: 16px; font-weight: 700; color: var(--text-primary); margin-top: 2px;">-</div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label style="font-weight: 600; margin-bottom: 6px; display: block; font-size: 13px;">ตำแหน่งงานที่จะนำมารวมกัน (Positions to combine)</label>
+                <div id="combine-positions-checkbox-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 150px; overflow-y: auto; background: var(--bg-secondary); padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label for="combine-position-title" style="font-weight: 600; margin-bottom: 6px; display: block; font-size: 13px;">ชื่อตำแหน่งใหม่ / ตำแหน่งรวม (Combined Position Title) <span class="required" style="color: var(--danger-color);">*</span></label>
+                <input type="text" id="combine-position-title" required placeholder="เช่น Procurement and Logistics Manager" style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+            </div>
+
+            <div class="form-row two-cols" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                <div class="form-group">
+                    <label for="combine-position-department" style="font-weight: 600; margin-bottom: 6px; display: block; font-size: 13px;">ฝ่าย / แผนก (Department)</label>
+                    <input type="text" id="combine-position-department" list="combine-dept-datalist" style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+                    <datalist id="combine-dept-datalist"></datalist>
+                </div>
+                <div class="form-group">
+                    <label for="combine-position-manager" style="font-weight: 600; margin-bottom: 6px; display: block; font-size: 13px;">ขึ้นตรงกับ (Reports To)</label>
+                    <input type="search" id="combine-position-manager" list="combine-manager-datalist" autocomplete="off" placeholder="Top Level" style="width: 100%; padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary);">
+                    <datalist id="combine-manager-datalist"></datalist>
+                </div>
+            </div>
+
+            <div style="font-size: 12px; color: var(--accent-primary); background-color: var(--accent-light); padding: 10px 12px; border-radius: var(--radius-sm); display: flex; align-items: flex-start; gap: 8px;">
+                <i data-lucide="info" style="width: 16px; height: 16px; flex-shrink: 0; margin-top: 2px;"></i>
+                <span>ลูกน้องของตำแหน่งเดิมทั้งหมดจะถูกย้ายมารายงานตัวต่อตำแหน่งรวมนี้โดยอัตโนมัติ</span>
+            </div>
+        </div>
+        <div class="modal-footer" style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 8px;">
+            <button type="button" class="btn btn-secondary" id="btn-cancel-combine">ยกเลิก</button>
+            <button type="button" class="btn btn-primary" id="btn-submit-combine">ยืนยันการรวบตำแหน่ง</button>
+        </div>
+    </div>
 
     <!-- Employee Form Modal -->
     <div class="modal-overlay" id="form-modal-overlay"></div>
@@ -499,6 +553,7 @@
             <button class="close-btn" id="close-form-modal"><i data-lucide="x"></i></button>
         </div>
         <form id="employee-form">
+
             <input type="hidden" id="form-employee-id">
             <input type="hidden" id="form-person-id">
             <input type="hidden" id="form-photo-data">

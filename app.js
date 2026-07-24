@@ -511,6 +511,7 @@ let collapsedNodes = new Set();
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
+let consolidateDualRoles = localStorage.getItem("hr_org_chart_consolidate_dual_roles") !== "false";
 let currentScale = 1.0;
 let panX = 0;
 let panY = 0;
@@ -525,6 +526,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "hr_org_sidebar_collapsed";
 let isDragging = false;
 let startX = 0;
 let startY = 0;
+let dragDropCombineTargetId = null;
 
 // DOM Elements
 const viewport = document.getElementById("chart-viewport");
@@ -2029,6 +2031,24 @@ function setupEventListeners() {
         button.addEventListener("click", () => setChartMode(button.dataset.chartMode));
     });
 
+    const btnToggleConsolidate = document.getElementById("btn-toggle-consolidate-roles");
+    if (btnToggleConsolidate) {
+        btnToggleConsolidate.addEventListener("click", () => {
+            if (!isOverallView()) return;
+            consolidateDualRoles = !consolidateDualRoles;
+            localStorage.setItem("hr_org_chart_consolidate_dual_roles", String(consolidateDualRoles));
+            updateConsolidateRolesUI();
+            renderAll();
+            fitToScreen();
+            showNotification(
+                consolidateDualRoles
+                    ? "เปิดการรวบแสดงผลคนที่มีหลายตำแหน่งบน Overview"
+                    : "แสดงผลตำแหน่งแยกเป็นแต่ละ Card บน Overview",
+                "info"
+            );
+        });
+    }
+
     // Add Employee Button
     document.getElementById("btn-add-employee").addEventListener("click", () => {
         openEmployeeForm();
@@ -2149,6 +2169,14 @@ function setupEventListeners() {
     document.getElementById("position-modal-overlay").addEventListener("click", closePositionsModal);
     document.getElementById("close-employee-management-modal").addEventListener("click", closeEmployeeManagementModal);
     document.getElementById("employee-management-modal-overlay").addEventListener("click", closeEmployeeManagementModal);
+    const closeCombineBtn = document.getElementById("close-combine-positions-modal");
+    if (closeCombineBtn) closeCombineBtn.addEventListener("click", closeCombinePositionsModal);
+    const combineOverlay = document.getElementById("combine-positions-modal-overlay");
+    if (combineOverlay) combineOverlay.addEventListener("click", closeCombinePositionsModal);
+    const cancelCombineBtn = document.getElementById("btn-cancel-combine");
+    if (cancelCombineBtn) cancelCombineBtn.addEventListener("click", closeCombinePositionsModal);
+    const submitCombineBtn = document.getElementById("btn-submit-combine");
+    if (submitCombineBtn) submitCombineBtn.addEventListener("click", handleCombinePositionsSubmit);
     document.getElementById("vacant-positions-card").addEventListener("click", openVacancyReportModal);
     document.getElementById("acting-positions-card").addEventListener("click", openActingReportModal);
     document.getElementById("close-vacancy-report-modal").addEventListener("click", closeVacancyReportModal);
@@ -2372,15 +2400,112 @@ function getChartModePositions() {
     return PositionLifecycle.filterVisiblePositions(positions, chartMode);
 }
 
+function getOverviewCardMap(modePositions) {
+    const cardMap = new Map();
+    if (!isOverallView()) {
+        modePositions.forEach(p => cardMap.set(p.id, p.id));
+        return cardMap;
+    }
+
+    const employeeGroups = new Map();
+    modePositions.forEach(pos => {
+        const emp = getAssignedEmployee(pos);
+        if (!emp) {
+            cardMap.set(pos.id, pos.id);
+            return;
+        }
+        const key = emp.personId || `emp-${emp.id}`;
+        if (!employeeGroups.has(key)) employeeGroups.set(key, []);
+        employeeGroups.get(key).push(pos);
+    });
+
+    employeeGroups.forEach(group => {
+        const primaryId = group[0].id;
+        group.forEach(pos => {
+            cardMap.set(pos.id, primaryId);
+        });
+    });
+
+    return cardMap;
+}
+
+function getConsolidatedOverviewPositions(modePositions) {
+    if (!isOverallView()) {
+        return modePositions;
+    }
+
+    const employeeGroups = new Map();
+    modePositions.forEach(pos => {
+        const emp = getAssignedEmployee(pos);
+        if (!emp) return;
+        const key = emp.personId || `emp-${emp.id}`;
+        if (!employeeGroups.has(key)) employeeGroups.set(key, []);
+        employeeGroups.get(key).push(pos);
+    });
+
+    const result = [];
+    const processedKeys = new Set();
+
+    modePositions.forEach(pos => {
+        const emp = getAssignedEmployee(pos);
+        if (!emp) {
+            result.push(pos);
+            return;
+        }
+
+        const key = emp.personId || `emp-${emp.id}`;
+        const group = employeeGroups.get(key) || [];
+
+        if (group.length <= 1) {
+            result.push(pos);
+            return;
+        }
+
+        if (processedKeys.has(key)) return;
+        processedKeys.add(key);
+
+        const primaryPos = group[0];
+        const rawTitles = group.map(p => p.title || "Open Position");
+        const combinedTitle = EmployeeDirectory.suggestCombinedTitle ? EmployeeDirectory.suggestCombinedTitle(rawTitles) : rawTitles.join(" & ");
+
+        result.push({
+            ...primaryPos,
+            displayTitle: combinedTitle,
+            consolidatedIds: group.map(p => p.id)
+        });
+    });
+
+    return result;
+}
+
 function getChartDisplayPositions() {
     const modePositions = getChartModePositions();
     return selectedDept === "All"
-        ? modePositions
+        ? getConsolidatedOverviewPositions(modePositions)
         : modePositions.filter(position => position.department === selectedDept);
 }
 
 function getVisibleReportingManagerId(position, visiblePositionIds) {
-    return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
+    if (!isOverallView()) {
+        return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
+    }
+
+    const modePositions = getChartModePositions();
+    const cardMap = getOverviewCardMap(modePositions);
+
+    let directManagerId = position?.managerId === null || position?.managerId === undefined
+        ? null
+        : Number(position.managerId);
+
+    if (directManagerId !== null && cardMap.has(directManagerId)) {
+        directManagerId = cardMap.get(directManagerId);
+    }
+
+    const targetPosition = directManagerId !== (position?.managerId ?? null)
+        ? { ...position, managerId: directManagerId }
+        : position;
+
+    return PositionLifecycle.getNearestVisibleManagerId(targetPosition, positions, visiblePositionIds);
 }
 
 function getCollapsedHiddenPositionIds(modePositions) {
@@ -2411,12 +2536,24 @@ function getCollapsedHiddenPositionIds(modePositions) {
     return hiddenIds;
 }
 
+function updateConsolidateRolesUI() {
+    const btn = document.getElementById("btn-toggle-consolidate-roles");
+    if (!btn) return;
+    const active = consolidateDualRoles && isOverallView();
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", String(consolidateDualRoles));
+    btn.style.opacity = isOverallView() ? "1" : "0.5";
+    btn.disabled = !isOverallView();
+}
+
 function updateChartModeControls() {
     document.querySelectorAll("[data-chart-mode]").forEach(button => {
         const isActive = button.dataset.chartMode === chartMode;
         button.classList.toggle("active", isActive);
         button.setAttribute("aria-pressed", String(isActive));
     });
+
+    updateConsolidateRolesUI();
 
     const title = document.getElementById("current-view-title");
     const desc = document.getElementById("current-view-desc");
@@ -2738,7 +2875,7 @@ function isActingPosition(position) {
 }
 
 function getPositionTitle(position) {
-    return (position?.title || "Open Position").trim();
+    return (position?.displayTitle || position?.title || "Open Position").trim();
 }
 
 function getPositionDepartment(position) {
@@ -3247,6 +3384,9 @@ function showEmployeeDetails(id) {
                         `;
                     }).join("")}
                 </div>
+                <button type="button" class="btn btn-primary" id="btn-open-combine-modal" style="margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
+                    <i data-lucide="layers"></i> รวบตำแหน่งงานให้เป็นคนเดียว (Combine Positions)
+                </button>
             </div>
         `;
     }
@@ -3302,6 +3442,13 @@ function showEmployeeDetails(id) {
         ` : ""}
     `;
     
+    const btnCombine = document.getElementById("btn-open-combine-modal");
+    if (btnCombine) {
+        btnCombine.addEventListener("click", () => {
+            openCombinePositionsModal(id);
+        });
+    }
+
     lucide.createIcons();
 }
 
@@ -3744,6 +3891,153 @@ function openEmployeeManagementModal() {
 function closeEmployeeManagementModal() {
     document.getElementById("employee-management-modal-overlay").classList.remove("active");
     document.getElementById("employee-management-modal").classList.remove("active");
+}
+
+function openCombinePositionsModal(employeeId, selectedPosIds = null) {
+    if (document.body.classList.contains("role-viewer")) return false;
+
+    const emp = employees.find(e => e.id === employeeId);
+    if (!emp) return false;
+
+    const assignedPositions = positions.filter(p => {
+        const assigned = getAssignedEmployee(p);
+        return assigned && samePerson(assigned, emp);
+    });
+
+    if (assignedPositions.length < 2) {
+        showNotification("พนักงานคนนี้มีตำแหน่งงานเพียงตำแหน่งเดียว ไม่จำเป็นต้องรวบตำแหน่ง", "info");
+        return false;
+    }
+
+    const preSelectedSet = selectedPosIds ? new Set(selectedPosIds.map(Number)) : null;
+
+    const modal = document.getElementById("combine-positions-modal");
+    const nameEl = document.getElementById("combine-employee-name");
+    if (nameEl) nameEl.innerText = emp.name;
+
+    const checkboxList = document.getElementById("combine-positions-checkbox-list");
+    if (checkboxList) {
+        checkboxList.innerHTML = assignedPositions.map(pos => {
+            const title = getPositionTitle(pos);
+            const dept = getPositionDepartment(pos);
+            const isChecked = preSelectedSet ? preSelectedSet.has(pos.id) : true;
+            return `
+                <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--bg-card); border: 1px solid var(--border-color);">
+                    <input type="checkbox" class="combine-pos-checkbox" data-position-id="${pos.id}" ${isChecked ? "checked" : ""} style="width: 16px; height: 16px; accent-color: var(--accent-primary);">
+                    <span><strong>${escapeHTML(title)}</strong> (${escapeHTML(dept)}) #${pos.id}</span>
+                </label>
+            `;
+        }).join("");
+    }
+
+    const targetPositions = preSelectedSet
+        ? assignedPositions.filter(p => preSelectedSet.has(p.id))
+        : assignedPositions;
+
+    const titles = targetPositions.map(p => getPositionTitle(p));
+    const suggestedTitle = EmployeeDirectory.suggestCombinedTitle ? EmployeeDirectory.suggestCombinedTitle(titles) : titles.join(" & ");
+    const titleInput = document.getElementById("combine-position-title");
+    if (titleInput) titleInput.value = suggestedTitle;
+
+    const primaryPos = targetPositions[0] || assignedPositions[0];
+
+    const deptInput = document.getElementById("combine-position-department");
+    if (deptInput) deptInput.value = primaryPos.department || "";
+    const deptDatalist = document.getElementById("combine-dept-datalist");
+    if (deptDatalist) {
+        const uniqueDepts = [...new Set(positions.map(p => getPositionDepartment(p)))].sort();
+        deptDatalist.innerHTML = uniqueDepts.map(d => `<option value="${escapeHTML(d)}">`).join("");
+    }
+
+    const managerInput = document.getElementById("combine-position-manager");
+    const primaryMgr = primaryPos.managerId !== null
+        ? positions.find(p => p.id === primaryPos.managerId)
+        : null;
+    if (managerInput) managerInput.value = primaryMgr ? getPositionOptionLabel(primaryMgr) : "";
+
+    const managerDatalist = document.getElementById("combine-manager-datalist");
+    if (managerDatalist) {
+        const blockedIds = new Set(assignedPositions.map(p => p.id));
+        managerDatalist.innerHTML = `<option value="Top Level">` + positions
+            .filter(p => !blockedIds.has(p.id))
+            .sort((a, b) => getPositionTitle(a).localeCompare(getPositionTitle(b)))
+            .map(p => `<option value="${escapeHTML(getPositionOptionLabel(p))}">`)
+            .join("");
+    }
+
+    if (modal) modal.dataset.employeeId = employeeId;
+
+    const overlay = document.getElementById("combine-positions-modal-overlay");
+    if (overlay) overlay.classList.add("active");
+    if (modal) modal.classList.add("active");
+    if (window.lucide) window.lucide.createIcons();
+    return true;
+}
+
+function closeCombinePositionsModal() {
+    const overlay = document.getElementById("combine-positions-modal-overlay");
+    const modal = document.getElementById("combine-positions-modal");
+    if (overlay) overlay.classList.remove("active");
+    if (modal) modal.classList.remove("active");
+}
+
+async function handleCombinePositionsSubmit() {
+    if (document.body.classList.contains("role-viewer")) return;
+
+    const modal = document.getElementById("combine-positions-modal");
+    const employeeId = parseInt(modal?.dataset.employeeId, 10);
+    const emp = employees.find(e => e.id === employeeId);
+    if (!emp) return;
+
+    const checkedBoxes = Array.from(document.querySelectorAll(".combine-pos-checkbox:checked"));
+    const selectedPositionIds = checkedBoxes.map(cb => parseInt(cb.dataset.positionId, 10));
+
+    if (selectedPositionIds.length < 2) {
+        showNotification("โปรดเลือกอย่างน้อย 2 ตำแหน่งที่ต้องการนำมารวมกัน", "error");
+        return;
+    }
+
+    const titleInput = document.getElementById("combine-position-title");
+    const newTitle = titleInput ? titleInput.value.trim() : "";
+    if (!newTitle) {
+        showNotification("กรุณาระบุชื่อตำแหน่งงานรวม", "error");
+        if (titleInput) titleInput.focus();
+        return;
+    }
+
+    const deptInput = document.getElementById("combine-position-department");
+    const newDept = deptInput ? deptInput.value.trim() : "";
+    const managerInput = document.getElementById("combine-position-manager");
+    const managerInputValue = managerInput ? managerInput.value : "";
+    const selectedManager = findPositionFromInput(managerInputValue);
+    const newManagerId = selectedManager ? selectedManager.id : null;
+
+    const primaryId = selectedPositionIds[0];
+    const secondaryIds = selectedPositionIds.slice(1);
+
+    const result = OrgHierarchy.combinePositions(positions, primaryId, secondaryIds, {
+        title: newTitle,
+        department: newDept,
+        managerId: newManagerId
+    });
+
+    if (!result.changed) {
+        showNotification("ไม่สามารถรวมตำแหน่งได้", "error");
+        return;
+    }
+
+    positions = result.positions;
+
+    const saved = await savePositions();
+    if (!saved) return;
+
+    closeCombinePositionsModal();
+    closeDetailDrawer();
+    closePositionLifecycleDrawer();
+    renderAll();
+    requestAnimationFrame(fitToScreen);
+
+    showNotification(`รวมตำแหน่งเป็น "${newTitle}" เรียบร้อยแล้ว`, "success");
 }
 
 function renderVacancyReport() {
@@ -4673,6 +4967,52 @@ function handleCardDragMove(e) {
     });
 
     renderAlignmentGuides(snapResult);
+
+    // Check for drop-to-combine target if dragged card belongs to an assigned employee
+    let currentDropTargetId = null;
+    const draggedPos = positions.find(p => p.id === draggedId);
+    const draggedEmp = draggedPos ? getAssignedEmployee(draggedPos) : null;
+
+    if (draggedEmp && activeDragCard) {
+        const draggedRect = activeDragCard.getBoundingClientRect();
+        const draggedCenterX = draggedRect.left + draggedRect.width / 2;
+        const draggedCenterY = draggedRect.top + draggedRect.height / 2;
+
+        document.querySelectorAll(".node-card.absolute-card").forEach(otherCard => {
+            const otherId = parseInt(otherCard.dataset.id, 10);
+            if (otherId === draggedId) return;
+
+            const otherPos = positions.find(p => p.id === otherId);
+            const otherEmp = otherPos ? getAssignedEmployee(otherPos) : null;
+
+            if (otherEmp && samePerson(draggedEmp, otherEmp)) {
+                const otherRect = otherCard.getBoundingClientRect();
+                const distance = Math.hypot(
+                    draggedCenterX - (otherRect.left + otherRect.width / 2),
+                    draggedCenterY - (otherRect.top + otherRect.height / 2)
+                );
+
+                if (distance < 90) {
+                    currentDropTargetId = otherId;
+                }
+            }
+        });
+    }
+
+    document.querySelectorAll(".node-card.drop-combine-target").forEach(card => {
+        if (parseInt(card.dataset.id, 10) !== currentDropTargetId) {
+            card.classList.remove("drop-combine-target");
+        }
+    });
+
+    if (currentDropTargetId !== null) {
+        const targetCard = document.querySelector(`.node-card[data-id="${currentDropTargetId}"]`);
+        if (targetCard) targetCard.classList.add("drop-combine-target");
+        dragDropCombineTargetId = currentDropTargetId;
+    } else {
+        dragDropCombineTargetId = null;
+    }
+
     drawConnections();
 }
 
@@ -4681,6 +5021,37 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointerup", handleCardDragEnd);
     window.removeEventListener("pointercancel", handleCardDragEnd);
     
+    const combineTargetId = dragDropCombineTargetId;
+    document.querySelectorAll(".node-card.drop-combine-target").forEach(card => card.classList.remove("drop-combine-target"));
+    dragDropCombineTargetId = null;
+
+    if (combineTargetId !== null && draggedId !== null && combineTargetId !== draggedId) {
+        const targetPos = positions.find(p => p.id === combineTargetId);
+        const draggedPos = positions.find(p => p.id === draggedId);
+        const emp = draggedPos ? getAssignedEmployee(draggedPos) : null;
+
+        if (targetPos && draggedPos && emp) {
+            if (dragPointerCaptured) {
+                try {
+                    activeDragCard.releasePointerCapture(e.pointerId);
+                } catch (err) {}
+            }
+            if (activeDragCard) activeDragCard.classList.remove("dragging");
+            activeDragCard = null;
+            draggedPositionIds = [];
+            dragStartCoordinates.clear();
+            clearAlignmentGuides();
+            draggedId = null;
+            dragStartClientX = 0;
+            dragStartClientY = 0;
+            dragPointerCaptured = false;
+            cardDragMoved = false;
+
+            openCombinePositionsModal(emp.id, [combineTargetId, draggedPos.id]);
+            return;
+        }
+    }
+
     const shouldPersist = !isLayoutEditingBlocked() && Boolean(activeDragCard && draggedId !== null && cardDragMoved);
     if (activeDragCard && draggedId !== null) {
         if (shouldPersist) {

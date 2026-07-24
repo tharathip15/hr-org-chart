@@ -125,6 +125,45 @@
         }, {});
     }
 
+    function suggestCombinedTitle(titles) {
+        const cleanTitles = (Array.isArray(titles) ? titles : [])
+            .map(t => String(t || "").trim())
+            .filter(Boolean);
+
+        if (cleanTitles.length === 0) return "";
+        if (cleanTitles.length === 1) return cleanTitles[0];
+
+        const splitTitles = cleanTitles.map(t => t.split(/\s+/));
+        const lastWord = splitTitles[0][splitTitles[0].length - 1];
+        const allShareLastWord = splitTitles.every(
+            st => st.length > 1 && st[st.length - 1].toLowerCase() === lastWord.toLowerCase()
+        );
+
+        if (allShareLastWord) {
+            const prefixes = splitTitles.map(st => st.slice(0, st.length - 1).join(" "));
+            return `${prefixes.join(" and ")} ${lastWord}`;
+        }
+
+        let commonPrefixWords = [];
+        const minLength = Math.min(...splitTitles.map(st => st.length));
+        for (let i = 0; i < minLength - 1; i++) {
+            const word = splitTitles[0][i];
+            if (splitTitles.every(st => st[i].toLowerCase() === word.toLowerCase())) {
+                commonPrefixWords.push(word);
+            } else {
+                break;
+            }
+        }
+
+        if (commonPrefixWords.length > 0) {
+            const prefixStr = commonPrefixWords.join(" ");
+            const suffixes = splitTitles.map(st => st.slice(commonPrefixWords.length).join(" "));
+            return `${prefixStr} ${suffixes.join(" & ")}`;
+        }
+
+        return cleanTitles.join(" & ");
+    }
+
     root.EmployeeDirectory = Object.freeze({
         createManualPersonId,
         getEmployeeSource,
@@ -136,6 +175,7 @@
         getPositionNoteText,
         isActingPosition,
         getStaffingSummary,
-        getDepartmentCounts
+        getDepartmentCounts,
+        suggestCombinedTitle
     });
 })(globalThis);
