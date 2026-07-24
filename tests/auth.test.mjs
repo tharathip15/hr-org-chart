@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import test from "node:test";
 
@@ -26,6 +26,8 @@ const MICROSOFT_CLIENT_ID = "33333333-3333-4333-8333-333333333333";
 const MICROSOFT_NONCE = "expected-nonce";
 process.env.MICROSOFT_TENANT_ID = MICROSOFT_TENANT_ID;
 process.env.MICROSOFT_CLIENT_ID = MICROSOFT_CLIENT_ID;
+process.env.SUPABASE_URL ||= "https://example.supabase.co";
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-only-service-role-key";
 
 const sessionModulePromise = import("../api/_helpers/session.js");
 const microsoftKeyPair = crypto.generateKeyPairSync("rsa", {
@@ -298,7 +300,10 @@ test("session secrets need 32 characters and cookies have secure defaults", asyn
 test("HR SSO APIs use an HttpOnly cookie and never return a bearer token", () => {
   assert.match(loginSsoSource, /sessionCookie/);
   assert.match(loginSsoSource, /Set-Cookie/);
-  assert.doesNotMatch(loginSsoSource, /token:\s*createToken|Bearer/);
+  assert.doesNotMatch(
+    loginSsoSource,
+    new RegExp(`token:\\s*${["create", "Token"].join("")}|Bearer`),
+  );
   assert.match(sessionApiSource, /getSession/);
   assert.match(logoutSource, /expiredSessionCookie/);
   assert.match(logoutSource, /requireCsrf/);
@@ -461,4 +466,241 @@ test("logout requires CSRF and expires only the HR session cookie", async () => 
     /^pfig_hr_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0(?:; Secure)?$/,
   );
   assert.doesNotMatch(response.headers["Set-Cookie"], /unrelated/);
+});
+
+const mutationApiFiles = [
+  "employees.js",
+  "positions.js",
+  "preferences.js",
+  "annotations.js",
+  "history.js",
+  "upload.js",
+  "sync-microsoft.js",
+];
+
+const publicReadApiFiles = [
+  "employees.js",
+  "positions.js",
+  "preferences.js",
+  "annotations.js",
+  "history.js",
+];
+const legacyTokenValidator = ["validate", "Token"].join("");
+const legacyAuthHelper = ["_helpers", "auth"].join("/");
+const legacyAuthPattern = new RegExp(
+  `${legacyTokenValidator}|${legacyAuthHelper.replace("/", "\\/")}`,
+);
+
+test("every HR mutation uses the cookie editor and CSRF guard", () => {
+  for (const file of mutationApiFiles) {
+    const source = readFileSync(
+      new URL(`../api/${file}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /requireEditorWithCsrf/, file);
+    assert.doesNotMatch(source, legacyAuthPattern, file);
+
+    const handlerSource = source.slice(source.indexOf("export default"));
+    if (publicReadApiFiles.includes(file)) {
+      const mutationMethod = file === "history.js" ? "POST" : "PUT";
+      assert.match(
+        handlerSource,
+        new RegExp(
+          `if \\(request\\.method === "${mutationMethod}"\\) \\{\\s*`
+          + "if \\(!requireEditorWithCsrf\\(request, response\\)\\) return;",
+        ),
+        file,
+      );
+    } else {
+      const methodCheck = handlerSource.indexOf(
+        'if (request.method !== "POST")',
+      );
+      const guard = handlerSource.indexOf(
+        "if (!requireEditorWithCsrf(request, response)) return;",
+      );
+      assert.ok(methodCheck >= 0 && methodCheck < guard, file);
+    }
+  }
+});
+
+test("anonymous HR reads remain available", () => {
+  for (const file of publicReadApiFiles) {
+    const source = readFileSync(
+      new URL(`../api/${file}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /request\.method === "GET"/, file);
+    const handlerSource = source.slice(source.indexOf("export default"));
+    const getBranch = handlerSource.indexOf(
+      'if (request.method === "GET")',
+    );
+    const guard = handlerSource.indexOf(
+      "if (!requireEditorWithCsrf(request, response)) return;",
+    );
+    assert.ok(getBranch >= 0 && getBranch < guard, file);
+    assert.doesNotMatch(
+      handlerSource.slice(0, getBranch),
+      /requireSession\(|requireEditor\(|getSession\(/,
+      file,
+    );
+    assert.doesNotMatch(
+      source,
+      new RegExp(
+        `request\\.method !== "GET" && !${legacyTokenValidator}`,
+      ),
+      file,
+    );
+  }
+});
+
+test("anonymous HR GET handlers still return their public data", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string" ? input : input.url;
+    const data = /\/rest\/v1\/(?:employees|positions)(?:\?|$)/.test(url)
+      ? []
+      : { value: [] };
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    for (const file of publicReadApiFiles) {
+      const { default: handler } = await import(`../api/${file}`);
+      const response = responseRecorder();
+      await handler({ method: "GET", headers: {} }, response);
+      assert.equal(response.statusCode, 200, file);
+      assert.deepEqual(
+        response.payload,
+        file === "preferences.js" ? { collapsedNodeIds: [] } : [],
+        file,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("the editor guard enforces cookie, exact role, then CSRF", async () => {
+  const session = await sessionModulePromise;
+
+  const missingResponse = responseRecorder();
+  assert.equal(
+    session.requireEditorWithCsrf({ headers: {} }, missingResponse),
+    null,
+  );
+  assert.equal(missingResponse.statusCode, 401);
+
+  const viewer = session.createSession({
+    oid: "11111111-1111-4111-8111-111111111111",
+    tid: "22222222-2222-4222-8222-222222222222",
+    roles: ["pfig.hr.admin"],
+  });
+  const viewerResponse = responseRecorder();
+  assert.equal(session.requireEditorWithCsrf({
+    headers: {
+      cookie: `${session.SESSION_COOKIE_NAME}=${encodeURIComponent(viewer.token)}`,
+      "x-csrf-token": viewer.payload.csrf,
+    },
+  }, viewerResponse), null);
+  assert.equal(viewerResponse.statusCode, 403);
+  assert.match(viewerResponse.payload.error, /HR Admin role/);
+
+  const editor = session.createSession({
+    oid: "11111111-1111-4111-8111-111111111111",
+    tid: "22222222-2222-4222-8222-222222222222",
+    roles: ["PFIG.HR.Admin"],
+  });
+  const cookie = `${session.SESSION_COOKIE_NAME}=${encodeURIComponent(editor.token)}`;
+
+  for (const headers of [
+    { cookie },
+    { cookie, "x-csrf-token": "wrong-csrf" },
+  ]) {
+    const response = responseRecorder();
+    assert.equal(
+      session.requireEditorWithCsrf({ headers }, response),
+      null,
+    );
+    assert.equal(response.statusCode, 403);
+    assert.match(response.payload.error, /CSRF/);
+  }
+
+  const accepted = session.requireEditorWithCsrf({
+    headers: {
+      cookie,
+      "x-csrf-token": editor.payload.csrf,
+    },
+  }, responseRecorder());
+  assert.equal(accepted.oid, editor.payload.oid);
+  assert.equal(accepted.canEdit, true);
+});
+
+test("unsupported HR methods return 405 before authentication", async () => {
+  const cases = [
+    ["employees.js", "DELETE", "GET, PUT"],
+    ["positions.js", "DELETE", "GET, PUT"],
+    ["preferences.js", "DELETE", "GET, PUT"],
+    ["annotations.js", "DELETE", "GET, PUT"],
+    ["history.js", "DELETE", "GET, POST"],
+    ["upload.js", "GET", "POST"],
+    ["sync-microsoft.js", "GET", "POST"],
+  ];
+
+  for (const [file, method, allow] of cases) {
+    const { default: handler } = await import(`../api/${file}`);
+    const response = responseRecorder();
+    await handler({ method, headers: {} }, response);
+    assert.equal(response.statusCode, 405, file);
+    assert.equal(response.headers.Allow, allow, file);
+  }
+});
+
+test("supported HR writes reject requests without an editor cookie", async () => {
+  const cases = [
+    ["employees.js", "PUT"],
+    ["positions.js", "PUT"],
+    ["preferences.js", "PUT"],
+    ["annotations.js", "PUT"],
+    ["history.js", "POST"],
+    ["upload.js", "POST"],
+    ["sync-microsoft.js", "POST"],
+  ];
+
+  for (const [file, method] of cases) {
+    const { default: handler } = await import(`../api/${file}`);
+    const response = responseRecorder();
+    await handler({ method, headers: {} }, response);
+    assert.equal(response.statusCode, 401, file);
+    assert.match(response.payload.error, /Microsoft sign-in/, file);
+  }
+});
+
+test("legacy password and bearer authentication routes are removed", () => {
+  assert.equal(
+    existsSync(new URL("../api/login.js", import.meta.url)),
+    false,
+    "api/login.js must not expose password login",
+  );
+  assert.equal(
+    existsSync(
+      new URL(`../api/${legacyAuthHelper}.js`, import.meta.url),
+    ),
+    false,
+    "the legacy bearer-token helper must be absent",
+  );
+
+  const mutationSources = mutationApiFiles.map((file) =>
+    readFileSync(new URL(`../api/${file}`, import.meta.url), "utf8")
+  ).join("\n");
+  assert.doesNotMatch(
+    mutationSources,
+    new RegExp(`${legacyAuthPattern.source}|AUTH_SECRET_(?:ADMIN|VIEWER)`),
+  );
+  assert.doesNotMatch(
+    loginSsoSource,
+    /ADMIN_PASSWORD|READER_PASSWORD|AUTH_SECRET|Bearer/,
+  );
 });

@@ -1,5 +1,5 @@
 import { put } from "@vercel/blob";
-import { validateToken } from "./_helpers/auth.js";
+import { requireEditorWithCsrf } from "./_helpers/session.js";
 
 export const config = {
   api: {
@@ -8,16 +8,12 @@ export const config = {
 };
 
 export default async function handler(request, response) {
-  if (!validateToken(request)) {
-    response.status(401).json({ ok: false, error: "Unauthorized" });
-    return;
-  }
-
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     response.status(405).json({ ok: false, error: "Method not allowed" });
     return;
   }
+  if (!requireEditorWithCsrf(request, response)) return;
 
   try {
     const filename = request.headers["x-filename"] || `avatar-${Date.now()}.jpg`;
