@@ -4077,8 +4077,46 @@ function openSplitPositionModal(positionId) {
     const input1 = document.getElementById("split-title-1");
     const input2 = document.getElementById("split-title-2");
 
-    if (input1) input1.value = suggestedSplits[0] || title;
-    if (input2) input2.value = suggestedSplits[1] || `${title} (Secondary)`;
+    const t1 = suggestedSplits[0] || title;
+    const t2 = suggestedSplits[1] || `${title} (Secondary)`;
+
+    if (input1) input1.value = t1;
+    if (input2) input2.value = t2;
+
+    const directReports = positions.filter(p => p.managerId === positionId);
+    const reportsSection = document.getElementById("split-reports-section");
+    const reportsList = document.getElementById("split-reports-list");
+
+    if (reportsSection && reportsList) {
+        if (directReports.length > 0) {
+            reportsSection.style.display = "flex";
+            reportsList.innerHTML = directReports.map(child => {
+                const childTitle = getPositionTitle(child);
+                const childEmp = getAssignedEmployee(child);
+                const childEmpName = childEmp ? childEmp.name : "VACANT";
+
+                const childText = (childTitle + " " + child.department).toLowerCase();
+                const score1 = (t1.toLowerCase().split(/\s+/).filter(w => w.length > 2)).filter(w => childText.includes(w)).length;
+                const score2 = (t2.toLowerCase().split(/\s+/).filter(w => w.length > 2)).filter(w => childText.includes(w)).length;
+                const defaultIndex = score2 > score1 ? 1 : 0;
+
+                return `
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-sm); font-size: 12px;">
+                        <div>
+                            <strong>${escapeHTML(childTitle)}</strong> (${escapeHTML(childEmpName)})
+                        </div>
+                        <select class="split-report-mgr-select form-input" data-child-id="${child.id}" style="width: auto; padding: 4px 8px; font-size: 12px;">
+                            <option value="0" ${defaultIndex === 0 ? "selected" : ""}>ให้รายงานต่อ: ${escapeHTML(t1)}</option>
+                            <option value="1" ${defaultIndex === 1 ? "selected" : ""}>ให้รายงานต่อ: ${escapeHTML(t2)}</option>
+                        </select>
+                    </div>
+                `;
+            }).join("");
+        } else {
+            reportsSection.style.display = "none";
+            reportsList.innerHTML = "";
+        }
+    }
 
     if (modal) modal.dataset.positionId = positionId;
 
@@ -4116,7 +4154,15 @@ async function handleSplitPositionSubmit() {
         return;
     }
 
-    const result = OrgHierarchy.splitPosition(positions, positionId, [title1, title2]);
+    const reportAssignments = {};
+    document.querySelectorAll(".split-report-mgr-select").forEach(select => {
+        const childId = parseInt(select.dataset.childId, 10);
+        if (childId) {
+            reportAssignments[childId] = parseInt(select.value, 10);
+        }
+    });
+
+    const result = OrgHierarchy.splitPosition(positions, positionId, [title1, title2], { reportAssignments });
     if (!result.changed) {
         showNotification("ไม่สามารถแยกตำแหน่งได้: " + (result.error || "unknown_error"), "error");
         return;
@@ -4133,7 +4179,7 @@ async function handleSplitPositionSubmit() {
     renderAll();
     requestAnimationFrame(fitToScreen);
 
-    showNotification(`แยกตำแหน่งสำเร็จเป็น "${title1}" และ "${title2}"`, "success");
+    showNotification(`แยกตำแหน่งสำเร็จเป็น "${title1}" และ "${title2}" พร้อมจัดสายการรายงานอย่างถูกต้อง`, "success");
 }
 
 function renderVacancyReport() {
