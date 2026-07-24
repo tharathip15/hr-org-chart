@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import test from "node:test";
 
-process.env.HR_SESSION_SECRET =
+const TEST_SESSION_SECRET =
   "test-only-hr-session-secret-with-at-least-32-characters";
+process.env.HR_SESSION_SECRET = TEST_SESSION_SECRET;
 
 const sessionModulePromise = import("../api/_helpers/session.js");
+
+function signedToken(payload) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = crypto
+    .createHmac("sha256", TEST_SESSION_SECRET)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
+}
 
 function responseRecorder() {
   return {
@@ -40,6 +51,24 @@ test("Portal Admin is an HR editor and an ordinary identity is Viewer", async ()
   assert.equal(session.hasEditorRole(["PFIG.Employee"]), false);
 });
 
+test("arbitrary configured roles cannot become HR editors", async () => {
+  const session = await sessionModulePromise;
+  const originalEditorRoles = process.env.EDITOR_ROLES;
+  process.env.EDITOR_ROLES = "PFIG.Employee";
+
+  try {
+    assert.equal(session.hasEditorRole(["PFIG.Employee"]), false);
+    assert.equal(session.createSession({
+      oid: "11111111-1111-4111-8111-111111111111",
+      tid: "22222222-2222-4222-8222-222222222222",
+      roles: ["PFIG.Employee"],
+    }).payload.canEdit, false);
+  } finally {
+    if (originalEditorRoles === undefined) delete process.env.EDITOR_ROLES;
+    else process.env.EDITOR_ROLES = originalEditorRoles;
+  }
+});
+
 test("tampered, malformed, and correctly signed expired sessions are rejected", async () => {
   const session = await sessionModulePromise;
   const { token } = session.createSession({
@@ -57,6 +86,38 @@ test("tampered, malformed, and correctly signed expired sessions are rejected", 
     roles: [],
   }, { now: 1, ttlSeconds: 1 });
   assert.equal(session.parseSessionToken(expiredToken), null);
+});
+
+test("correctly signed sessions issued in the future are rejected", async () => {
+  const session = await sessionModulePromise;
+  const now = Math.floor(Date.now() / 1000);
+  const futureToken = signedToken({
+    oid: "11111111-1111-4111-8111-111111111111",
+    tid: "22222222-2222-4222-8222-222222222222",
+    roles: [],
+    csrf: "known-csrf",
+    iat: now + 1,
+    exp: now + 3600,
+  });
+
+  assert.equal(session.parseSessionToken(futureToken), null);
+});
+
+test("correctly signed sessions require a nonempty CSRF claim", async () => {
+  const session = await sessionModulePromise;
+  const now = Math.floor(Date.now() / 1000);
+
+  for (const csrf of [undefined, ""]) {
+    const token = signedToken({
+      oid: "11111111-1111-4111-8111-111111111111",
+      tid: "22222222-2222-4222-8222-222222222222",
+      roles: [],
+      csrf,
+      iat: now,
+      exp: now + 3600,
+    });
+    assert.equal(session.parseSessionToken(token), null);
+  }
 });
 
 test("editor writes require a matching CSRF header", async () => {
@@ -77,5 +138,43 @@ test("editor writes require a matching CSRF header", async () => {
       editor,
     ),
     true,
+  );
+});
+
+test("CSRF guards reject empty and missing claims", async () => {
+  const session = await sessionModulePromise;
+
+  for (const [request, editor] of [
+    [{ headers: {} }, {}],
+    [{ headers: { "x-csrf-token": "" } }, { csrf: "" }],
+    [{ headers: { "x-csrf-token": "known-csrf" } }, {}],
+  ]) {
+    const response = responseRecorder();
+    assert.equal(session.requireCsrf(request, response, editor), false);
+    assert.equal(response.statusCode, 403);
+  }
+});
+
+test("session secrets need 32 characters and cookies have secure defaults", async () => {
+  const session = await sessionModulePromise;
+  const originalSecret = process.env.HR_SESSION_SECRET;
+  process.env.HR_SESSION_SECRET = "too-short";
+
+  try {
+    assert.throws(
+      () => session.createSession({ oid: "oid", tid: "tid", roles: [] }),
+      /HR_SESSION_SECRET must contain at least 32 characters/,
+    );
+  } finally {
+    process.env.HR_SESSION_SECRET = originalSecret;
+  }
+
+  assert.match(
+    session.sessionCookie("signed.token"),
+    /^pfig_hr_session=signed.token; Path=\/; HttpOnly; SameSite=Lax; Max-Age=28800(?:; Secure)?$/,
+  );
+  assert.match(
+    session.expiredSessionCookie(),
+    /^pfig_hr_session=; Path=\/; HttpOnly; SameSite=Lax; Max-Age=0(?:; Secure)?$/,
   );
 });

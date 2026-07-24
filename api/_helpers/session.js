@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 
 export const SESSION_COOKIE_NAME = "pfig_hr_session";
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
+const EDITOR_ROLES = new Set(["pfig.hr.admin", "pfig.portal.admin"]);
 
 function getSessionSecret() {
   const secret = String(process.env.HR_SESSION_SECRET || "");
@@ -26,19 +27,9 @@ function safeEqual(left, right) {
     && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function configuredEditorRoles() {
-  return String(
-    process.env.EDITOR_ROLES || "PFIG.HR.Admin,PFIG.Portal.Admin",
-  )
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-}
-
 export function hasEditorRole(roles) {
-  const allowed = new Set(configuredEditorRoles());
   return (Array.isArray(roles) ? roles : [])
-    .some((role) => allowed.has(String(role).trim().toLowerCase()));
+    .some((role) => EDITOR_ROLES.has(String(role).trim().toLowerCase()));
 }
 
 export function createSession(
@@ -81,9 +72,11 @@ export function parseSessionToken(token) {
       !payload.oid
       || !payload.tid
       || !Number.isFinite(payload.iat)
-      || payload.iat > now + 60
+      || payload.iat > now
       || !Number.isFinite(payload.exp)
       || payload.exp <= now
+      || typeof payload.csrf !== "string"
+      || !payload.csrf
     ) {
       return null;
     }
@@ -142,7 +135,15 @@ export function requireEditor(request, response) {
 }
 
 export function requireCsrf(request, response, session) {
-  if (!safeEqual(request.headers?.["x-csrf-token"], session?.csrf)) {
+  const csrfHeader = request.headers?.["x-csrf-token"];
+  const sessionCsrf = session?.csrf;
+  if (
+    typeof csrfHeader !== "string"
+    || !csrfHeader
+    || typeof sessionCsrf !== "string"
+    || !sessionCsrf
+    || !safeEqual(csrfHeader, sessionCsrf)
+  ) {
     response.status(403).json({ ok: false, error: "Invalid CSRF token" });
     return false;
   }
