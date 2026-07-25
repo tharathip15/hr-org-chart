@@ -511,7 +511,6 @@ let collapsedNodes = new Set();
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
-let consolidateDualRoles = localStorage.getItem("hr_org_chart_consolidate_dual_roles") !== "false";
 let currentScale = 1.0;
 let panX = 0;
 let panY = 0;
@@ -2031,24 +2030,6 @@ function setupEventListeners() {
         button.addEventListener("click", () => setChartMode(button.dataset.chartMode));
     });
 
-    const btnToggleConsolidate = document.getElementById("btn-toggle-consolidate-roles");
-    if (btnToggleConsolidate) {
-        btnToggleConsolidate.addEventListener("click", () => {
-            if (!isOverallView()) return;
-            consolidateDualRoles = !consolidateDualRoles;
-            localStorage.setItem("hr_org_chart_consolidate_dual_roles", String(consolidateDualRoles));
-            updateConsolidateRolesUI();
-            renderAll();
-            fitToScreen();
-            showNotification(
-                consolidateDualRoles
-                    ? "เปิดการรวบแสดงผลคนที่มีหลายตำแหน่งบน Overview"
-                    : "แสดงผลตำแหน่งแยกเป็นแต่ละ Card บน Overview",
-                "info"
-            );
-        });
-    }
-
     // Add Employee Button
     document.getElementById("btn-add-employee").addEventListener("click", () => {
         openEmployeeForm();
@@ -2419,112 +2400,15 @@ function getChartModePositions() {
     return PositionLifecycle.filterVisiblePositions(positions, chartMode);
 }
 
-function getOverviewCardMap(modePositions) {
-    const cardMap = new Map();
-    if (!isOverallView()) {
-        modePositions.forEach(p => cardMap.set(p.id, p.id));
-        return cardMap;
-    }
-
-    const employeeGroups = new Map();
-    modePositions.forEach(pos => {
-        const emp = getAssignedEmployee(pos);
-        if (!emp) {
-            cardMap.set(pos.id, pos.id);
-            return;
-        }
-        const key = emp.personId || `emp-${emp.id}`;
-        if (!employeeGroups.has(key)) employeeGroups.set(key, []);
-        employeeGroups.get(key).push(pos);
-    });
-
-    employeeGroups.forEach(group => {
-        const primaryId = group[0].id;
-        group.forEach(pos => {
-            cardMap.set(pos.id, primaryId);
-        });
-    });
-
-    return cardMap;
-}
-
-function getConsolidatedOverviewPositions(modePositions) {
-    if (!isOverallView()) {
-        return modePositions;
-    }
-
-    const employeeGroups = new Map();
-    modePositions.forEach(pos => {
-        const emp = getAssignedEmployee(pos);
-        if (!emp) return;
-        const key = emp.personId || `emp-${emp.id}`;
-        if (!employeeGroups.has(key)) employeeGroups.set(key, []);
-        employeeGroups.get(key).push(pos);
-    });
-
-    const result = [];
-    const processedKeys = new Set();
-
-    modePositions.forEach(pos => {
-        const emp = getAssignedEmployee(pos);
-        if (!emp) {
-            result.push(pos);
-            return;
-        }
-
-        const key = emp.personId || `emp-${emp.id}`;
-        const group = employeeGroups.get(key) || [];
-
-        if (group.length <= 1) {
-            result.push(pos);
-            return;
-        }
-
-        if (processedKeys.has(key)) return;
-        processedKeys.add(key);
-
-        const primaryPos = group[0];
-        const rawTitles = group.map(p => p.title || "Open Position");
-        const combinedTitle = EmployeeDirectory.suggestCombinedTitle ? EmployeeDirectory.suggestCombinedTitle(rawTitles) : rawTitles.join(" & ");
-
-        result.push({
-            ...primaryPos,
-            displayTitle: combinedTitle,
-            consolidatedIds: group.map(p => p.id)
-        });
-    });
-
-    return result;
-}
-
 function getChartDisplayPositions() {
     const modePositions = getChartModePositions();
     return selectedDept === "All"
-        ? getConsolidatedOverviewPositions(modePositions)
+        ? modePositions
         : modePositions.filter(position => position.department === selectedDept);
 }
 
 function getVisibleReportingManagerId(position, visiblePositionIds) {
-    if (!isOverallView()) {
-        return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
-    }
-
-    const modePositions = getChartModePositions();
-    const cardMap = getOverviewCardMap(modePositions);
-
-    let directManagerId = position?.managerId === null || position?.managerId === undefined
-        ? null
-        : Number(position.managerId);
-
-    if (directManagerId !== null && cardMap.has(directManagerId)) {
-        directManagerId = cardMap.get(directManagerId);
-    }
-
-    const targetPosition = directManagerId !== (position?.managerId ?? null)
-        ? { ...position, managerId: directManagerId }
-        : position;
-
-    return PositionLifecycle.getNearestVisibleManagerId(targetPosition, positions, visiblePositionIds);
+    return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
 }
 
 function getCollapsedHiddenPositionIds(modePositions) {
@@ -2555,24 +2439,12 @@ function getCollapsedHiddenPositionIds(modePositions) {
     return hiddenIds;
 }
 
-function updateConsolidateRolesUI() {
-    const btn = document.getElementById("btn-toggle-consolidate-roles");
-    if (!btn) return;
-    const active = consolidateDualRoles && isOverallView();
-    btn.classList.toggle("active", active);
-    btn.setAttribute("aria-pressed", String(consolidateDualRoles));
-    btn.style.opacity = isOverallView() ? "1" : "0.5";
-    btn.disabled = !isOverallView();
-}
-
 function updateChartModeControls() {
     document.querySelectorAll("[data-chart-mode]").forEach(button => {
         const isActive = button.dataset.chartMode === chartMode;
         button.classList.toggle("active", isActive);
         button.setAttribute("aria-pressed", String(isActive));
     });
-
-    updateConsolidateRolesUI();
 
     const title = document.getElementById("current-view-title");
     const desc = document.getElementById("current-view-desc");

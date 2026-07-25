@@ -172,15 +172,9 @@
                         <h2 id="current-view-title">Overall Organization</h2>
                         <span id="current-view-desc">Showing the organization as of today</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                        <div class="chart-mode-switch" role="group" aria-label="Organization chart timeframe">
-                            <button type="button" class="chart-mode-btn active" data-chart-mode="current" aria-pressed="true">Current Chart</button>
-                            <button type="button" class="chart-mode-btn" data-chart-mode="future" aria-pressed="false">Future Chart</button>
-                        </div>
-                        <button type="button" class="btn btn-secondary btn-sm" id="btn-toggle-consolidate-roles" aria-pressed="true" title="สลับการแสดงผล: รวบคนที่มีหลายตำแหน่งเป็น Card เดียวบน Overview" style="height: 34px; padding: 0 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-md); font-weight: 600; cursor: pointer; transition: all var(--transition-fast);">
-                            <i data-lucide="layers" style="width: 14px; height: 14px;"></i>
-                            <span>รวบคนที่มีหลายตำแหน่ง</span>
-                        </button>
+                    <div class="chart-mode-switch" role="group" aria-label="Organization chart timeframe">
+                        <button type="button" class="chart-mode-btn active" data-chart-mode="current" aria-pressed="true">Current Chart</button>
+                        <button type="button" class="chart-mode-btn" data-chart-mode="future" aria-pressed="false">Future Chart</button>
                     </div>
                 </div>
                 <div class="chart-control-actions">
