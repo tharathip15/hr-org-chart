@@ -63,6 +63,58 @@ test("annotation locks persist and block movement or resizing", () => {
     assert.match(appSource, /locked: false/);
 });
 
+test("Viewer annotations render read-only without mutation listeners", () => {
+    const renderSource = appSource.slice(
+        appSource.indexOf("function renderAnnotations()"),
+        appSource.indexOf("function startDragAnnotation"),
+    );
+    assert.match(renderSource, /const canEditAnnotations = canEditHr\(\)/);
+    assert.match(
+        renderSource,
+        /titleEl\.contentEditable = String\(canEditAnnotations && !getAnnotationLocked\(annot\)\)/,
+    );
+    assert.match(
+        renderSource,
+        /txt\.contentEditable = String\(canEditAnnotations && !getAnnotationLocked\(annot\)\)/,
+    );
+    assert.doesNotMatch(renderSource, /contenteditable="true"/);
+    const frameReadOnlyGuard = renderSource.indexOf("if (!canEditAnnotations) {");
+    const firstFrameListener = renderSource.indexOf('titleEl.addEventListener("blur"');
+    assert.ok(frameReadOnlyGuard >= 0 && frameReadOnlyGuard < firstFrameListener);
+    assert.match(
+        renderSource,
+        /if \(!canEditAnnotations\) \{[\s\S]*?container\.appendChild\(wrapper\);\s*return;\s*\}[\s\S]*?txt\.addEventListener/,
+    );
+});
+
+test("annotation mutation entry points use the centralized editor guard", () => {
+    for (const functionName of [
+        "applySelectedAnnotationStyle",
+        "undoAnnotation",
+        "redoAnnotation",
+        "startDragAnnotation",
+        "startResizeAnnotation",
+        "deleteAnnotation",
+        "toggleSelectedAnnotationLock",
+    ]) {
+        const start = appSource.indexOf(`function ${functionName}(`);
+        const body = appSource.slice(start, start + 260);
+        assert.ok(start >= 0, `${functionName} source was found`);
+        assert.match(body, /if \(!requireEditorAction\(/, functionName);
+    }
+    const setupSource = appSource.slice(
+        appSource.indexOf("function setupAnnotationListeners()"),
+    );
+    assert.match(setupSource, /if \(!canEditHr\(\)\) return;/);
+    for (const controlId of ["tool-add-frame", "tool-add-text", "tool-clear"]) {
+        assert.match(
+            setupSource,
+            new RegExp(`${controlId}"\\)\\??\\.addEventListener\\("click", \\(\\) => \\{\\s*if \\(!requireEditorAction\\(`),
+            controlId,
+        );
+    }
+});
+
 test("annotation controls have compact responsive styling", () => {
     assert.match(styleSource, /\.annotation-style-controls/);
     assert.match(styleSource, /\.annotation-style-field input/);

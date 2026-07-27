@@ -121,6 +121,6 @@ No employee record is created as a side effect of saving a position, and no posi
 
 - Run the focused employee-directory tests first and observe the expected RED state before implementation.
 - Run `node --test tests/*.test.mjs` after each green cycle.
-- Run Node syntax checks for the changed JavaScript and Python compile checks for `server.py` if touched.
+- Run Node syntax checks for the changed JavaScript and Vercel Function files.
 - Use the in-app Browser to verify: add Manual employee -> confirm no new position -> assign from Position Management -> verify multiple assignment -> delete -> verify vacant seats.
-- Check the production-like local server at desktop and a 390px mobile viewport, including modal scrolling and first-viewport controls.
+- Run `npx vercel dev` and check the local Vercel instance at desktop and a 390px mobile viewport, including modal scrolling and first-viewport controls.

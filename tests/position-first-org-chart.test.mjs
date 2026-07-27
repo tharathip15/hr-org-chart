@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const cssSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
-const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf8");
+const loginSsoApiPath = new URL("../api/login-sso.js", import.meta.url);
 const positionsApiPath = new URL("../api/positions.js", import.meta.url);
 const hierarchyUtilsPath = new URL("../hierarchy-utils.js", import.meta.url);
 
@@ -22,14 +22,17 @@ test("app has a shared position-first data model", () => {
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
 
-test("app exposes Microsoft-only admin sign-in with anonymous viewing", () => {
+test("app exposes optional Microsoft Admin sign-in without blocking Viewers", () => {
     assert.match(htmlSource, /id="login-overlay"/);
     assert.match(htmlSource, /id="btn-login-sso"/);
     assert.match(htmlSource, /id="btn-continue-viewer"/);
-    assert.doesNotMatch(htmlSource, /id="login-form"/);
-    assert.doesNotMatch(htmlSource, /id="login-password"/);
-    assert.doesNotMatch(htmlSource, /id="btn-login-submit"/);
-    assert.doesNotMatch(serverSource, /\/api\/login/);
+    assert.match(htmlSource, /id="btn-admin-login"/);
+    assert.doesNotMatch(
+        htmlSource,
+        /id="login-form"|id="login-password"|id="btn-login-submit"/
+    );
+    assert.match(appSource, /hideLoginOverlay\(\);[\s\S]+appStarted = true;[\s\S]+await init\(\)/);
+    assert.equal(existsSync(loginSsoApiPath), true);
 });
 
 test("positions can be managed in a dedicated UI", () => {
@@ -78,10 +81,7 @@ test("position cards show only a note badge when a note is present", () => {
     assert.match(cssSource, /\.position-note-badge/);
 });
 
-test("local and deployed APIs expose positions", () => {
-    assert.match(serverSource, /if path == "\/api\/positions":/);
-    assert.match(serverSource, /load_positions\(\)/);
-    assert.match(serverSource, /save_positions\(positions\)/);
+test("the Vercel API exposes positions", () => {
     assert.equal(existsSync(positionsApiPath), true);
 
     const positionsApiSource = readFileSync(positionsApiPath, "utf8");
