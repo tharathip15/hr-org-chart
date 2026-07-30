@@ -37,3 +37,14 @@ test("anonymous startup never self-heals employee data through a protected write
     /authSession\?\.canEdit === true\s*&&\s*\(\s*!Array\.isArray\(savedEmployees\)/
   );
 });
+
+test("loader dismissal does not wait for a foreground animation frame", () => {
+  assert.match(
+    appSource,
+    /setLoaderProgress\(100,[\s\S]*?\);\s*hideLoader\(\);\s*requestAnimationFrame\(\(\) => \{\s*fitToScreen\(\);/
+  );
+  assert.doesNotMatch(
+    appSource,
+    /requestAnimationFrame\(\(\) => \{\s*fitToScreen\(\);\s*hideLoader\(\);/
+  );
+});

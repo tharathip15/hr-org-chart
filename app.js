@@ -1106,9 +1106,9 @@ async function init() {
     
     setLoaderProgress(100, "เสร็จสิ้น!");
     
+    hideLoader();
     requestAnimationFrame(() => {
         fitToScreen();
-        hideLoader();
     });
 }
 
