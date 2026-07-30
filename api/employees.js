@@ -7,6 +7,7 @@ import {
   normalizePhotoRows,
   signPrivatePhotoRows
 } from "./_helpers/photo_storage.js";
+import { readEmployeeRows } from "./_helpers/employee_reader.js";
 
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
@@ -33,10 +34,7 @@ export default async function handler(request, response) {
 
 async function handleGet(request, response) {
   try {
-    const { data, error } = await supabase
-      .from("employees")
-      .select("id,person_id,name,role,department,manager_id,email,phone,bio,photo_url,avatar_color,x,y")
-      .order("id", { ascending: true });
+    const { data, error } = await readEmployeeRows(supabase);
 
     if (error) {
       throw error;

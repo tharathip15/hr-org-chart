@@ -30,3 +30,10 @@ test("card rendering receives one precomputed render context", () => {
   assert.match(appSource, /hasReportsByPositionId/);
   assert.match(appSource, /getPositionCardHTML\(position, renderContext\)/);
 });
+
+test("anonymous startup never self-heals employee data through a protected write", () => {
+  assert.match(
+    appSource,
+    /authSession\?\.canEdit === true\s*&&\s*\(\s*!Array\.isArray\(savedEmployees\)/
+  );
+});

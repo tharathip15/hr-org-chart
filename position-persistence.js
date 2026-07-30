@@ -7,7 +7,14 @@
         };
     }
 
+    function shouldPersistAutomaticRepair(reconciliationMode, canEdit) {
+        return typeof reconciliationMode === "string"
+            && reconciliationMode.startsWith("remote")
+            && canEdit === true;
+    }
+
     root.PositionPersistence = Object.freeze({
-        commitCandidate
+        commitCandidate,
+        shouldPersistAutomaticRepair
     });
 })(globalThis);

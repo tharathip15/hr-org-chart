@@ -93,3 +93,22 @@ test("position storage never deletes rows after an upsert failure", async () => 
   );
   assert.equal(deleteCalled, false);
 });
+
+test("automatic reconciliation only persists remote repairs for editors", () => {
+  assert.equal(
+    globalThis.PositionPersistence.shouldPersistAutomaticRepair("remote", true),
+    true
+  );
+  assert.equal(
+    globalThis.PositionPersistence.shouldPersistAutomaticRepair("remote-save", true),
+    true
+  );
+  assert.equal(
+    globalThis.PositionPersistence.shouldPersistAutomaticRepair("remote", false),
+    false
+  );
+  assert.equal(
+    globalThis.PositionPersistence.shouldPersistAutomaticRepair("local-save", true),
+    false
+  );
+});

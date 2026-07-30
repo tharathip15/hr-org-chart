@@ -1185,7 +1185,13 @@ async function loadData() {
             ? await compressAllEmployeePhotos()
             : false;
 
-        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles || photoCompressed || hasLegacyPhotos) {
+        if (authSession?.canEdit === true && (
+            !Array.isArray(savedEmployees)
+            || savedEmployees.length === 0
+            || didNormalizeProfiles
+            || photoCompressed
+            || hasLegacyPhotos
+        )) {
             await saveData();
         }
         return;
@@ -1420,7 +1426,10 @@ async function reconcilePositionsWithEmployees() {
     positionsNeedEmployeeReconciliation = false;
     if (!positionsChanged && !reconciliationMode.endsWith("-save")) return;
 
-    if (reconciliationMode.startsWith("remote")) {
+    if (PositionPersistence.shouldPersistAutomaticRepair(
+        reconciliationMode,
+        authSession?.canEdit === true
+    )) {
         await savePositions();
     } else {
         saveLocalPositionsBackup();
