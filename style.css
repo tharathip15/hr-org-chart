@@ -3447,6 +3447,8 @@ body.layout-locked .annotation-text-delete-btn {
 /* Viewer Mode Restriction rules */
 body.role-viewer #btn-add-employee,
 body.role-viewer #btn-new-employee,
+body.role-viewer #btn-import-trigger,
+body.role-viewer #btn-sync-microsoft,
 body.role-viewer #btn-manage-positions,
 body.role-viewer #btn-sync-microsoft,
 body.role-viewer #btn-edit-employee, /* Hide Edit Employee in detail drawer */

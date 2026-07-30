@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the existing employees and positions tables and numeric IDs. Add a small browser-side EmployeeDirectory utility for source classification and assignment summaries, a separate Employee Management modal for employee CRUD, and retain Position Management as the only place that changes position.employeeId. Extract Microsoft matching rules into a server helper so email merge and Manual retention are independently testable.
 
-**Tech Stack:** Vanilla JavaScript, HTML, CSS, Node.js built-in test runner, Vercel serverless API, Supabase, existing SQLite fallback, and the in-app Browser.
+**Tech Stack:** Vanilla JavaScript, HTML, CSS, Node.js built-in test runner, Vercel Functions, Supabase, and the in-app Browser.
 
 ## Global Constraints
 
@@ -347,13 +347,12 @@ git commit -m "feat: preserve manual employees during Microsoft sync"
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\employees.js
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\positions.js
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\sync-microsoft.js
-& 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m py_compile server.py
 git diff --check
 ~~~
 
-Expected: all tests pass, syntax checks exit 0, Python compile exits 0, and diff check reports no whitespace errors.
+Expected: all tests pass, syntax checks exit 0, and diff check reports no whitespace errors.
 
-- [ ] Step 2: Start the existing local server at http://127.0.0.1:8000 and run the Browser flow.
+- [ ] Step 2: Run `npx vercel dev` and use the local Vercel Functions instance for the Browser flow.
 - [ ] Step 3: Verify desktop and 390x844 mobile layouts: first-viewport controls, modal bounds, contained list scrolling, no row overlap, no clipped source/status text, and no Browser console errors or warnings.
 - [ ] Step 4: Review git status and commit only the verified feature changes.
 

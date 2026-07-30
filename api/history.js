@@ -1,22 +1,17 @@
 import { supabase } from "./_helpers/supabase.js";
-import { validateToken, requireEditor } from "./_helpers/auth.js";
 import { normalizePhotoRows } from "./_helpers/photo_storage.js";
+import { requireEditorWithCsrf } from "./_helpers/session.js";
 
 const MAX_BODY_SIZE = 1024; // Small body limit for POST requests
 
 export default async function handler(request, response) {
-  if (request.method !== "GET" && !validateToken(request)) {
-    response.status(401).json({ ok: false, error: "Unauthorized" });
-    return;
-  }
-
   if (request.method === "GET") {
     await handleGet(response);
     return;
   }
 
   if (request.method === "POST") {
-    if (!requireEditor(request, response)) return;
+    if (!requireEditorWithCsrf(request, response)) return;
     await handlePost(request, response);
     return;
   }

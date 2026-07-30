@@ -119,6 +119,6 @@ No API or database migration is required unless implementation verification disc
 - Write focused failing tests before production changes.
 - Run the focused hierarchy and position-first tests in the RED and GREEN cycles.
 - Run `node --test tests/*.test.mjs` after implementation.
-- Run JavaScript syntax checks for changed files, `python -m py_compile server.py` if touched, and `git diff --check`.
-- Use the in-app Browser against the local server to create a temporary parent and child position, change the parent, verify the chart edge follows the position ID, and verify an employee manager change does not move the edge.
+- Run JavaScript syntax checks for changed Vercel Function files and `git diff --check`.
+- Run `npx vercel dev` and use the in-app Browser against the local Vercel instance to create a temporary parent and child position, change the parent, verify the chart edge follows the position ID, and verify an employee manager change does not move the edge.
 - Check desktop and 390px mobile Position Management screenshots for modal bounds, readable parent options, and no overlapping controls.

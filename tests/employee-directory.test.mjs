@@ -151,10 +151,11 @@ test("save helpers report persistence failures and delete rolls back partial sav
         assert.match(source, /return false;/);
     }
 
-    assert.match(appSource, /async function savePositions\(candidatePositions = positions\)/);
-    assert.match(appSource, /PositionPersistence\.commitCandidate\(/);
-    assert.match(appSource, /positions = outcome\.positions;/);
-    assert.match(appSource, /return outcome\.saved;/);
+    assert.match(appSource, /async function savePositions\(\)/);
+    assert.match(appSource, /const candidatePositions = arguments\.length > 0 \? arguments\[0\] : positions;/);
+    assert.match(appSource, /positions = repairedCandidate;/);
+    assert.match(appSource, /confirmMutationState\("positions"\);/);
+    assert.match(appSource, /restoreConfirmedMutationState\("positions"\);/);
 
     const deleteEmployeeFunction = appSource.match(
         /async function deleteEmployee\(id\) \{[\s\S]*?\n\}/
@@ -210,8 +211,87 @@ test("viewer mode keeps employee browsing available but blocks employee mutation
     for (const functionName of ["openEmployeeForm", "handleFormSubmit", "deleteEmployee"]) {
         const source = appSource.match(new RegExp(`(?:async )?function ${functionName}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
         assert.ok(source, `${functionName} source was found`);
+        assert.match(source, /requireEditorAction\(\)/);
         assert.match(source, /document\.body\.classList\.contains\("role-viewer"\)/);
     }
+    for (const functionName of ["handlePositionFormSubmit", "deletePosition"]) {
+        const start = appSource.indexOf(`async function ${functionName}(`);
+        const source = appSource.slice(start, start + 220);
+        assert.ok(start >= 0, `${functionName} source was found`);
+        assert.match(source, /requireEditorAction\(\)/);
+    }
+});
+
+test("Viewer mode blocks backup import before parsing or mutating chart state", () => {
+    assert.match(styleSource, /body\.role-viewer #btn-import-trigger\s*,/);
+    const authControls = appSource.slice(
+        appSource.indexOf("function updateAuthControls()"),
+        appSource.indexOf("function showLoginOverlay"),
+    );
+    assert.match(authControls, /importButton\.hidden = !isAdmin/);
+    assert.match(authControls, /importButton\.disabled = !isAdmin/);
+
+    const importHandler = appSource.slice(
+        appSource.indexOf("async function handleImportFileChange"),
+        appSource.indexOf("// Set up UI and canvas event listeners"),
+    );
+    assert.ok(importHandler.length > 0);
+    assert.ok(
+        importHandler.indexOf("if (!requireEditorAction(")
+          < importHandler.indexOf("JSON.parse("),
+        "the editor guard must run before import parsing",
+    );
+    assert.match(
+        appSource,
+        /btn-import-trigger"\)\.addEventListener\("click", \(\) => \{\s*if \(!requireEditorAction\(/,
+    );
+});
+
+test("Viewer mode hides Microsoft sync and guards before any sync side effect", () => {
+    assert.match(styleSource, /body\.role-viewer #btn-sync-microsoft\s*,/);
+    const authControls = appSource.slice(
+        appSource.indexOf("function updateAuthControls()"),
+        appSource.indexOf("function showLoginOverlay"),
+    );
+    assert.match(authControls, /syncButton\.hidden = !isAdmin/);
+    assert.match(authControls, /syncButton\.disabled = !isAdmin/);
+
+    const handlerStart = appSource.indexOf(
+        'btnSync.addEventListener("click", async () => {',
+    );
+    const handlerEnd = appSource.indexOf(
+        "// Auto-Arrange Layout Button",
+        handlerStart,
+    );
+    const syncHandler = appSource.slice(handlerStart, handlerEnd);
+    assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+    const guardIndex = syncHandler.indexOf("if (!requireEditorAction()) return;");
+    assert.ok(guardIndex >= 0, "the sync click handler has an editor guard");
+    for (const sideEffect of [
+        "confirm(",
+        "btnSync.disabled = true",
+        "authenticatedFetch(",
+    ]) {
+        assert.ok(
+            guardIndex < syncHandler.indexOf(sideEffect),
+            `the editor guard runs before ${sideEffect}`,
+        );
+    }
+});
+
+test("backup import reports success only after every collection write succeeds", () => {
+    const importHandler = appSource.slice(
+        appSource.indexOf("async function handleImportFileChange"),
+        appSource.indexOf("// Set up UI and canvas event listeners"),
+    );
+    assert.match(importHandler, /const writeResults = await Promise\.all\(\[/);
+    assert.match(importHandler, /if \(!writeResults\.every\(Boolean\)\) \{/);
+    assert.ok(
+        importHandler.indexOf("if (!writeResults.every(Boolean))")
+          < importHandler.indexOf("imported successfully"),
+        "success feedback must follow the all-writes check",
+    );
+    assert.match(importHandler, /restoreMutationSnapshot\(snapshot\)/);
 });
 
 test("profile link copy describes reusing an employee profile", () => {

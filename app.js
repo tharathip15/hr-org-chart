@@ -538,328 +538,6 @@ const treeContainer = document.getElementById("tree-container");
 const EMPLOYEES_API_URL = "/api/employees";
 const POSITIONS_API_URL = "/api/positions";
 const PREFERENCES_API_URL = "/api/preferences";
-const AUTH_STORAGE_KEY = "hr_org_auth_session";
-const SESSION_API_URL = "/api/session";
-const CONFIG_API_URL = "/api/config";
-let authSession = null;
-let hrEnabled = true;
-let appStarted = false;
-let runtimeConfig = { microsoft: { enabled: false, tenantId: "", clientId: "" } };
-
-function applyAuthSession(session) {
-    authSession = session && session.token
-        ? {
-            token: session.token,
-            role: session.role || "Viewer",
-            canEdit: session.canEdit === true
-        }
-        : null;
-    document.body.classList.toggle("role-viewer", !authSession?.canEdit);
-    updateAuthControls();
-    updateLayoutLockUI();
-}
-
-function updateAuthControls() {
-    const button = document.getElementById("btn-admin-login");
-    if (!button) return;
-    const isAdmin = authSession?.canEdit === true;
-    button.innerHTML = isAdmin
-        ? `<i data-lucide="log-out"></i> Sign out Admin`
-        : `<i data-lucide="shield-check"></i> Admin Sign in`;
-    button.title = isAdmin
-        ? "Return to anonymous Viewer mode"
-        : "Sign in with Microsoft as an administrator";
-    refreshDisplayModeIcons();
-}
-
-function persistAuthSession(session) {
-    applyAuthSession(session);
-    try {
-        if (authSession) {
-            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authSession));
-        } else {
-            localStorage.removeItem(AUTH_STORAGE_KEY);
-        }
-    } catch (error) {
-        console.warn("Failed to persist authentication session:", error);
-    }
-}
-
-function readStoredAuthSession() {
-    try {
-        const stored = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || "null");
-        if (stored?.token) applyAuthSession(stored);
-    } catch (error) {
-        console.warn("Failed to read authentication session:", error);
-        persistAuthSession(null);
-    }
-}
-
-function showLoginOverlay(message = "") {
-    const overlay = document.getElementById("login-overlay");
-    const error = document.getElementById("login-error-msg");
-    const errorText = error?.querySelector("span");
-    if (error && errorText && message) {
-        errorText.textContent = message;
-        error.style.display = "flex";
-    }
-    overlay?.classList.add("active");
-    document.getElementById("btn-login-sso")?.focus();
-}
-
-function hideLoginOverlay() {
-    document.getElementById("login-overlay")?.classList.remove("active");
-    const error = document.getElementById("login-error-msg");
-    if (error) error.style.display = "none";
-}
-
-async function authenticatedFetch(input, options = {}) {
-    const headers = new Headers(options.headers || {});
-    if (authSession?.token) headers.set("Authorization", `Bearer ${authSession.token}`);
-    const response = await fetch(input, { ...options, headers });
-    if (response.status === 401 && input !== SESSION_API_URL) {
-        persistAuthSession(null);
-        hideLoginOverlay();
-        showNotification("Admin session expired. You are now viewing as Anonymous Viewer.", "error");
-    }
-    if (response.status === 403) {
-        showNotification("Viewer access is read-only. An HR Admin or Portal Admin is required to edit.", "error");
-    }
-    return response;
-}
-
-async function validateStoredSession() {
-    if (!authSession?.token) return false;
-    try {
-        const response = await fetch(SESSION_API_URL, {
-            headers: { Authorization: `Bearer ${authSession.token}` }
-        });
-        if (!response.ok) {
-            persistAuthSession(null);
-            return false;
-        }
-        const session = await response.json();
-        applyAuthSession({ ...authSession, ...session });
-        persistAuthSession({ ...authSession, ...session });
-        return true;
-    } catch (error) {
-        console.warn("Unable to validate the current session:", error);
-        return false;
-    }
-}
-
-async function loadRuntimeConfig() {
-    try {
-        const response = await fetch(CONFIG_API_URL);
-        if (response.ok) {
-            const config = await response.json();
-            hrEnabled = config.hrEnabled !== false;
-            runtimeConfig = config;
-        }
-    } catch (error) {
-        console.warn("Runtime configuration unavailable; HR module remains enabled.", error);
-    }
-}
-
-function clearMicrosoftCallbackUrl() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("code");
-    url.searchParams.delete("state");
-    url.searchParams.delete("error");
-    url.searchParams.delete("error_description");
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-}
-
-function beginMicrosoftSignIn() {
-    beginMicrosoftSignInAsync().catch(error => {
-        console.error("Microsoft sign-in setup failed:", error);
-        showLoginOverlay("Microsoft sign-in could not be started. Please try again.");
-    });
-}
-
-function toBase64Url(bytes) {
-    let binary = "";
-    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-async function createPkceChallenge(codeVerifier) {
-    const data = new TextEncoder().encode(codeVerifier);
-    const digest = await window.crypto.subtle.digest("SHA-256", data);
-    return toBase64Url(new Uint8Array(digest));
-}
-
-async function beginMicrosoftSignInAsync({ prompt = "", silent = false } = {}) {
-    const microsoft = runtimeConfig.microsoft || {};
-    if (!microsoft.enabled || !microsoft.tenantId || !microsoft.clientId) {
-        showLoginOverlay("Microsoft sign-in is not configured for this environment.");
-        return;
-    }
-
-    const state = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const nonce = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const verifierBytes = window.crypto.getRandomValues(new Uint8Array(32));
-    const codeVerifier = toBase64Url(verifierBytes);
-    const codeChallenge = await createPkceChallenge(codeVerifier);
-    try {
-        sessionStorage.setItem("hr_org_microsoft_state", JSON.stringify({ state, nonce, codeVerifier, silent }));
-    } catch (error) {
-        console.warn("Unable to persist Microsoft sign-in state:", error);
-    }
-
-    const redirectUri = `${window.location.origin}${window.location.pathname}`;
-    const authorizeUrl = new URL(`https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/authorize`);
-    const authorizeParams = {
-        client_id: microsoft.clientId,
-        response_type: "code",
-        redirect_uri: redirectUri,
-        response_mode: "query",
-        scope: "openid profile email",
-        state,
-        nonce,
-        code_challenge: codeChallenge,
-        code_challenge_method: "S256"
-    };
-    if (prompt) authorizeParams.prompt = prompt;
-    authorizeUrl.search = new URLSearchParams(authorizeParams).toString();
-    window.location.assign(authorizeUrl.toString());
-}
-
-async function processMicrosoftCallback() {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const returnedState = params.get("state");
-    const error = params.get("error_description") || params.get("error");
-    if (!code && !error) return false;
-
-    let expectedState = "";
-    let expectedNonce = "";
-    let codeVerifier = "";
-    let silent = false;
-    try {
-        const storedState = JSON.parse(sessionStorage.getItem("hr_org_microsoft_state") || "null");
-        expectedState = storedState?.state || "";
-        expectedNonce = storedState?.nonce || "";
-        codeVerifier = storedState?.codeVerifier || "";
-        silent = storedState?.silent === true;
-        sessionStorage.removeItem("hr_org_microsoft_state");
-    } catch (storageError) {
-        console.warn("Unable to read Microsoft sign-in state:", storageError);
-    }
-    clearMicrosoftCallbackUrl();
-
-    if (error) {
-        if (silent) {
-            hideLoginOverlay();
-            return true;
-        }
-        showLoginOverlay(`Microsoft sign-in failed: ${error}`);
-        return true;
-    }
-    if (!code || !expectedState || !expectedNonce || !codeVerifier || returnedState !== expectedState) {
-        showLoginOverlay("Microsoft sign-in could not be verified. Please try again.");
-        return true;
-    }
-
-    try {
-        const microsoft = runtimeConfig.microsoft || {};
-        const redirectUri = `${window.location.origin}${window.location.pathname}`;
-        const tokenResponse = await fetch(`https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                client_id: microsoft.clientId,
-                code,
-                code_verifier: codeVerifier,
-                redirect_uri: redirectUri,
-                grant_type: "authorization_code",
-                scope: "openid profile email"
-            })
-        });
-        const tokenResult = await tokenResponse.json();
-        if (!tokenResponse.ok || !tokenResult.id_token) {
-            throw new Error(tokenResult.error_description || tokenResult.error || "Microsoft token exchange failed");
-        }
-
-        const response = await fetch("/api/login-sso", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                idToken: tokenResult.id_token,
-                nonce: expectedNonce
-            })
-        });
-        const result = await response.json();
-        if (!response.ok || !result.ok) throw new Error(result.error || "Microsoft sign-in failed");
-
-        if (result.canEdit === true && result.token) {
-            persistAuthSession(result);
-            hideLoginOverlay();
-        } else {
-            persistAuthSession(null);
-            if (silent) {
-                hideLoginOverlay();
-                return true;
-            }
-            const receivedRoles = Array.isArray(result.identityRoles) && result.identityRoles.length > 0
-                ? result.identityRoles.join(", ")
-                : "no application role";
-            showLoginOverlay(`Microsoft sign-in succeeded, but this account is Viewer. Received: ${receivedRoles}. Required: PFIG.HR.Admin or PFIG.Portal.Admin.`);
-        }
-    } catch (errorValue) {
-        persistAuthSession(null);
-        showLoginOverlay(errorValue.message || "Microsoft sign-in failed");
-    }
-    return true;
-}
-
-function setupAuthListeners() {
-    document.getElementById("btn-login-sso")?.addEventListener("click", beginMicrosoftSignIn);
-    document.getElementById("btn-continue-viewer")?.addEventListener("click", hideLoginOverlay);
-    document.getElementById("btn-admin-login")?.addEventListener("click", () => {
-        if (authSession?.canEdit) {
-            persistAuthSession(null);
-            hideLoginOverlay();
-            showNotification("Signed out. You are viewing as Anonymous Viewer.", "success");
-            return;
-        }
-        showLoginOverlay();
-    });
-}
-
-async function startApplication() {
-    if (appStarted) return;
-    await loadRuntimeConfig();
-    if (!hrEnabled) {
-        hideLoader();
-        showLoginOverlay("The HR Org Chart module is currently disabled.");
-        return;
-    }
-    const callbackHandled = await processMicrosoftCallback();
-    if (!authSession) readStoredAuthSession();
-    if (authSession) {
-        const isValidSession = await validateStoredSession();
-        if (!isValidSession) persistAuthSession(null);
-    }
-    if (!authSession) applyAuthSession({ role: "Viewer", canEdit: false });
-    if (
-        !callbackHandled
-        && !authSession
-        && runtimeConfig.microsoft?.enabled
-        && runtimeConfig.microsoft?.tenantId
-        && runtimeConfig.microsoft?.clientId
-        && new URL(window.location.href).searchParams.get("pfig_sso") === "1"
-    ) {
-        await beginMicrosoftSignInAsync({ prompt: "none", silent: true });
-        return;
-    }
-    if (!document.getElementById("login-overlay")?.classList.contains("active")) {
-        hideLoginOverlay();
-    }
-    appStarted = true;
-    await init();
-}
-
 function refreshDisplayModeIcons() {
     if (window.lucide) window.lucide.createIcons();
 }
@@ -1023,6 +701,558 @@ async function toggleLayoutLock() {
 const PHOTO_MAX_SIZE = 256;
 const PHOTO_QUALITY = 0.82;
 
+// Authentication and cookie SSO
+const SESSION_API_URL = "/api/session";
+const CONFIG_API_URL = "/api/config";
+const MICROSOFT_STATE_STORAGE_KEY = "hr_org_microsoft_state";
+const EXPECTED_SILENT_ERRORS = new Set([
+    "login_required",
+    "interaction_required",
+    "consent_required"
+]);
+let authSession = null;
+let appStarted = false;
+let runtimeConfig = {
+    microsoft: {
+        enabled: false,
+        tenantId: "",
+        clientId: ""
+    }
+};
+const MUTATION_STORAGE_KEYS = {
+    employees: "hr_employees",
+    positions: "hr_positions",
+    preferences: "hr_org_preferences",
+    annotations: "hr_org_annotations"
+};
+const confirmedMutationState = new Map();
+
+function cloneMutationState(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function canEditHr() {
+    return authSession?.canEdit === true;
+}
+
+function requireEditorAction({ notify = true } = {}) {
+    if (canEditHr()) return true;
+    if (notify) {
+        showNotification(
+            "Viewer access is read-only. An HR Admin or Portal Admin is required to edit.",
+            "error"
+        );
+    }
+    return false;
+}
+
+function getCurrentMutationState(collection) {
+    if (collection === "employees") return employees;
+    if (collection === "positions") return positions;
+    if (collection === "annotations") return annotations;
+    if (collection === "preferences") {
+        return { collapsedNodeIds: [...collapsedNodes] };
+    }
+    throw new Error(`Unknown mutation collection: ${collection}`);
+}
+
+function applyMutationState(collection, value) {
+    const restored = cloneMutationState(value);
+    if (collection === "employees") employees = restored;
+    else if (collection === "positions") positions = restored;
+    else if (collection === "annotations") annotations = restored;
+    else if (collection === "preferences") {
+        collapsedNodes = new Set(restored.collapsedNodeIds || []);
+    } else {
+        throw new Error(`Unknown mutation collection: ${collection}`);
+    }
+}
+
+function writeMutationBackup(collection) {
+    const storageKey = MUTATION_STORAGE_KEYS[collection];
+    if (!storageKey) return;
+    try {
+        localStorage.setItem(
+            storageKey,
+            JSON.stringify(getCurrentMutationState(collection))
+        );
+    } catch (error) {
+        console.warn(`Failed to write ${collection} to localStorage:`, error);
+    }
+}
+
+function renderMutationCollection(collection) {
+    if (collection === "annotations") {
+        renderAnnotations();
+        return;
+    }
+    renderAll();
+    if (collection === "positions") renderPositionsList();
+}
+
+function recordConfirmedMutationState(collection) {
+    confirmedMutationState.set(
+        collection,
+        cloneMutationState(getCurrentMutationState(collection))
+    );
+}
+
+function restoreConfirmedMutationState(collection) {
+    if (!confirmedMutationState.has(collection)) return false;
+    applyMutationState(collection, confirmedMutationState.get(collection));
+    writeMutationBackup(collection);
+    renderMutationCollection(collection);
+    return true;
+}
+
+function captureMutationSnapshot() {
+    return {
+        employees: cloneMutationState(employees),
+        positions: cloneMutationState(positions),
+        annotations: cloneMutationState(annotations),
+        preferences: { collapsedNodeIds: [...collapsedNodes] },
+        selectedDept
+    };
+}
+
+function restoreMutationSnapshot(snapshot) {
+    for (const collection of ["employees", "positions", "annotations", "preferences"]) {
+        applyMutationState(collection, snapshot[collection]);
+        recordConfirmedMutationState(collection);
+        writeMutationBackup(collection);
+    }
+    selectedDept = snapshot.selectedDept;
+    renderAll();
+    renderAnnotations();
+}
+
+function confirmMutationState(collection) {
+    recordConfirmedMutationState(collection);
+    writeMutationBackup(collection);
+}
+
+function restoreRejectedMutation(collection, response) {
+    if (response?.status !== 401 && response?.status !== 403) return false;
+    return restoreConfirmedMutationState(collection);
+}
+
+function applyAuthSession(session) {
+    authSession = session?.identity
+        ? {
+            identity: session.identity,
+            csrfToken: session.csrfToken || "",
+            canEdit: session.identity.canEdit === true
+        }
+        : null;
+    document.body.classList.toggle("role-viewer", !authSession?.canEdit);
+    updateAuthControls();
+    if (appStarted) {
+        renderAnnotations();
+        if (canEditHr()) setupAnnotationListeners();
+    }
+}
+
+function updateAuthControls() {
+    const button = document.getElementById("btn-admin-login");
+    const isAdmin = authSession?.canEdit === true;
+    if (button) {
+        button.innerHTML = isAdmin
+            ? `<i data-lucide="log-out"></i> Sign out Admin`
+            : `<i data-lucide="shield-check"></i> Admin Sign in`;
+        button.title = isAdmin
+            ? "Sign out of the HR Org Chart only"
+            : "Sign in with Microsoft as an administrator";
+    }
+    const importButton = document.getElementById("btn-import-trigger");
+    if (importButton) {
+        importButton.hidden = !isAdmin;
+        importButton.disabled = !isAdmin;
+    }
+    const syncButton = document.getElementById("btn-sync-microsoft");
+    if (syncButton) {
+        syncButton.hidden = !isAdmin;
+        syncButton.disabled = !isAdmin;
+    }
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function showLoginOverlay(message = "") {
+    const overlay = document.getElementById("login-overlay");
+    const error = document.getElementById("login-error-msg");
+    const errorText = error?.querySelector("span");
+    if (error && errorText) {
+        errorText.textContent = message || "Microsoft sign-in failed. Please try again.";
+        error.style.display = message ? "flex" : "none";
+    }
+    overlay?.classList.add("active");
+    document.getElementById("btn-login-sso")?.focus();
+}
+
+function hideLoginOverlay() {
+    document.getElementById("login-overlay")?.classList.remove("active");
+    const error = document.getElementById("login-error-msg");
+    if (error) error.style.display = "none";
+}
+
+async function authenticatedFetch(input, options = {}) {
+    const {
+        suppressAuthFeedback = false,
+        ...fetchOptions
+    } = options;
+    const method = String(fetchOptions.method || "GET").toUpperCase();
+    const headers = new Headers(fetchOptions.headers || {});
+    if (
+        !["GET", "HEAD", "OPTIONS"].includes(method)
+        && authSession?.csrfToken
+    ) {
+        headers.set("X-CSRF-Token", authSession.csrfToken);
+    }
+
+    const response = await fetch(input, {
+        ...fetchOptions,
+        method,
+        headers,
+        credentials: "same-origin"
+    });
+    if (!suppressAuthFeedback && response.status === 401) {
+        applyAuthSession(null);
+        hideLoginOverlay();
+        showNotification(
+            "Admin session expired. You are now viewing as Anonymous Viewer.",
+            "error"
+        );
+    } else if (!suppressAuthFeedback && response.status === 403) {
+        showNotification(
+            "Viewer access is read-only. An HR Admin or Portal Admin is required to edit.",
+            "error"
+        );
+    }
+    return response;
+}
+
+async function readServerSession() {
+    try {
+        const response = await authenticatedFetch(SESSION_API_URL, {
+            suppressAuthFeedback: true,
+            headers: { Accept: "application/json" }
+        });
+        if (!response.ok) {
+            applyAuthSession(null);
+            return null;
+        }
+        const session = await response.json();
+        applyAuthSession(session);
+        return session;
+    } catch (error) {
+        console.warn("Unable to read the current HR session:", error);
+        applyAuthSession(null);
+        return null;
+    }
+}
+
+async function loadRuntimeConfig() {
+    try {
+        const response = await authenticatedFetch(CONFIG_API_URL, {
+            suppressAuthFeedback: true,
+            headers: { Accept: "application/json" }
+        });
+        if (!response.ok) return;
+        const config = await response.json();
+        const microsoft = config.microsoft || {
+            tenantId: config.tenantId,
+            clientId: config.clientId
+        };
+        const tenantId = microsoft.tenantId || "";
+        const clientId = microsoft.clientId || "";
+        runtimeConfig = {
+            ...config,
+            microsoft: {
+                ...microsoft,
+                enabled: microsoft.enabled !== false && Boolean(tenantId && clientId),
+                tenantId,
+                clientId
+            }
+        };
+    } catch (error) {
+        console.warn("Runtime configuration unavailable; continuing as Viewer.", error);
+    }
+}
+
+function clearMicrosoftCallbackUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("code");
+    url.searchParams.delete("state");
+    url.searchParams.delete("session_state");
+    url.searchParams.delete("error");
+    url.searchParams.delete("error_description");
+    url.searchParams.delete("pfig_sso");
+    window.history.replaceState(
+        {},
+        document.title,
+        `${url.pathname}${url.search}${url.hash}`
+    );
+}
+
+function beginMicrosoftSignIn() {
+    beginMicrosoftSignInAsync().catch(error => {
+        console.error("Microsoft sign-in setup failed:", error);
+        showLoginOverlay("Microsoft sign-in could not be started. Please try again.");
+    });
+}
+
+function toBase64Url(bytes) {
+    let binary = "";
+    bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+    return btoa(binary)
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+}
+
+function createSecureRandomToken(byteLength = 32) {
+    return toBase64Url(
+        window.crypto.getRandomValues(new Uint8Array(byteLength))
+    );
+}
+
+async function createPkceChallenge(codeVerifier) {
+    const data = new TextEncoder().encode(codeVerifier);
+    const digest = await window.crypto.subtle.digest("SHA-256", data);
+    return toBase64Url(new Uint8Array(digest));
+}
+
+async function beginMicrosoftSignInAsync({ prompt = "", silent = false } = {}) {
+    const microsoft = runtimeConfig.microsoft || {};
+    if (!microsoft.enabled || !microsoft.tenantId || !microsoft.clientId) {
+        if (!silent) {
+            showLoginOverlay("Microsoft sign-in is not configured for this environment.");
+        }
+        return false;
+    }
+
+    const state = window.crypto.randomUUID?.() || createSecureRandomToken();
+    const nonce = window.crypto.randomUUID?.() || createSecureRandomToken();
+    const codeVerifier = createSecureRandomToken();
+    const codeChallenge = await createPkceChallenge(codeVerifier);
+    sessionStorage.setItem(
+        MICROSOFT_STATE_STORAGE_KEY,
+        JSON.stringify({ state, nonce, codeVerifier, silent })
+    );
+
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const authorizeUrl = new URL(
+        `https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/authorize`
+    );
+    const authorizeParams = {
+        client_id: microsoft.clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        response_mode: "query",
+        scope: "openid profile email",
+        state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256"
+    };
+    if (prompt) authorizeParams.prompt = prompt;
+    authorizeUrl.search = new URLSearchParams(authorizeParams).toString();
+    window.location.assign(authorizeUrl.toString());
+    return true;
+}
+
+async function processMicrosoftCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code") || "";
+    const returnedState = params.get("state") || "";
+    const authErrorCode = params.get("error") || "";
+    const authErrorDescription = params.get("error_description") || "";
+    if (!code && !authErrorCode && !authErrorDescription) {
+        return { handled: false, session: null };
+    }
+
+    let savedState = null;
+    try {
+        savedState = JSON.parse(
+            sessionStorage.getItem(MICROSOFT_STATE_STORAGE_KEY) || "null"
+        );
+    } catch (storageError) {
+        console.warn("Unable to read Microsoft sign-in state:", storageError);
+    }
+    const silentIntent = savedState?.silent === true
+        || params.get("pfig_sso") === "1";
+    clearMicrosoftCallbackUrl();
+
+    try {
+        if (
+            !savedState?.state
+            || !returnedState
+            || returnedState !== savedState.state
+        ) {
+            throw new Error(
+                "Microsoft sign-in could not be verified. Please try again."
+            );
+        }
+        sessionStorage.removeItem(MICROSOFT_STATE_STORAGE_KEY);
+        if (authErrorCode || authErrorDescription) {
+            if (
+                savedState?.silent
+                && EXPECTED_SILENT_ERRORS.has(authErrorCode)
+            ) {
+                return { handled: true, session: null };
+            }
+            throw new Error(authErrorDescription || authErrorCode);
+        }
+        if (
+            !code
+            || !savedState?.nonce
+            || !savedState?.codeVerifier
+        ) {
+            throw new Error(
+                "Microsoft sign-in could not be verified. Please try again."
+            );
+        }
+
+        const microsoft = runtimeConfig.microsoft || {};
+        const redirectUri = `${window.location.origin}${window.location.pathname}`;
+        const tokenResponse = await fetch(
+            `https://login.microsoftonline.com/${encodeURIComponent(microsoft.tenantId)}/oauth2/v2.0/token`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                body: new URLSearchParams({
+                    client_id: microsoft.clientId,
+                    code,
+                    code_verifier: savedState.codeVerifier,
+                    redirect_uri: redirectUri,
+                    grant_type: "authorization_code",
+                    scope: "openid profile email"
+                })
+            }
+        );
+        const tokenResult = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenResult.id_token) {
+            throw new Error(
+                tokenResult.error_description
+                || tokenResult.error
+                || "Microsoft token exchange failed"
+            );
+        }
+
+        const response = await authenticatedFetch("/api/login-sso", {
+            method: "POST",
+            suppressAuthFeedback: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                idToken: tokenResult.id_token,
+                nonce: savedState.nonce
+            })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.error || "Microsoft sign-in failed");
+        }
+
+        applyAuthSession(result);
+        hideLoginOverlay();
+        return { handled: true, session: result };
+    } catch (errorValue) {
+        if (savedState?.silent || silentIntent) {
+            console.warn("Silent Microsoft sign-in failed:", errorValue);
+            applyAuthSession(null);
+            hideLoginOverlay();
+            showNotification(
+                "Microsoft sign-in could not be completed. Continuing as Anonymous Viewer.",
+                "error"
+            );
+            return { handled: true, session: null };
+        }
+        applyAuthSession(null);
+        showLoginOverlay(errorValue.message || "Microsoft sign-in failed");
+        return { handled: true, session: null };
+    }
+}
+
+async function signOutHrAdmin() {
+    if (!authSession?.csrfToken) {
+        showNotification(
+            "HR sign-out could not be completed because the CSRF token is missing.",
+            "error"
+        );
+        throw new Error("HR sign-out requires a CSRF token");
+    }
+    const response = await authenticatedFetch("/api/logout", {
+        method: "POST",
+        suppressAuthFeedback: true
+    });
+    if (!response.ok) {
+        showNotification(
+            "HR sign-out could not be completed. Please try again.",
+            "error"
+        );
+        throw new Error(`HR sign-out failed with status ${response.status}`);
+    }
+    applyAuthSession(null);
+    hideLoginOverlay();
+    showNotification(
+        "Signed out. You are viewing as Anonymous Viewer.",
+        "success"
+    );
+}
+
+function setupAuthListeners() {
+    document.getElementById("btn-login-sso")
+        ?.addEventListener("click", beginMicrosoftSignIn);
+    document.getElementById("btn-continue-viewer")
+        ?.addEventListener("click", hideLoginOverlay);
+    document.getElementById("btn-admin-login")?.addEventListener("click", () => {
+        if (authSession?.canEdit) {
+            signOutHrAdmin().catch(error => {
+                console.error("HR sign-out failed:", error);
+            });
+            return;
+        }
+        beginMicrosoftSignIn();
+    });
+}
+
+async function startApplication() {
+    if (appStarted) return;
+    await loadRuntimeConfig();
+    const callback = await processMicrosoftCallback();
+    const serverSession = callback.session || await readServerSession();
+
+    if (
+        !callback.handled
+        && !serverSession
+        && runtimeConfig.microsoft?.enabled
+        && new URL(window.location.href).searchParams.get("pfig_sso") === "1"
+    ) {
+        try {
+            const redirected = await beginMicrosoftSignInAsync({
+                prompt: "none",
+                silent: true
+            });
+            if (redirected) return;
+        } catch (error) {
+            console.warn("Silent Microsoft sign-in could not be started:", error);
+            applyAuthSession(null);
+            hideLoginOverlay();
+            showNotification(
+                "Microsoft sign-in could not be completed. Continuing as Anonymous Viewer.",
+                "error"
+            );
+        }
+    }
+
+    clearMicrosoftCallbackUrl();
+    if (!authSession) applyAuthSession(null);
+    if (!document.getElementById("login-overlay")?.classList.contains("active")) {
+        hideLoginOverlay();
+    }
+    appStarted = true;
+    await init();
+}
+
 // Loader helper functions
 function setLoaderProgress(percent, statusText) {
     const progressBar = document.getElementById("loader-progress-bar");
@@ -1184,6 +1414,7 @@ async function loadData() {
         const photoCompressed = authSession?.canEdit === true
             ? await compressAllEmployeePhotos()
             : false;
+        recordConfirmedMutationState("employees");
 
         if (authSession?.canEdit === true && (
             !Array.isArray(savedEmployees)
@@ -1204,6 +1435,7 @@ async function loadData() {
         try {
             employees = JSON.parse(saved);
             normalizeEmployeeProfiles();
+            recordConfirmedMutationState("employees");
             return;
         } catch (error) {
             console.warn("Failed to parse localStorage backup.", error);
@@ -1213,15 +1445,21 @@ async function loadData() {
     employees = [...DEFAULT_EMPLOYEES];
     normalizeEmployeeProfiles();
     saveLocalBackup();
+    recordConfirmedMutationState("employees");
 }
 
 // Save to server database, with a local browser backup as a fallback copy.
 async function saveData() {
+    if (!requireEditorAction({ notify: false })) {
+        restoreConfirmedMutationState("employees");
+        return false;
+    }
     setSyncStatus("saving");
     saveLocalBackup();
+    let response = null;
 
     try {
-        const response = await authenticatedFetch(EMPLOYEES_API_URL, {
+        response = await authenticatedFetch(EMPLOYEES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(employees)
@@ -1230,12 +1468,16 @@ async function saveData() {
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        confirmMutationState("employees");
         setSyncStatus("success");
         return true;
     } catch (error) {
+        const restored = restoreRejectedMutation("employees", response);
         console.error("Failed to save data to database.", error);
         setSyncStatus("error");
-        showNotification("Database save failed. A browser backup was kept.", "error");
+        if (!restored) {
+            showNotification("Database save failed. A browser backup was kept.", "error");
+        }
         return false;
     }
 }
@@ -1459,8 +1701,10 @@ async function loadPositions() {
 
         if (!Array.isArray(savedPositions) || positions.length === 0) {
             positions = derivePositionsFromEmployees();
+            recordConfirmedMutationState("positions");
             await savePositions();
         } else {
+            recordConfirmedMutationState("positions");
             // Auto-align employees who don't have positions (e.g. newly synced from Microsoft AD)
             let positionsChanged = hierarchyRepair.changed;
             const assignedEmployeeIds = new Set(positions.map(p => p.employeeId).filter(id => id !== null));
@@ -1526,6 +1770,7 @@ async function loadPositions() {
                     return;
                 }
                 if (localHierarchyRepair.changed) saveLocalPositionsBackup();
+                recordConfirmedMutationState("positions");
                 return;
             }
         } catch (error) {
@@ -1540,59 +1785,62 @@ async function loadPositions() {
     }
 
     positions = derivePositionsFromEmployees();
-    saveLocalPositionsBackup();
+    writeMutationBackup("positions");
+    recordConfirmedMutationState("positions");
 }
 
 let latestPositionsSavePromise = Promise.resolve(true);
 
-async function savePositions(candidatePositions = positions) {
+async function savePositions() {
+    const candidatePositions = arguments.length > 0 ? arguments[0] : positions;
+    if (!requireEditorAction({ notify: false })) {
+        restoreConfirmedMutationState("positions");
+        return false;
+    }
     setSyncStatus("saving");
     const currentPositions = positions;
     const normalizedCandidate = normalizePositionsList(candidatePositions);
     const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate);
     const repairedCandidate = saveHierarchyRepair.positions;
-    saveLocalPositionsBackup(repairedCandidate);
+    const payload = repairedCandidate.map(p => ({
+        ...p,
+        notes: JSON.stringify({
+            layoutStyle: p.layoutStyle || "horizontal",
+            isManual: !!p.isManual,
+            manualLayouts: p.manualLayouts || {},
+            status: PositionLifecycle.normalizeStatus(p.status),
+            effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
+            statusReason: p.statusReason || "",
+            text: p.notes || ""
+        })
+    }));
 
-    const outcome = await PositionPersistence.commitCandidate(
-        currentPositions,
-        repairedCandidate,
-        async candidate => {
-            const payload = candidate.map(p => ({
-                ...p,
-                notes: JSON.stringify({
-                    layoutStyle: p.layoutStyle || "horizontal",
-                    isManual: !!p.isManual,
-                    manualLayouts: p.manualLayouts || {},
-                    status: PositionLifecycle.normalizeStatus(p.status),
-                    effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
-                    statusReason: p.statusReason || "",
-                    text: p.notes || ""
-                })
-            }));
+    let response = null;
+    try {
+        response = await authenticatedFetch(POSITIONS_API_URL, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
 
-            try {
-                const response = await authenticatedFetch(POSITIONS_API_URL, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Server responded with ${response.status}`);
-                }
-                setSyncStatus("success");
-                return true;
-            } catch (error) {
-                console.error("Failed to save positions to database.", error);
-                setSyncStatus("error");
-                showNotification("Position save failed. The active chart was not changed.", "error");
-                return false;
-            }
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
         }
-    );
-
-    positions = outcome.positions;
-    return outcome.saved;
+        positions = repairedCandidate;
+        confirmMutationState("positions");
+        setSyncStatus("success");
+        return true;
+    } catch (error) {
+        const restored = restoreConfirmedMutationState("positions");
+        if (!restored) positions = currentPositions;
+        console.error("Failed to save positions to database.", error);
+        setSyncStatus("error");
+        showNotification(
+            "Position save failed. The active chart was restored to the last confirmed state.",
+            "error"
+        );
+        return false;
+    }
 }
 
 function sanitizeCollapsedNodeIds(value) {
@@ -1626,6 +1874,7 @@ async function loadPreferences() {
         }
 
         applyPreferences(await response.json());
+        recordConfirmedMutationState("preferences");
         return;
     } catch (error) {
         console.warn("Preferences API unavailable; falling back to localStorage.", error);
@@ -1635,6 +1884,7 @@ async function loadPreferences() {
     if (saved) {
         try {
             applyPreferences(JSON.parse(saved));
+            recordConfirmedMutationState("preferences");
             return;
         } catch (error) {
             console.warn("Failed to parse localStorage preferences backup.", error);
@@ -1642,9 +1892,14 @@ async function loadPreferences() {
     }
 
     applyPreferences({});
+    recordConfirmedMutationState("preferences");
 }
 
 async function savePreferences() {
+    if (!requireEditorAction({ notify: false })) {
+        restoreConfirmedMutationState("preferences");
+        return false;
+    }
     setSyncStatus("saving");
     const preferences = getPreferencesPayload();
     try {
@@ -1653,8 +1908,9 @@ async function savePreferences() {
         console.warn("Failed to write preferences to localStorage:", error);
     }
 
+    let response = null;
     try {
-        const response = await authenticatedFetch(PREFERENCES_API_URL, {
+        response = await authenticatedFetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(preferences)
@@ -1663,9 +1919,11 @@ async function savePreferences() {
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        confirmMutationState("preferences");
         setSyncStatus("success");
         return true;
     } catch (error) {
+        restoreRejectedMutation("preferences", response);
         console.error("Failed to save shared view preferences.", error);
         setSyncStatus("error");
         return false;
@@ -1849,6 +2107,94 @@ function resizeImageFile(file) {
     });
 }
 
+async function handleImportFileChange(e) {
+    const fileInput = e.target;
+    if (!requireEditorAction()) {
+        fileInput.value = "";
+        return;
+    }
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        try {
+            const parsed = JSON.parse(event.target.result);
+            const snapshot = captureMutationSnapshot();
+            let shouldSaveAnnotations = false;
+            let unifiedImport = false;
+
+            if (
+                parsed
+                && parsed.version
+                && Array.isArray(parsed.employees)
+                && Array.isArray(parsed.positions)
+            ) {
+                if (!confirm(`Are you sure you want to import this unified backup? It will restore all ${parsed.employees.length} employees, ${parsed.positions.length} positions, annotations, and layouts.`)) {
+                    return;
+                }
+                employees = parsed.employees;
+                positions = parsed.positions;
+                annotations = parsed.annotations || [];
+                collapsedNodes = new Set(
+                    sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || [])
+                );
+                selectedDept = "All";
+                await compressAllEmployeePhotos();
+                shouldSaveAnnotations = true;
+                unifiedImport = true;
+            } else if (
+                Array.isArray(parsed)
+                && parsed.length > 0
+                && parsed[0].name
+                && parsed[0].department
+            ) {
+                if (!confirm(`Are you sure you want to import this backup? It will overwrite your current chart with ${parsed.length} employees.`)) {
+                    return;
+                }
+                employees = parsed;
+                normalizeEmployeeProfiles();
+                positions = derivePositionsFromEmployees();
+                collapsedNodes.clear();
+                selectedDept = "All";
+                await compressAllEmployeePhotos();
+            } else {
+                showNotification("Invalid backup file format", "error");
+                return;
+            }
+
+            const writeResults = await Promise.all([
+                saveData(),
+                savePositions(),
+                shouldSaveAnnotations ? saveAnnotations() : Promise.resolve(true),
+                savePreferences()
+            ]);
+            if (!writeResults.every(Boolean)) {
+                restoreMutationSnapshot(snapshot);
+                showNotification(
+                    "Backup import could not be saved. The previous chart was restored.",
+                    "error"
+                );
+                return;
+            }
+
+            renderAll();
+            renderAnnotations();
+            fitToScreen();
+            const successMessage = unifiedImport
+                ? "Unified backup imported successfully!"
+                : "Legacy backup imported successfully!";
+            showNotification(successMessage, "success");
+        } catch (err) {
+            console.error(err);
+            showNotification("Failed to import JSON backup file", "error");
+        } finally {
+            fileInput.value = "";
+        }
+    };
+    reader.readAsText(file);
+}
+
 // Set up UI and canvas event listeners
 function setupEventListeners() {
     const layoutLockButton = document.getElementById("btn-layout-lock");
@@ -2012,81 +2358,16 @@ function setupEventListeners() {
     // Import Backup data trigger
     const fileInput = document.getElementById("import-file-input");
     document.getElementById("btn-import-trigger").addEventListener("click", () => {
+        if (!requireEditorAction()) return;
         fileInput.click();
     });
-    
-    fileInput.addEventListener("change", (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-            try {
-                const parsed = JSON.parse(event.target.result);
-                
-                // Check if it's the new unified backup format
-                if (parsed && parsed.version && Array.isArray(parsed.employees) && Array.isArray(parsed.positions)) {
-                    if (confirm(`Are you sure you want to import this unified backup? It will restore all ${parsed.employees.length} employees, ${parsed.positions.length} positions, annotations, and layouts.`)) {
-                        employees = parsed.employees;
-                        positions = parsed.positions;
-                        annotations = parsed.annotations || [];
-                        applyPreferences(parsed.preferences || {});
-                        selectedDept = "All";
-                        
-                        // Compress photos on import to prevent 413 Payload Too Large
-                        await compressAllEmployeePhotos();
-                        
-                        await saveData();
-                        await savePositions();
-                        await saveAnnotations();
-                        await savePreferences();
-                        
-                        renderAll();
-                        fitToScreen();
-                        showNotification("Unified backup imported successfully!", "success");
-                    }
-                } 
-                // Fallback: Check if it's the old format (just an array of employees)
-                else if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].name && parsed[0].department) {
-                    if (confirm(`Are you sure you want to import this backup? It will overwrite your current chart with ${parsed.length} employees.`)) {
-                        employees = parsed;
-                        normalizeEmployeeProfiles();
-                        positions = derivePositionsFromEmployees();
-                        collapsedNodes.clear();
-                        selectedDept = "All";
-                        
-                        // Compress photos on import to prevent 413 Payload Too Large
-                        await compressAllEmployeePhotos();
-                        
-                        await saveData();
-                        await savePositions();
-                        await savePreferences();
-                        
-                        renderAll();
-                        fitToScreen();
-                        showNotification("Legacy backup imported successfully!", "success");
-                    }
-                } else {
-                    showNotification("Invalid backup file format", "error");
-                }
-            } catch (err) {
-                console.error(err);
-                showNotification("Failed to parse JSON backup file", "error");
-            }
-            // Clear input so same file can be uploaded again
-            fileInput.value = "";
-        };
-        reader.readAsText(file);
-    });
+    fileInput.addEventListener("change", handleImportFileChange);
     
     // Sync Microsoft 365 button
     const btnSync = document.getElementById("btn-sync-microsoft");
     if (btnSync) {
         btnSync.addEventListener("click", async () => {
-            if (document.body.classList.contains("role-viewer")) {
-                showNotification("เฉพาะผู้ดูแลระบบเท่านั้นที่ Sync Microsoft 365 ได้", "error");
-                return;
-            }
+            if (!requireEditorAction()) return;
             if (!confirm("ตรวจสอบข้อมูล Microsoft 365 ก่อน Sync หรือไม่? ขั้นตอนนี้ยังไม่แก้ไขข้อมูล")) return;
             
             btnSync.disabled = true;
@@ -3709,6 +3990,7 @@ function applySelectedPersonProfile() {
 }
 
 function openEmployeeForm(editId = null) {
+    if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
 
     const modal = document.getElementById("form-modal");
@@ -4474,6 +4756,7 @@ function renderPositionsList() {
 
 async function handlePositionFormSubmit(e) {
     e.preventDefault();
+    if (!requireEditorAction()) return false;
 
     const idVal = document.getElementById("form-position-id").value;
     const title = document.getElementById("form-position-title").value.trim();
@@ -4598,6 +4881,7 @@ async function handlePositionFormSubmit(e) {
 }
 
 async function deletePosition(id) {
+    if (!requireEditorAction()) return false;
     const positionToDelete = positions.find(position => position.id === id);
     if (!positionToDelete) return;
 
@@ -4659,6 +4943,7 @@ function getAutoPositionForNode(managerId, excludeEmployeeId = null) {
 
 async function handleFormSubmit(e) {
     e.preventDefault();
+    if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
     
     const idVal = document.getElementById("form-employee-id").value;
@@ -4766,6 +5051,7 @@ async function handleFormSubmit(e) {
 }
 
 async function deleteEmployee(id) {
+    if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
 
     const employeeToDelete = employees.find(e => e.id === id);
@@ -5112,6 +5398,7 @@ function getAlignmentCandidateBounds(position) {
 }
 
 function handleCardDragStart(e) {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     if (e.button !== 0) return;
     if (e.target.closest(".node-toggle-btn") || e.target.closest("input") || e.target.closest("a")) return;
@@ -5481,6 +5768,7 @@ function updateAnnotationStyleControls() {
 }
 
 function applySelectedAnnotationStyle(changes) {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     const annotation = getSelectedAnnotation();
     if (!annotation) return;
@@ -5523,6 +5811,7 @@ async function loadAnnotations() {
         if (response.ok) {
             annotations = await response.json();
             annotations = normalizeAnnotationsList(annotations);
+            recordConfirmedMutationState("annotations");
         }
     } catch (err) {
         console.warn("Failed to load annotations from database, falling back to local storage", err);
@@ -5531,23 +5820,32 @@ async function loadAnnotations() {
             try {
                 annotations = JSON.parse(local);
                 annotations = normalizeAnnotationsList(annotations);
+                recordConfirmedMutationState("annotations");
             } catch (e) {
                 annotations = [];
             }
         }
     }
+    if (!confirmedMutationState.has("annotations")) {
+        recordConfirmedMutationState("annotations");
+    }
     renderAnnotations();
 }
 
 async function saveAnnotations() {
+    if (!requireEditorAction({ notify: false })) {
+        restoreConfirmedMutationState("annotations");
+        return false;
+    }
     setSyncStatus("saving");
     try {
         localStorage.setItem("hr_org_annotations", JSON.stringify(annotations));
     } catch (error) {
         console.warn("Failed to write annotations to localStorage:", error);
     }
+    let response = null;
     try {
-        const response = await authenticatedFetch(ANNOTATIONS_API_URL, {
+        response = await authenticatedFetch(ANNOTATIONS_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(annotations)
@@ -5555,10 +5853,14 @@ async function saveAnnotations() {
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
+        confirmMutationState("annotations");
         setSyncStatus("success");
+        return true;
     } catch (err) {
+        restoreRejectedMutation("annotations", response);
         console.error("Failed to save annotations to database", err);
         setSyncStatus("error");
+        return false;
     }
 }
 
@@ -5569,6 +5871,7 @@ function pushAnnotationHistory() {
 }
 
 function undoAnnotation() {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     if (annotationHistory.length === 0) return;
     const currentState = JSON.stringify(annotations);
@@ -5582,6 +5885,7 @@ function undoAnnotation() {
 }
 
 function redoAnnotation() {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     if (annotationRedoHistory.length === 0) return;
     const currentState = JSON.stringify(annotations);
@@ -5635,6 +5939,7 @@ let annotResizeStartY = 0;
 function renderAnnotations() {
     const container = document.getElementById("annotations-container");
     if (!container) return;
+    const canEditAnnotations = canEditHr();
 
     const visibleAnnotations = getVisibleAnnotations();
     const layoutEditingBlocked = isLayoutEditingBlocked();
@@ -5660,7 +5965,7 @@ function renderAnnotations() {
             
             el.innerHTML = `
                 <div class="annotation-header">
-                    <div class="annotation-title" contenteditable="true" spellcheck="false">${escapeHTML(annot.text || "กรอบข้อความ")}</div>
+                    <div class="annotation-title" spellcheck="false">${escapeHTML(annot.text || "กรอบข้อความ")}</div>
                     <button class="annotation-delete-btn" title="ลบ">&times;</button>
                 </div>
                 <div class="annotation-content"></div>
@@ -5669,7 +5974,14 @@ function renderAnnotations() {
             
             // Edit title
             const titleEl = el.querySelector(".annotation-title");
-            titleEl.contentEditable = String(!layoutEditingBlocked && !getAnnotationLocked(annot));
+            titleEl.contentEditable = String(canEditAnnotations && !getAnnotationLocked(annot));
+            if (layoutEditingBlocked) titleEl.contentEditable = "false";
+            if (!canEditAnnotations) {
+                el.querySelector(".annotation-delete-btn")?.remove();
+                el.querySelector(".annotation-resize-handle")?.remove();
+                container.appendChild(el);
+                return;
+            }
             titleEl.addEventListener("blur", () => {
                 if (isLayoutEditingBlocked()) return;
                 const text = titleEl.innerText.trim();
@@ -5724,7 +6036,8 @@ function renderAnnotations() {
             
             const txt = document.createElement("div");
             txt.className = "annotation-text";
-            txt.contentEditable = String(!layoutEditingBlocked && !getAnnotationLocked(annot));
+            txt.contentEditable = String(canEditAnnotations && !getAnnotationLocked(annot));
+            if (layoutEditingBlocked) txt.contentEditable = "false";
             txt.spellcheck = false;
             txt.innerText = annot.text || "ดับเบิ้ลคลิกแก้ไขข้อความ";
             txt.style.color = getAnnotationColor(annot);
@@ -5737,6 +6050,10 @@ function renderAnnotations() {
             del.disabled = layoutEditingBlocked;
             
             wrapper.appendChild(txt);
+            if (!canEditAnnotations) {
+                container.appendChild(wrapper);
+                return;
+            }
             wrapper.appendChild(del);
             
             // Edit text
@@ -5782,6 +6099,7 @@ function renderAnnotations() {
 }
 
 function startDragAnnotation(e, annot, el) {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked() || e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeDragAnnotation = { annot, el };
@@ -5822,6 +6140,7 @@ function handleDragAnnotationEnd(e) {
 }
 
 function startResizeAnnotation(e, annot, el) {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked() || e.button !== 0 || getAnnotationLocked(annot)) return;
     el.setPointerCapture(e.pointerId);
     activeResizeAnnotation = { annot, el };
@@ -5868,6 +6187,7 @@ function handleResizeAnnotationEnd(e) {
 }
 
 function deleteAnnotation(id) {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     pushAnnotationHistory();
     if (selectedAnnotationId === id) selectedAnnotationId = null;
@@ -5883,6 +6203,7 @@ function deleteSelectedAnnotation() {
 }
 
 function toggleSelectedAnnotationLock() {
+    if (!requireEditorAction()) return;
     if (isLayoutEditingBlocked()) return;
     const annotation = getSelectedAnnotation();
     if (!annotation) return;
@@ -5893,7 +6214,12 @@ function toggleSelectedAnnotationLock() {
     saveAnnotations();
 }
 
+let annotationListenersInitialized = false;
+
 function setupAnnotationListeners() {
+    if (!canEditHr()) return;
+    if (annotationListenersInitialized) return;
+    annotationListenersInitialized = true;
     const colorInput = document.getElementById("annotation-color-picker");
     const fontSizeInput = document.getElementById("annotation-font-size");
     const widthInput = document.getElementById("annotation-width");
@@ -5923,6 +6249,7 @@ function setupAnnotationListeners() {
 
     // Toolbar buttons
     document.getElementById("tool-add-frame").addEventListener("click", () => {
+        if (!requireEditorAction()) return;
         if (isLayoutEditingBlocked()) return;
         pushAnnotationHistory();
         const id = `annot-${Date.now()}`;
@@ -5950,6 +6277,7 @@ function setupAnnotationListeners() {
     });
     
     document.getElementById("tool-add-text").addEventListener("click", () => {
+        if (!requireEditorAction()) return;
         if (isLayoutEditingBlocked()) return;
         pushAnnotationHistory();
         const id = `annot-${Date.now()}`;
@@ -5980,6 +6308,7 @@ function setupAnnotationListeners() {
     document.getElementById("tool-toggle-lock")?.addEventListener("click", toggleSelectedAnnotationLock);
     
     document.getElementById("tool-clear").addEventListener("click", () => {
+        if (!requireEditorAction()) return;
         if (isLayoutEditingBlocked()) return;
         const currentDeptsAnnots = getVisibleAnnotations();
         if (currentDeptsAnnots.length === 0) return;

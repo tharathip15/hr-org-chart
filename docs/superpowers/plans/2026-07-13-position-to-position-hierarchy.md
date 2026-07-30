@@ -255,7 +255,6 @@ Expected: every test passes with zero failures.
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\positions.js
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\employees.js
 & 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe' --check api\sync-microsoft.js
-& 'C:\Users\IT\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m py_compile server.py
 git diff --check
 ```
 
@@ -263,7 +262,7 @@ Expected: all commands exit 0.
 
 - [ ] **Step 3: Define the Browser target flow**
 
-The flow under test is: app loads -> open Position Management -> select a child position -> change Reports To Position to another position -> save -> chart connection and row metadata show the new parent -> edit employee data without moving the position edge.
+Run `npx vercel dev`. The flow under test is: app loads -> open Position Management -> select a child position -> change Reports To Position to another position -> save -> chart connection and row metadata show the new parent -> edit employee data without moving the position edge.
 
 - [ ] **Step 4: Run desktop Browser checks**
 

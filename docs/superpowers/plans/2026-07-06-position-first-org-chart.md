@@ -6,7 +6,7 @@
 
 **Architecture:** Keep `employees` as people records and add `positions` as structure records. Render chart cards from positions, using the assigned employee when `employeeId` is set and a `VACANT` state otherwise. Persist positions through a new `/api/positions` endpoint with localStorage fallback.
 
-**Tech Stack:** Plain HTML/CSS/JavaScript frontend, existing Python local server, existing Vercel/Supabase API style, Node built-in tests.
+**Tech Stack:** Plain HTML/CSS/JavaScript frontend, Vercel Functions backed by Supabase, Node built-in tests.
 
 ---
 
@@ -25,13 +25,11 @@
 
 **Files:**
 - Create: `api/positions.js`
-- Modify: `server.py`
 - Modify: `tests/position-first-org-chart.test.mjs`
 
-- [ ] Extend the failing test to require local `/api/positions` support and deployed `api/positions.js`.
-- [ ] Implement local SQLite `positions` storage under `app_data`.
-- [ ] Implement Vercel/Supabase endpoint that reads/writes a `positions` table and returns `[]` if storage is not ready.
-- [ ] Verify `server.py` compiles and Node API files pass syntax checks.
+- [ ] Extend the failing test to require `/api/positions` support from `api/positions.js`.
+- [ ] Implement the Vercel/Supabase endpoint that reads/writes a `positions` table and returns `[]` if storage is not ready.
+- [ ] Verify the Vercel Function and Node API files pass syntax checks.
 
 ### Task 3: Positions UI
 
@@ -66,5 +64,5 @@
 
 - [ ] Run `node --test tests/*.test.mjs`.
 - [ ] Run `node --check app.js`, `node --check api/employees.js`, `node --check api/positions.js`, and existing API syntax checks.
-- [ ] Run `server.py` with bundled Python on a temporary port and verify `/api/positions` GET/PUT.
+- [ ] Run `npx vercel dev` and verify the Vercel Function `/api/positions` GET/PUT boundary.
 - [ ] Open the app in the browser and verify the Positions modal, vacant card, and assignment behavior.

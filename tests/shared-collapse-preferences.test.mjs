@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf8");
 const preferencesApiPath = new URL("../api/preferences.js", import.meta.url);
 
 test("app loads shared collapsed node preferences before rendering", () => {
@@ -34,9 +33,7 @@ test("overall view provides a recovery action for shared collapsed nodes", () =>
     assert.match(appSource, /collapsedNodes\.clear\(\)/);
 });
 
-test("local and deployed APIs expose shared preferences", () => {
-    assert.match(serverSource, /if path == "\/api\/preferences":/);
-    assert.match(serverSource, /save_preferences\(preferences\)/);
+test("the Vercel API exposes shared preferences", () => {
     assert.equal(existsSync(preferencesApiPath), true);
 
     const preferencesApiSource = readFileSync(preferencesApiPath, "utf8");

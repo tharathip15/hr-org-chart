@@ -1,5 +1,5 @@
 import { supabase } from "./_helpers/supabase.js";
-import { getAuthContext, validateToken, requireEditor } from "./_helpers/auth.js";
+import { getSession, requireEditorWithCsrf } from "./_helpers/session.js";
 import { createSnapshotAndLog } from "./_helpers/history_helper.js";
 import {
   isDataImageUrl,
@@ -12,18 +12,13 @@ import { readEmployeeRows } from "./_helpers/employee_reader.js";
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
 export default async function handler(request, response) {
-  if (request.method !== "GET" && !validateToken(request)) {
-    response.status(401).json({ ok: false, error: "Unauthorized" });
-    return;
-  }
-
   if (request.method === "GET") {
     await handleGet(request, response);
     return;
   }
 
   if (request.method === "PUT") {
-    if (!requireEditor(request, response)) return;
+    if (!requireEditorWithCsrf(request, response)) return;
     await handlePut(request, response);
     return;
   }
@@ -42,7 +37,7 @@ async function handleGet(request, response) {
 
     // Legacy Base64 photos are only needed once by an editor to migrate them
     // to Blob. Anonymous viewers receive the lightweight directory payload.
-    const includeLegacyPhotos = getAuthContext(request)?.canEdit === true;
+    const includeLegacyPhotos = getSession(request)?.canEdit === true;
     let responseRows;
     try {
       responseRows = await signPrivatePhotoRows(data || []);

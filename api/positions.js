@@ -1,23 +1,18 @@
 import { supabase } from "./_helpers/supabase.js";
-import { validateToken, requireEditor } from "./_helpers/auth.js";
+import { requireEditorWithCsrf } from "./_helpers/session.js";
 import { createSnapshotAndLog } from "./_helpers/history_helper.js";
 import { syncPositionRows } from "./_helpers/position_storage.js";
 
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
 export default async function handler(request, response) {
-  if (request.method !== "GET" && !validateToken(request)) {
-    response.status(401).json({ ok: false, error: "Unauthorized" });
-    return;
-  }
-
   if (request.method === "GET") {
     await handleGet(response);
     return;
   }
 
   if (request.method === "PUT") {
-    if (!requireEditor(request, response)) return;
+    if (!requireEditorWithCsrf(request, response)) return;
     await handlePut(request, response);
     return;
   }
