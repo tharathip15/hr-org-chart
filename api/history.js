@@ -1,5 +1,6 @@
 import { supabase } from "./_helpers/supabase.js";
 import { validateToken, requireEditor } from "./_helpers/auth.js";
+import { normalizePhotoRows } from "./_helpers/photo_storage.js";
 
 const MAX_BODY_SIZE = 1024; // Small body limit for POST requests
 
@@ -93,7 +94,7 @@ async function handlePost(request, response) {
       await supabase.from("employees").delete().neq("id", 0);
       // Upsert historical
       if (employees.length > 0) {
-        const dbRows = employees.map(emp => ({
+        let dbRows = employees.map(emp => ({
           id: parseInt(emp.id, 10),
           person_id: emp.personId || "",
           name: emp.name || "",
@@ -108,6 +109,7 @@ async function handlePost(request, response) {
           x: emp.x !== undefined && emp.x !== null ? parseInt(emp.x, 10) : null,
           y: emp.y !== undefined && emp.y !== null ? parseInt(emp.y, 10) : null
         }));
+        dbRows = await normalizePhotoRows(dbRows, row => row.person_id || row.id);
         const { error: upsertErr } = await supabase.from("employees").upsert(dbRows);
         if (upsertErr) throw upsertErr;
       }

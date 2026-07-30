@@ -29,6 +29,8 @@ export default async function handler(request, response) {
     const blob = await put(filename, request, {
       contentType,
       access: "public",
+      addRandomSuffix: true,
+      cacheControlMaxAge: 31536000,
       token: process.env.BLOB_READ_WRITE_TOKEN
     });
 

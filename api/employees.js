@@ -1,6 +1,7 @@
 import { supabase } from "./_helpers/supabase.js";
-import { validateToken, requireEditor } from "./_helpers/auth.js";
+import { getAuthContext, validateToken, requireEditor } from "./_helpers/auth.js";
 import { createSnapshotAndLog } from "./_helpers/history_helper.js";
+import { isDataImageUrl, normalizePhotoRows } from "./_helpers/photo_storage.js";
 
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
@@ -11,7 +12,7 @@ export default async function handler(request, response) {
   }
 
   if (request.method === "GET") {
-    await handleGet(response);
+    await handleGet(request, response);
     return;
   }
 
@@ -25,18 +26,21 @@ export default async function handler(request, response) {
   response.status(405).json({ ok: false, error: "Method not allowed" });
 }
 
-async function handleGet(response) {
+async function handleGet(request, response) {
   try {
     const { data, error } = await supabase
       .from("employees")
-      .select("*")
+      .select("id,person_id,name,role,department,manager_id,email,phone,bio,photo_url,avatar_color,x,y")
       .order("id", { ascending: true });
 
     if (error) {
       throw error;
     }
 
-    const employees = (data || []).map(mapDbToEmployee);
+    // Legacy Base64 photos are only needed once by an editor to migrate them
+    // to Blob. Anonymous viewers receive the lightweight directory payload.
+    const includeLegacyPhotos = getAuthContext(request)?.canEdit === true;
+    const employees = (data || []).map(row => mapDbToEmployee(row, { includeLegacyPhotos }));
     response.setHeader("Cache-Control", "no-store");
     response.status(200).json(employees);
   } catch (error) {
@@ -59,6 +63,11 @@ async function handlePut(request, response) {
 
     const payloadIds = body.map(emp => parseInt(emp.id, 10)).filter(Number.isInteger);
 
+    // Upload legacy data URLs before deleting anything so a migration failure
+    // cannot leave the employee table empty.
+    let dbRows = body.map(mapEmployeeToDb);
+    dbRows = await normalizePhotoRows(dbRows, row => row.person_id || row.id);
+
     // 1. Delete employees that are no longer in the payload
     if (payloadIds.length === 0) {
       const { error: deleteError } = await supabase
@@ -76,7 +85,6 @@ async function handlePut(request, response) {
 
     // 2. Upsert the current list of employees
     if (body.length > 0) {
-      const dbRows = body.map(mapEmployeeToDb);
       const { error: upsertError } = await supabase
         .from("employees")
         .upsert(dbRows);
@@ -118,7 +126,7 @@ async function handlePut(request, response) {
   }
 }
 
-function mapDbToEmployee(row) {
+function mapDbToEmployee(row, { includeLegacyPhotos = true } = {}) {
   return {
     id: row.id,
     personId: row.person_id,
@@ -129,7 +137,7 @@ function mapDbToEmployee(row) {
     email: row.email,
     phone: row.phone,
     bio: row.bio,
-    photoUrl: row.photo_url,
+    photoUrl: includeLegacyPhotos || !isDataImageUrl(row.photo_url) ? row.photo_url : null,
     avatarColor: row.avatar_color,
     x: row.x,
     y: row.y

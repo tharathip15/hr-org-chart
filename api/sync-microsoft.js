@@ -2,6 +2,7 @@ import { supabase } from "./_helpers/supabase.js";
 import { validateToken, requireEditor } from "./_helpers/auth.js";
 import { findExistingEmployee, isManualEmployee } from "./_helpers/employee_merge.js";
 import { buildPositionSyncUpdates } from "./_helpers/position_sync.js";
+import { normalizePhotoRows, uploadEmployeePhoto } from "./_helpers/photo_storage.js";
 
 const tenantId = process.env.MICROSOFT_TENANT_ID;
 const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -196,6 +197,14 @@ export default async function handler(request, response) {
       microsoftPersonIds
     );
 
+    // Keep Microsoft profile images out of the employees table. This also
+    // migrates any legacy Base64 images retained when Graph has no photo.
+    const normalizedDbRows = await normalizePhotoRows(
+      dbRows,
+      row => row.person_id || row.id
+    );
+    dbRows.splice(0, dbRows.length, ...normalizedDbRows);
+
     // 8. Re-insert to Supabase
     console.log("Replacing database rows...");
     const { error: deleteError } = await supabase
@@ -278,8 +287,8 @@ async function fetchPhotosForUsers(users, accessToken) {
         const arrayBuffer = await photoRes.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const contentType = photoRes.headers.get("content-type") || "image/jpeg";
-        const base64Data = buffer.toString("base64");
-        return { id: u.id, photoUrl: `data:${contentType};base64,${base64Data}` };
+        const photoUrl = await uploadEmployeePhoto(buffer, contentType, `microsoft-${u.id}`);
+        return { id: u.id, photoUrl };
       } catch (err) {
         return null;
       }

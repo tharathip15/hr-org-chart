@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { isDataImageUrl } from "./photo_storage.js";
 
 export async function createSnapshotAndLog(action, summary) {
   try {
@@ -32,7 +33,9 @@ export async function createSnapshotAndLog(action, summary) {
       email: row.email,
       phone: row.phone,
       bio: row.bio,
-      photoUrl: row.photo_url,
+      // Never add legacy Base64 payloads to new audit snapshots. Blob URLs are
+      // small and remain restorable; old snapshots are left untouched.
+      photoUrl: isDataImageUrl(row.photo_url) ? null : row.photo_url,
       avatarColor: row.avatar_color,
       x: row.x,
       y: row.y

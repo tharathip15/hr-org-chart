@@ -1145,6 +1145,10 @@ function compressBase64Image(base64Str) {
     });
 }
 
+function isLegacyPhotoDataUrl(photoUrl) {
+    return typeof photoUrl === "string" && /^data:image\/[a-z0-9.+-]+;base64,/i.test(photoUrl);
+}
+
 async function compressAllEmployeePhotos() {
     const promises = employees.map(async (emp) => {
         if (emp.photoUrl && emp.photoUrl.startsWith("data:image/") && emp.photoUrl.length > 50000) {
@@ -1175,10 +1179,16 @@ async function loadData() {
 
         const didNormalizeProfiles = normalizeEmployeeProfiles();
 
-        // Self-heal and compress any oversized profile pictures to prevent Vercel 413 Payload Too Large
-        const photoCompressed = await compressAllEmployeePhotos();
+        // Editors can self-heal legacy Base64 profile pictures. The server
+        // converts them to Blob URLs before writing, so anonymous viewers do
+        // not keep re-downloading the old payload.
+        const hasLegacyPhotos = authSession?.canEdit === true
+            && employees.some(emp => isLegacyPhotoDataUrl(emp.photoUrl));
+        const photoCompressed = authSession?.canEdit === true
+            ? await compressAllEmployeePhotos()
+            : false;
 
-        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles || photoCompressed) {
+        if (!Array.isArray(savedEmployees) || savedEmployees.length === 0 || didNormalizeProfiles || photoCompressed || hasLegacyPhotos) {
             await saveData();
         }
         return;
