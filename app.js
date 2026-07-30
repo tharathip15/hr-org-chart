@@ -2083,28 +2083,53 @@ function setupEventListeners() {
     const btnSync = document.getElementById("btn-sync-microsoft");
     if (btnSync) {
         btnSync.addEventListener("click", async () => {
-            if (!confirm("ต้องการซิงค์ข้อมูลพนักงานกับ Microsoft 365 หรือไม่? ข้อมูลการจัดตำแหน่งและการตั้งค่าปัจจุบันอาจถูกแทนที่ด้วยข้อมูลจาก Azure AD")) return;
+            if (!confirm("ตรวจสอบข้อมูล Microsoft 365 ก่อน Sync หรือไม่? ขั้นตอนนี้ยังไม่แก้ไขข้อมูล")) return;
             
             btnSync.disabled = true;
             const originalHTML = btnSync.innerHTML;
-            btnSync.innerHTML = `<i data-lucide="refresh-cw" class="spin"></i> Syncing...`;
+            btnSync.innerHTML = `<i data-lucide="refresh-cw" class="spin"></i> Checking...`;
             if (window.lucide) window.lucide.createIcons();
             
             try {
-                const response = await authenticatedFetch("/api/sync-microsoft", { method: "POST" });
-                const result = await response.json();
-                
-                if (response.ok && result.ok) {
-                    showNotification(`ซิงค์ข้อมูลพนักงานจำนวน ${result.count} คน จาก Microsoft 365 สำเร็จ`, "success");
-                    await loadData();
-                    await loadPositions();
-                    renderAll();
-                } else {
-                    throw new Error(result.error || "Sync failed");
+                const previewResponse = await authenticatedFetch(
+                    "/api/sync-microsoft?mode=preview",
+                    { method: "POST" }
+                );
+                const preview = await previewResponse.json();
+                if (!previewResponse.ok || !preview.ok || !preview.safe) {
+                    throw new Error(window.MicrosoftSyncUI.getFailureMessage(preview));
                 }
+
+                const approved = confirm(
+                    window.MicrosoftSyncUI.buildPreviewConfirmation(
+                        preview.stats,
+                        preview.positionUpdates
+                    )
+                );
+                if (!approved) return;
+
+                btnSync.innerHTML = `<i data-lucide="refresh-cw" class="spin"></i> Syncing...`;
+                if (window.lucide) window.lucide.createIcons();
+
+                const applyResponse = await authenticatedFetch(
+                    "/api/sync-microsoft?mode=apply",
+                    { method: "POST" }
+                );
+                const result = await applyResponse.json();
+                if (!applyResponse.ok || !result.ok || !result.applied) {
+                    throw new Error(window.MicrosoftSyncUI.getFailureMessage(result));
+                }
+
+                showNotification(
+                    `Sync พนักงาน ${result.count} คน จาก Microsoft 365 สำเร็จ`,
+                    "success"
+                );
+                await loadData();
+                await loadPositions();
+                renderAll();
             } catch (error) {
                 console.error("Microsoft sync failed:", error);
-                showNotification(`เกิดข้อผิดพลาดในการซิงค์: ${error.message}`, "error");
+                showNotification(`Sync Microsoft 365 ไม่สำเร็จ: ${error.message}`, "error");
             } finally {
                 btnSync.disabled = false;
                 btnSync.innerHTML = originalHTML;

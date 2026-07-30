@@ -1,8 +1,13 @@
 import { supabase } from "./_helpers/supabase.js";
 import { validateToken, requireEditor } from "./_helpers/auth.js";
-import { findExistingEmployee, isManualEmployee } from "./_helpers/employee_merge.js";
 import { buildPositionSyncUpdates } from "./_helpers/position_sync.js";
 import { normalizePhotoRows, uploadEmployeePhoto } from "./_helpers/photo_storage.js";
+import {
+  buildMicrosoftSyncPlan,
+  executeMicrosoftSyncPlan
+} from "./_helpers/microsoft_sync_plan.js";
+import { upsertMicrosoftEmployeeRows } from "./_helpers/microsoft_sync_storage.js";
+import { createSnapshotAndLog } from "./_helpers/history_helper.js";
 
 const tenantId = process.env.MICROSOFT_TENANT_ID;
 const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -25,6 +30,13 @@ export default async function handler(request, response) {
   try {
     if (!tenantId || !clientId || !clientSecret) {
       throw new Error("Missing Microsoft API configuration environment variables.");
+    }
+    const mode = new URL(request.url, "http://localhost")
+      .searchParams
+      .get("mode") || "preview";
+    if (mode !== "preview" && mode !== "apply") {
+      response.status(400).json({ ok: false, error: "Unsupported Microsoft sync mode." });
+      return;
     }
 
     // 1. Get Access Token
@@ -70,11 +82,7 @@ export default async function handler(request, response) {
     const realPeople = allUsers.filter(u => u.jobTitle && u.jobTitle.trim() !== "");
     console.log(`Found ${realPeople.length} real people in Microsoft AD.`);
 
-    // 4. Fetch profile photos
-    console.log("Fetching profile photos...");
-    const photosMap = await fetchPhotosForUsers(realPeople, accessToken);
-
-    // 5. Fetch existing database records to perform non-destructive merge
+    // 4. Fetch existing database records to perform a non-destructive merge.
     console.log("Fetching existing employees from database...");
     const { data: existingEmployees, error: fetchError } = await supabase
       .from("employees")
@@ -101,169 +109,92 @@ export default async function handler(request, response) {
       existingPositions = positionRows || [];
     }
 
-    // 6. Map and merge users
-    const dbRows = [];
-    const newAdUsers = [];
-    const mergedExistingEmployeeIds = new Set();
+    // 6. Build a deterministic plan. Existing IDs and every unmatched local
+    // record are retained; new users only receive IDs above the current max.
+    const syncPlan = buildMicrosoftSyncPlan(existingEmployees || [], realPeople);
+    syncPlan.rows = syncPlan.rows.map(row => ({
+      ...row,
+      avatar_color: row.avatar_color || getDeptColor(row.department || "General")
+    }));
 
-    realPeople.forEach(u => {
-      const existing = findExistingEmployee(existingEmployees, u);
-
-      const photoBase64 = photosMap.get(u.id) || (existing ? existing.photo_url : null);
-
-      if (existing) {
-        mergedExistingEmployeeIds.add(existing.id);
-        // PRESERVE: id, manager_id, x, y, bio
-        dbRows.push({
-          id: existing.id,
-          person_id: u.id,
-          name: u.displayName.trim().toUpperCase(),
-          role: u.jobTitle.trim(),
-          department: u.department ? u.department.trim() : "General",
-          manager_id: existing.manager_id,
-          email: u.mail || u.userPrincipalName || null,
-          phone: u.mobilePhone || null,
-          bio: existing.bio,
-          photo_url: photoBase64,
-          avatar_color: existing.avatar_color || getDeptColor(u.department || "General"),
-          x: existing.x,
-          y: existing.y
-        });
-      } else {
-        // Collect new AD users to assign IDs and manager mappings later
-        newAdUsers.push({
-          user: u,
-          photoUrl: photoBase64
-        });
-      }
-    });
-
-    // Determine currently used sequential IDs
-    const usedIds = new Set(dbRows.map(r => r.id));
-    (existingEmployees || []).forEach(e => usedIds.add(e.id));
-
-    // Assign sequential IDs to new AD users
-    let nextId = 1;
-    newAdUsers.forEach(item => {
-      while (usedIds.has(nextId)) {
-        nextId++;
-      }
-      item.seqId = nextId;
-      usedIds.add(nextId);
-    });
-
-    // Build GUID -> Sequential ID map for all synced AD users
-    const guidToSeqId = new Map();
-    dbRows.forEach(r => guidToSeqId.set(r.person_id, r.id));
-    newAdUsers.forEach(item => guidToSeqId.set(item.user.id, item.seqId));
-
-    // Process new AD users mapping managers from AD GUID
-    newAdUsers.forEach(item => {
-      const u = item.user;
-      const managerGuid = u.manager ? u.manager.id : null;
-      const managerSeqId = managerGuid ? guidToSeqId.get(managerGuid) : null;
-
-      dbRows.push({
-        id: item.seqId,
-        person_id: u.id,
-        name: u.displayName.trim().toUpperCase(),
-        role: u.jobTitle.trim(),
-        department: u.department ? u.department.trim() : "General",
-        manager_id: managerSeqId || null,
-        email: u.mail || u.userPrincipalName || null,
-        phone: u.mobilePhone || null,
-        bio: null,
-        photo_url: item.photoUrl,
-        avatar_color: getDeptColor(u.department || "General"),
-        x: null,
-        y: null
-      });
-    });
-
-    // 7. Retain manual employees (non-AD records)
-    const adPersonIds = new Set(realPeople.map(u => u.id.toLowerCase()));
-    const manualEmployees = (existingEmployees || []).filter(
-      e => isManualEmployee(e, adPersonIds) && !mergedExistingEmployeeIds.has(e.id)
+    const microsoftPersonIds = new Set(
+      realPeople.map(user => String(user.id || "").trim().toLowerCase())
     );
-
-    dbRows.push(...manualEmployees);
-    console.log(`Merged results: ${dbRows.length} total employees (${manualEmployees.length} manual, ${dbRows.length - manualEmployees.length} from AD).`);
-
-    const microsoftPersonIds = new Set(realPeople.map(user => user.id));
     const positionUpdates = buildPositionSyncUpdates(
       existingPositions,
       existingEmployees || [],
-      dbRows,
+      syncPlan.rows,
       microsoftPersonIds
     );
 
-    // Keep Microsoft profile images out of the employees table. This also
-    // migrates any legacy Base64 images retained when Graph has no photo.
-    const normalizedDbRows = await normalizePhotoRows(
-      dbRows,
-      row => row.person_id || row.id
-    );
-    dbRows.splice(0, dbRows.length, ...normalizedDbRows);
+    console.log("Microsoft sync plan:", {
+      mode,
+      ...syncPlan.stats,
+      positionUpdates: positionUpdates.length
+    });
 
-    // 8. Re-insert to Supabase
-    console.log("Replacing database rows...");
-    const { error: deleteError } = await supabase
-      .from("employees")
-      .delete()
-      .neq("id", 0);
-
-    if (deleteError) {
-      throw new Error(`Supabase delete failed: ${deleteError.message}`);
-    }
-
-    if (dbRows.length > 0) {
-      const { error: insertError } = await supabase
-        .from("employees")
-        .insert(dbRows);
-
-      if (insertError) {
-        // Fallback: if columns x or y are missing in database, retry insert without coordinates
-        const isMissingColumns = insertError.message && (
-          insertError.message.includes("column") || 
-          insertError.message.includes("schema cache")
+    const syncResult = await executeMicrosoftSyncPlan({
+      mode,
+      plan: syncPlan,
+      positionUpdates,
+      persist: async ({ rows, positionUpdates: reviewedPositionUpdates }) => {
+        // Keep an immediately restorable state before any write.
+        await createSnapshotAndLog(
+          "microsoft_sync_pre_apply",
+          `Before Microsoft sync (${rows.length} planned employees)`
         );
-        if (isMissingColumns) {
-          console.warn("x/y columns missing in Supabase, retrying insert without coordinates...");
-          const fallbackRows = dbRows.map(row => {
-            const copy = { ...row };
-            delete copy.x;
-            delete copy.y;
-            return copy;
-          });
-          const { error: retryError } = await supabase
-            .from("employees")
-            .insert(fallbackRows);
-          if (retryError) throw new Error(`Supabase insert failed: ${retryError.message}`);
-        } else {
-          throw new Error(`Supabase insert failed: ${insertError.message}`);
+
+        // Photos are intentionally fetched only after Preview has been approved.
+        console.log("Fetching Microsoft profile photos...");
+        const fetchedPhotos = await fetchPhotosForUsers(realPeople, accessToken);
+        const photosByUserId = new Map(
+          [...fetchedPhotos].map(([userId, photoUrl]) => [
+            String(userId || "").trim().toLowerCase(),
+            photoUrl
+          ])
+        );
+        const userIdByEmployeeId = new Map(
+          syncPlan.links.map(link => [Number(link.employeeId), link.userId])
+        );
+        let rowsWithPhotos = rows.map(row => {
+          const userId = userIdByEmployeeId.get(Number(row.id));
+          const photoUrl = userId ? photosByUserId.get(userId) : null;
+          return photoUrl ? { ...row, photo_url: photoUrl } : row;
+        });
+
+        // Keep legacy Base64 payloads out of the employees table.
+        rowsWithPhotos = await normalizePhotoRows(
+          rowsWithPhotos,
+          row => row.person_id || row.id
+        );
+
+        // The old implementation deleted all rows before inserting. Upsert
+        // makes the operation non-destructive and keeps stable employee IDs.
+        console.log("Upserting Microsoft employee profiles...");
+        await upsertMicrosoftEmployeeRows(supabase, rowsWithPhotos);
+
+        if (reviewedPositionUpdates.length > 0) {
+          await Promise.all(reviewedPositionUpdates.map(async positionUpdate => {
+            const { error: positionUpdateError } = await supabase
+              .from("positions")
+              .update({
+                title: positionUpdate.title,
+                department: positionUpdate.department
+              })
+              .eq("id", positionUpdate.id);
+
+            if (positionUpdateError) {
+              throw new Error(`Position sync failed: ${positionUpdateError.message}`);
+            }
+          }));
         }
       }
-    }
+    });
 
-    for (const positionUpdate of positionUpdates) {
-      const { error: positionUpdateError } = await supabase
-        .from("positions")
-        .update({
-          title: positionUpdate.title,
-          department: positionUpdate.department
-        })
-        .eq("id", positionUpdate.id);
-
-      if (positionUpdateError) {
-        throw new Error(`Position sync failed: ${positionUpdateError.message}`);
-      }
-    }
-
-    console.log("Microsoft sync complete!");
-    response.status(200).json({
-      ok: true,
-      count: dbRows.length,
-      positionUpdates: positionUpdates.length
+    const status = syncResult.safe ? 200 : 409;
+    response.status(status).json({
+      ...syncResult,
+      count: syncResult.stats.final
     });
   } catch (error) {
     console.error("Microsoft sync API error:", error);
