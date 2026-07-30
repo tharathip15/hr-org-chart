@@ -1,7 +1,12 @@
 import { supabase } from "./_helpers/supabase.js";
 import { getAuthContext, validateToken, requireEditor } from "./_helpers/auth.js";
 import { createSnapshotAndLog } from "./_helpers/history_helper.js";
-import { isDataImageUrl, normalizePhotoRows } from "./_helpers/photo_storage.js";
+import {
+  isDataImageUrl,
+  isPrivateBlobUrl,
+  normalizePhotoRows,
+  signPrivatePhotoRows
+} from "./_helpers/photo_storage.js";
 
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
@@ -40,7 +45,18 @@ async function handleGet(request, response) {
     // Legacy Base64 photos are only needed once by an editor to migrate them
     // to Blob. Anonymous viewers receive the lightweight directory payload.
     const includeLegacyPhotos = getAuthContext(request)?.canEdit === true;
-    const employees = (data || []).map(row => mapDbToEmployee(row, { includeLegacyPhotos }));
+    let responseRows;
+    try {
+      responseRows = await signPrivatePhotoRows(data || []);
+    } catch (signingError) {
+      console.warn("Failed to sign private employee photos:", signingError);
+      responseRows = (data || []).map(row => (
+        isPrivateBlobUrl(row.photo_url)
+          ? { ...row, photo_url: null }
+          : row
+      ));
+    }
+    const employees = responseRows.map(row => mapDbToEmployee(row, { includeLegacyPhotos }));
     response.setHeader("Cache-Control", "no-store");
     response.status(200).json(employees);
   } catch (error) {

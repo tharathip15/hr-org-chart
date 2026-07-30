@@ -1,11 +1,20 @@
 import crypto from "node:crypto";
-import { put } from "@vercel/blob";
+import { issueSignedToken, presignUrl, put } from "@vercel/blob";
 
 const DATA_IMAGE_PREFIX = /^data:(image\/[a-z0-9.+-]+);base64,/i;
 const DEFAULT_CONTENT_TYPE = "image/jpeg";
 
 export function isDataImageUrl(value) {
   return typeof value === "string" && DATA_IMAGE_PREFIX.test(value);
+}
+
+export function isPrivateBlobUrl(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).hostname.endsWith(".private.blob.vercel-storage.com");
+  } catch {
+    return false;
+  }
 }
 
 export function dataImageUrlToBuffer(dataUrl) {
@@ -21,7 +30,12 @@ export function dataImageUrlToBuffer(dataUrl) {
   };
 }
 
-export async function uploadEmployeePhoto(buffer, contentType = DEFAULT_CONTENT_TYPE, key = "employee") {
+export async function uploadEmployeePhoto(
+  buffer,
+  contentType = DEFAULT_CONTENT_TYPE,
+  key = "employee",
+  { putBlob = put } = {}
+) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     throw new Error("BLOB_READ_WRITE_TOKEN is not configured");
   }
@@ -36,8 +50,8 @@ export async function uploadEmployeePhoto(buffer, contentType = DEFAULT_CONTENT_
     .slice(0, 80) || "employee";
   const digest = crypto.createHash("sha256").update(buffer).digest("hex").slice(0, 16);
 
-  const blob = await put(`employee-photos/${safeKey}-${digest}.${extension}`, buffer, {
-    access: "public",
+  const blob = await putBlob(`employee-photos/${safeKey}-${digest}.${extension}`, buffer, {
+    access: "private",
     addRandomSuffix: false,
     allowOverwrite: true,
     cacheControlMaxAge: 31536000,
@@ -86,4 +100,43 @@ export function getChangedPhotoRows(beforeRows, afterRows) {
   return (afterRows || []).filter(
     row => beforeById.get(row.id) !== (row.photo_url || null)
   );
+}
+
+export async function signPrivatePhotoRows(
+  rows,
+  {
+    issueToken = issueSignedToken,
+    presign = presignUrl,
+    now = Date.now
+  } = {}
+) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  if (!sourceRows.some(row => isPrivateBlobUrl(row?.photo_url))) {
+    return sourceRows;
+  }
+
+  const validUntil = now() + (24 * 60 * 60 * 1000);
+  const signedToken = await issueToken({
+    pathname: "*",
+    operations: ["get"],
+    validUntil,
+    token: process.env.BLOB_READ_WRITE_TOKEN
+  });
+
+  return Promise.all(sourceRows.map(async row => {
+    if (!isPrivateBlobUrl(row?.photo_url)) return row;
+
+    const pathname = new URL(row.photo_url).pathname.replace(/^\/+/, "");
+    const { presignedUrl } = await presign(signedToken, {
+      access: "private",
+      pathname,
+      operation: "get",
+      validUntil
+    });
+
+    return {
+      ...row,
+      photo_url: presignedUrl
+    };
+  }));
 }
