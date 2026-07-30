@@ -8,8 +8,17 @@ const serverSource = readFileSync(new URL("../server.py", import.meta.url), "utf
 const preferencesApiPath = new URL("../api/preferences.js", import.meta.url);
 
 test("app loads shared collapsed node preferences before rendering", () => {
+    const initSource = appSource.slice(
+        appSource.indexOf("async function init()"),
+        appSource.indexOf("function compressBase64Image")
+    );
+
     assert.match(appSource, /const PREFERENCES_API_URL = "\/api\/preferences"/);
-    assert.match(appSource, /await loadData\(\);[\s\S]*?await loadPreferences\(\);/);
+    assert.match(initSource, /await Promise\.all\(\[\s*loadPreferences\(\),\s*loadAnnotations\(\)\s*\]\)/);
+    assert.ok(
+        initSource.indexOf("loadPreferences()") < initSource.indexOf("renderAll()"),
+        "shared preferences must finish loading before the first chart render"
+    );
     assert.match(appSource, /function applyPreferences\(preferences\)/);
     assert.match(appSource, /collapsedNodes = new Set\(sanitizeCollapsedNodeIds\(preferences\?\.collapsedNodeIds\)\)/);
 });
