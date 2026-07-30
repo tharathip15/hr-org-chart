@@ -2177,6 +2177,8 @@ function setupEventListeners() {
     if (cancelSplitBtn) cancelSplitBtn.addEventListener("click", closeSplitPositionModal);
     const submitSplitBtn = document.getElementById("btn-submit-split");
     if (submitSplitBtn) submitSplitBtn.addEventListener("click", handleSplitPositionSubmit);
+    const addSplitTitleBtn = document.getElementById("btn-add-split-title");
+    if (addSplitTitleBtn) addSplitTitleBtn.addEventListener("click", () => addSplitTitleInput(""));
     const btnSplitLifecycle = document.getElementById("btn-split-position-lifecycle");
     if (btnSplitLifecycle) {
         btnSplitLifecycle.addEventListener("click", () => {
@@ -3973,11 +3975,14 @@ function openSplitPositionModal(positionId) {
         ? EmployeeDirectory.suggestSplitTitles(title)
         : [title, `${title} (Secondary)`];
 
-    const input1 = document.getElementById("split-title-1");
-    const input2 = document.getElementById("split-title-2");
-
-    if (input1) input1.value = suggestedSplits[0] || title;
-    if (input2) input2.value = suggestedSplits[1] || `${title} (Secondary)`;
+    const titleContainer = document.getElementById("split-title-inputs");
+    if (titleContainer) {
+        titleContainer.innerHTML = "";
+        const initialTitles = suggestedSplits.length >= 2
+            ? suggestedSplits
+            : [suggestedSplits[0] || title, `${title} (Secondary)`];
+        initialTitles.forEach(splitTitle => addSplitTitleInput(splitTitle));
+    }
 
     if (modal) modal.dataset.positionId = positionId;
 
@@ -3986,6 +3991,57 @@ function openSplitPositionModal(positionId) {
     if (modal) modal.classList.add("active");
     if (window.lucide) window.lucide.createIcons();
     return true;
+}
+
+let splitTitleInputSequence = 0;
+
+function updateSplitTitleRows() {
+    const rows = Array.from(document.querySelectorAll(".split-title-row"));
+    rows.forEach((row, index) => {
+        const label = row.querySelector(".split-title-label");
+        const removeButton = row.querySelector(".split-title-remove");
+        if (label) {
+            label.textContent = index === 0
+                ? `ตำแหน่งที่ ${index + 1} (ตำแหน่งหลัก)`
+                : `ตำแหน่งที่ ${index + 1}`;
+        }
+        if (removeButton) {
+            removeButton.disabled = rows.length <= 2;
+            removeButton.title = rows.length <= 2
+                ? "ต้องมีอย่างน้อย 2 ตำแหน่ง"
+                : "ลบตำแหน่งนี้";
+        }
+    });
+}
+
+function addSplitTitleInput(value = "") {
+    const container = document.getElementById("split-title-inputs");
+    if (!container) return null;
+
+    splitTitleInputSequence += 1;
+    const inputId = `split-title-${splitTitleInputSequence}`;
+    const row = document.createElement("div");
+    row.className = "split-title-row";
+    row.innerHTML = `
+        <label class="split-title-label" for="${inputId}">ตำแหน่ง</label>
+        <div class="split-title-control">
+            <input type="text" id="${inputId}" class="form-input split-title-input" value="${escapeHTML(value)}" placeholder="เช่น Procurement Manager">
+            <button type="button" class="split-title-remove" aria-label="ลบตำแหน่ง">
+                <i data-lucide="x"></i>
+            </button>
+        </div>
+    `;
+
+    row.querySelector(".split-title-remove")?.addEventListener("click", () => {
+        const rows = container.querySelectorAll(".split-title-row");
+        if (rows.length <= 2) return;
+        row.remove();
+        updateSplitTitleRows();
+    });
+    container.appendChild(row);
+    updateSplitTitleRows();
+    if (window.lucide) window.lucide.createIcons();
+    return row;
 }
 
 function closeSplitPositionModal() {
@@ -4004,18 +4060,15 @@ async function handleSplitPositionSubmit() {
     const positionId = parseInt(modal.dataset.positionId, 10);
     if (!positionId) return;
 
-    const input1 = document.getElementById("split-title-1");
-    const input2 = document.getElementById("split-title-2");
+    const splitTitleInputs = Array.from(document.querySelectorAll(".split-title-input"));
+    const splitTitles = splitTitleInputs.map(input => input.value.trim());
 
-    const title1 = input1 ? input1.value.trim() : "";
-    const title2 = input2 ? input2.value.trim() : "";
-
-    if (!title1 || !title2) {
-        showNotification("กรุณาระบุชื่อตำแหน่งทั้ง 2 ตำแหน่ง", "error");
+    if (splitTitles.length < 2 || splitTitles.some(title => !title)) {
+        showNotification("กรุณาระบุชื่อตำแหน่งอย่างน้อย 2 ตำแหน่งให้ครบ", "error");
         return;
     }
 
-    const result = OrgHierarchy.splitPosition(positions, positionId, [title1, title2]);
+    const result = OrgHierarchy.splitPosition(positions, positionId, splitTitles);
     if (!result.changed) {
         showNotification("ไม่สามารถแยกตำแหน่งได้: " + (result.error || "unknown_error"), "error");
         return;
@@ -4032,7 +4085,7 @@ async function handleSplitPositionSubmit() {
     renderAll();
     requestAnimationFrame(fitToScreen);
 
-    showNotification(`แยกตำแหน่งสำเร็จเป็น "${title1}" และ "${title2}"`, "success");
+    showNotification(`แยกตำแหน่งสำเร็จเป็น ${splitTitles.length} ตำแหน่ง`, "success");
 }
 
 function renderVacancyReport() {

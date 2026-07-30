@@ -3669,3 +3669,60 @@ body.role-viewer .node-card {
     }
 }
 
+.split-title-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.split-title-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.split-title-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.split-title-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 38px;
+    gap: 8px;
+    align-items: center;
+}
+
+.split-title-remove {
+    align-items: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    height: 38px;
+    justify-content: center;
+}
+
+.split-title-remove:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
+.split-title-remove:not(:disabled):hover {
+    border-color: var(--danger-color, #ef4444);
+    color: var(--danger-color, #ef4444);
+}
+
+.split-title-remove svg,
+.split-title-add svg {
+    height: 16px;
+    width: 16px;
+}
+
+.split-title-add {
+    align-self: flex-start;
+    gap: 6px;
+}

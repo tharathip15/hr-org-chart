@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 await import("../hierarchy-utils.js");
 await import("../employee-utils.js");
 
 const { combinePositions } = globalThis.OrgHierarchy || {};
 const { suggestCombinedTitle } = globalThis.EmployeeDirectory || {};
+const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 test("suggestCombinedTitle generates clean merged title", () => {
     assert.equal(typeof suggestCombinedTitle, "function");
@@ -170,4 +173,12 @@ test("splitPosition preserves lifecycle and offsets every saved layout for three
     assert.deepEqual(third.manualLayouts.Sales, { x: 920, y: 500 });
     assert.notEqual(second.manualLayouts, sourcePositions[1].manualLayouts);
     assert.equal(result.positions.find(position => position.id === 25).managerId, 17);
+});
+
+test("Split modal accepts a dynamic list of two or more position titles", () => {
+    assert.match(htmlSource, /id="split-title-inputs"/);
+    assert.match(htmlSource, /id="btn-add-split-title"/);
+    assert.match(appSource, /function addSplitTitleInput\(/);
+    assert.match(appSource, /querySelectorAll\("\.split-title-input"\)/);
+    assert.doesNotMatch(appSource, /const title1 = input1/);
 });
