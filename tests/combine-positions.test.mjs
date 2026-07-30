@@ -98,3 +98,76 @@ test("splitPosition splits a combined position into two separate positions", () 
     assert.equal(newPos.employeeId, 6);
     assert.equal(newPos.managerId, 10);
 });
+
+test("splitPosition preserves lifecycle and offsets every saved layout for three positions", () => {
+    const { splitPosition } = globalThis.OrgHierarchy || {};
+    const sourcePositions = [
+        { id: 10, title: "Director", managerId: null, department: "Operations" },
+        {
+            id: 17,
+            title: "Combined Manager",
+            department: "Operations",
+            employeeId: 6,
+            managerId: 10,
+            status: "future",
+            effectiveDate: "2026-10-01",
+            statusReason: "Approved plan",
+            notes: "Acting",
+            layoutStyle: "vertical",
+            isManual: true,
+            manualLayouts: {
+                Sales: { x: 400, y: 500 },
+                Operations: { x: 800, y: 900 }
+            },
+            x: 200,
+            y: 300
+        },
+        { id: 25, title: "Officer", managerId: 17, department: "Operations" }
+    ];
+
+    const result = splitPosition(sourcePositions, 17, ["A", "B", "C"]);
+
+    assert.equal(result.changed, true);
+    assert.equal(result.createdPositions.length, 2);
+
+    const second = result.createdPositions[0];
+    const third = result.createdPositions[1];
+    assert.deepEqual(
+        {
+            title: second.title,
+            employeeId: second.employeeId,
+            managerId: second.managerId,
+            status: second.status,
+            effectiveDate: second.effectiveDate,
+            statusReason: second.statusReason,
+            notes: second.notes,
+            layoutStyle: second.layoutStyle,
+            isManual: second.isManual,
+            x: second.x,
+            y: second.y,
+            manualLayouts: second.manualLayouts
+        },
+        {
+            title: "B",
+            employeeId: 6,
+            managerId: 10,
+            status: "future",
+            effectiveDate: "2026-10-01",
+            statusReason: "Approved plan",
+            notes: "Acting",
+            layoutStyle: "vertical",
+            isManual: true,
+            x: 460,
+            y: 300,
+            manualLayouts: {
+                Sales: { x: 660, y: 500 },
+                Operations: { x: 1060, y: 900 }
+            }
+        }
+    );
+    assert.equal(third.title, "C");
+    assert.equal(third.x, 720);
+    assert.deepEqual(third.manualLayouts.Sales, { x: 920, y: 500 });
+    assert.notEqual(second.manualLayouts, sourcePositions[1].manualLayouts);
+    assert.equal(result.positions.find(position => position.id === 25).managerId, 17);
+});

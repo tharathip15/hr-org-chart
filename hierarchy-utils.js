@@ -212,17 +212,31 @@
 
         for (let i = 1; i < titles.length; i++) {
             maxId += 1;
+            const manualLayouts = Object.fromEntries(
+                Object.entries(primaryPosition.manualLayouts || {}).map(([scope, coordinates]) => {
+                    const sourceX = Number(coordinates?.x);
+                    const sourceY = Number(coordinates?.y);
+                    return [
+                        scope,
+                        {
+                            x: (Number.isFinite(sourceX) ? sourceX : 0) + (i * 260),
+                            y: Number.isFinite(sourceY) ? sourceY : 0
+                        }
+                    ];
+                })
+            );
+            const sourceX = Number(primaryPosition.x);
+            const sourceY = Number(primaryPosition.y);
             const newPos = {
+                ...primaryPosition,
                 id: maxId,
                 title: titles[i],
-                department: primaryPosition.department,
-                employeeId: primaryPosition.employeeId,
-                managerId: primaryPosition.managerId,
-                status: primaryPosition.status || "active",
-                notes: primaryPosition.notes || "",
-                x: (primaryPosition.x || 200) + (i * 260),
-                y: primaryPosition.y || 150
+                x: (Number.isFinite(sourceX) ? sourceX : 200) + (i * 260),
+                y: Number.isFinite(sourceY) ? sourceY : 150,
+                manualLayouts
             };
+            delete newPos.renderX;
+            delete newPos.renderY;
             positions.push(newPos);
             createdPositions.push(newPos);
         }
