@@ -1,6 +1,7 @@
 import { supabase } from "./_helpers/supabase.js";
 import { validateToken, requireEditor } from "./_helpers/auth.js";
 import { createSnapshotAndLog } from "./_helpers/history_helper.js";
+import { syncPositionRows } from "./_helpers/position_storage.js";
 
 const MAX_BODY_SIZE = 8 * 1024 * 1024;
 
@@ -61,30 +62,7 @@ async function handlePut(request, response) {
       return;
     }
 
-    const payloadIds = body
-      .map(position => parseInt(position.id, 10))
-      .filter(Number.isInteger);
-
-    if (payloadIds.length === 0) {
-      const { error: deleteError } = await supabase
-        .from("positions")
-        .delete()
-        .neq("id", 0);
-      if (deleteError) throw deleteError;
-    } else {
-      const { error: deleteError } = await supabase
-        .from("positions")
-        .delete()
-        .not("id", "in", `(${payloadIds.join(",")})`);
-      if (deleteError) throw deleteError;
-    }
-
-    if (body.length > 0) {
-      const { error: upsertError } = await supabase
-        .from("positions")
-        .upsert(body.map(mapPositionToDb));
-      if (upsertError) throw upsertError;
-    }
+    await syncPositionRows(supabase, body.map(mapPositionToDb));
 
     // Write audit log with snapshot
     await createSnapshotAndLog("positions_update", `Updated positions (${body.length} items)`);

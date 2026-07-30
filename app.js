@@ -1362,9 +1362,9 @@ function derivePositionsFromEmployees() {
     }, employee.id));
 }
 
-function saveLocalPositionsBackup() {
+function saveLocalPositionsBackup(sourcePositions = positions) {
     try {
-        localStorage.setItem("hr_positions", JSON.stringify(positions));
+        localStorage.setItem("hr_positions", JSON.stringify(sourcePositions));
     } catch (error) {
         console.warn("Failed to write positions to localStorage:", error);
     }
@@ -1458,44 +1458,54 @@ async function loadPositions() {
 
 let latestPositionsSavePromise = Promise.resolve(true);
 
-async function savePositions() {
+async function savePositions(candidatePositions = positions) {
     setSyncStatus("saving");
-    positions = normalizePositionsList(positions);
-    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
-    positions = saveHierarchyRepair.positions;
-    saveLocalPositionsBackup();
+    const currentPositions = positions;
+    const normalizedCandidate = normalizePositionsList(candidatePositions);
+    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate);
+    const repairedCandidate = saveHierarchyRepair.positions;
+    saveLocalPositionsBackup(repairedCandidate);
 
-    const payload = positions.map(p => ({
-        ...p,
-        notes: JSON.stringify({
-            layoutStyle: p.layoutStyle || "horizontal",
-            isManual: !!p.isManual,
-            manualLayouts: p.manualLayouts || {},
-            status: PositionLifecycle.normalizeStatus(p.status),
-            effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
-            statusReason: p.statusReason || "",
-            text: p.notes || ""
-        })
-    }));
+    const outcome = await PositionPersistence.commitCandidate(
+        currentPositions,
+        repairedCandidate,
+        async candidate => {
+            const payload = candidate.map(p => ({
+                ...p,
+                notes: JSON.stringify({
+                    layoutStyle: p.layoutStyle || "horizontal",
+                    isManual: !!p.isManual,
+                    manualLayouts: p.manualLayouts || {},
+                    status: PositionLifecycle.normalizeStatus(p.status),
+                    effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
+                    statusReason: p.statusReason || "",
+                    text: p.notes || ""
+                })
+            }));
 
-    try {
-        const response = await authenticatedFetch(POSITIONS_API_URL, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+            try {
+                const response = await authenticatedFetch(POSITIONS_API_URL, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
 
-        if (!response.ok) {
-            throw new Error(`Server responded with ${response.status}`);
+                if (!response.ok) {
+                    throw new Error(`Server responded with ${response.status}`);
+                }
+                setSyncStatus("success");
+                return true;
+            } catch (error) {
+                console.error("Failed to save positions to database.", error);
+                setSyncStatus("error");
+                showNotification("Position save failed. The active chart was not changed.", "error");
+                return false;
+            }
         }
-        setSyncStatus("success");
-        return true;
-    } catch (error) {
-        console.error("Failed to save positions to database.", error);
-        setSyncStatus("error");
-        showNotification("Position save failed. A browser backup was kept.", "error");
-        return false;
-    }
+    );
+
+    positions = outcome.positions;
+    return outcome.saved;
 }
 
 function sanitizeCollapsedNodeIds(value) {
@@ -3941,9 +3951,7 @@ async function handleCombinePositionsSubmit() {
         return;
     }
 
-    positions = result.positions;
-
-    const saved = await savePositions();
+    const saved = await savePositions(result.positions);
     if (!saved) return;
 
     closeCombinePositionsModal();
@@ -4074,9 +4082,7 @@ async function handleSplitPositionSubmit() {
         return;
     }
 
-    positions = result.positions;
-
-    const saved = await savePositions();
+    const saved = await savePositions(result.positions);
     if (!saved) return;
 
     closeSplitPositionModal();
