@@ -3448,6 +3448,7 @@ body.layout-locked .annotation-text-delete-btn {
 body.role-viewer #btn-add-employee,
 body.role-viewer #btn-new-employee,
 body.role-viewer #btn-manage-positions,
+body.role-viewer #btn-sync-microsoft,
 body.role-viewer #btn-edit-employee, /* Hide Edit Employee in detail drawer */
 body.role-viewer .card-add-seat-btn,
 body.role-viewer .card-add-btn,

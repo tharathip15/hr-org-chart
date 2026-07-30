@@ -2083,6 +2083,10 @@ function setupEventListeners() {
     const btnSync = document.getElementById("btn-sync-microsoft");
     if (btnSync) {
         btnSync.addEventListener("click", async () => {
+            if (document.body.classList.contains("role-viewer")) {
+                showNotification("เฉพาะผู้ดูแลระบบเท่านั้นที่ Sync Microsoft 365 ได้", "error");
+                return;
+            }
             if (!confirm("ตรวจสอบข้อมูล Microsoft 365 ก่อน Sync หรือไม่? ขั้นตอนนี้ยังไม่แก้ไขข้อมูล")) return;
             
             btnSync.disabled = true;

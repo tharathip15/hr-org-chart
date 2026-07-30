@@ -26,6 +26,12 @@ test("app exposes Microsoft-only admin sign-in with anonymous viewing", () => {
     assert.match(htmlSource, /id="login-overlay"/);
     assert.match(htmlSource, /id="btn-login-sso"/);
     assert.match(htmlSource, /id="btn-continue-viewer"/);
+    assert.match(cssSource, /body\.role-viewer #btn-sync-microsoft,/);
+    const syncListener = appSource.slice(
+        appSource.indexOf("// Sync Microsoft 365 button"),
+        appSource.indexOf("// Auto-Arrange Layout Button")
+    );
+    assert.match(syncListener, /document\.body\.classList\.contains\("role-viewer"\)/);
     assert.doesNotMatch(htmlSource, /id="login-form"/);
     assert.doesNotMatch(htmlSource, /id="login-password"/);
     assert.doesNotMatch(htmlSource, /id="btn-login-submit"/);
