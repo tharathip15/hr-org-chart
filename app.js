@@ -507,6 +507,7 @@ const DEFAULT_EMPLOYEES = [
 // State variables
 let employees = [];
 let positions = [];
+let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
@@ -1086,34 +1087,29 @@ function setSyncStatus(status) {
 async function init() {
     setLoaderProgress(15, "กำลังจัดเตรียมสภาพแวดล้อม...");
     
-    // Let elements fade in and spin rings start rotating smoothly
-    await new Promise(resolve => setTimeout(resolve, 350));
-    
     setLoaderProgress(40, "กำลังดึงข้อมูลบุคลากรจากฐานข้อมูล...");
-    await loadData();
-    await loadPositions();
-    
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await Promise.all([
+        loadData(),
+        loadPositions({ deferEmployeeReconciliation: true })
+    ]);
+    await reconcilePositionsWithEmployees();
     
     setLoaderProgress(70, "กำลังดาวน์โหลดค่ากำหนดการแสดงผล...");
-    await loadPreferences();
-    await loadAnnotations();
-    
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await Promise.all([
+        loadPreferences(),
+        loadAnnotations()
+    ]);
     
     setLoaderProgress(90, "กำลังเรนเดอร์แผนผังโครงสร้างองค์กร...");
     setupEventListeners();
     renderAll();
     
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
     setLoaderProgress(100, "เสร็จสิ้น!");
     
-    // Fade out and fit layout smoothly
-    setTimeout(() => {
+    requestAnimationFrame(() => {
         fitToScreen();
         hideLoader();
-    }, 350);
+    });
 }
 
 function compressBase64Image(base64Str) {
@@ -1315,7 +1311,7 @@ function normalizePosition(position, fallbackId) {
     };
 }
 
-function normalizePositionsList(rawPositions) {
+function normalizePositionsList(rawPositions, { validateEmployeeIds = true } = {}) {
     if (!Array.isArray(rawPositions)) return [];
 
     const normalized = [];
@@ -1340,7 +1336,7 @@ function normalizePositionsList(rawPositions) {
         if (position.managerId !== null && !validPositionIds.has(position.managerId)) {
             position.managerId = null;
         }
-        if (position.employeeId !== null && !validEmployeeIds.has(position.employeeId)) {
+        if (validateEmployeeIds && position.employeeId !== null && !validEmployeeIds.has(position.employeeId)) {
             position.employeeId = null;
         }
     });
@@ -1371,7 +1367,69 @@ function saveLocalPositionsBackup(sourcePositions = positions) {
     }
 }
 
+async function reconcilePositionsWithEmployees() {
+    const reconciliationMode = positionsNeedEmployeeReconciliation;
+    if (!reconciliationMode) return;
+
+    const beforeNormalization = JSON.stringify(positions);
+    positions = normalizePositionsList(positions);
+    let positionsChanged = beforeNormalization !== JSON.stringify(positions);
+
+    if (positions.length === 0) {
+        positions = derivePositionsFromEmployees();
+        positionsChanged = true;
+    } else {
+        const assignedEmployeeIds = new Set(positions.map(position => position.employeeId).filter(id => id !== null));
+
+        employees.forEach(employee => {
+            if (assignedEmployeeIds.has(employee.id)) return;
+
+            const matchedVacant = positions.find(position =>
+                position.employeeId === null &&
+                PositionLifecycle.normalizeStatus(position.status) === "active" &&
+                position.title.toLowerCase().trim() === employee.role.toLowerCase().trim() &&
+                position.department.toLowerCase().trim() === employee.department.toLowerCase().trim()
+            );
+
+            if (matchedVacant) {
+                matchedVacant.employeeId = employee.id;
+                assignedEmployeeIds.add(employee.id);
+                positionsChanged = true;
+                return;
+            }
+
+            const positionAutoPos = getAutoPositionForPosition(null);
+            positions.push({
+                id: getNextPositionId(),
+                title: employee.role,
+                department: employee.department,
+                managerId: null,
+                employeeId: employee.id,
+                x: positionAutoPos.x,
+                y: positionAutoPos.y,
+                status: "active",
+                effectiveDate: "",
+                statusReason: "",
+                notes: ""
+            });
+            assignedEmployeeIds.add(employee.id);
+            positionsChanged = true;
+        });
+    }
+
+    positionsNeedEmployeeReconciliation = false;
+    if (!positionsChanged && !reconciliationMode.endsWith("-save")) return;
+
+    if (reconciliationMode.startsWith("remote")) {
+        await savePositions();
+    } else {
+        saveLocalPositionsBackup();
+    }
+}
+
 async function loadPositions() {
+    const { deferEmployeeReconciliation = false } = arguments[0] || {};
+
     try {
         const response = await authenticatedFetch(POSITIONS_API_URL);
         if (!response.ok) {
@@ -1379,9 +1437,16 @@ async function loadPositions() {
         }
 
         const savedPositions = await response.json();
-        positions = normalizePositionsList(savedPositions);
+        positions = normalizePositionsList(savedPositions, {
+            validateEmployeeIds: !deferEmployeeReconciliation
+        });
         const hierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
         positions = hierarchyRepair.positions;
+
+        if (deferEmployeeReconciliation) {
+            positionsNeedEmployeeReconciliation = hierarchyRepair.changed ? "remote-save" : "remote";
+            return;
+        }
 
         if (!Array.isArray(savedPositions) || positions.length === 0) {
             positions = derivePositionsFromEmployees();
@@ -1441,16 +1506,28 @@ async function loadPositions() {
     const saved = localStorage.getItem("hr_positions");
     if (saved) {
         try {
-            positions = normalizePositionsList(JSON.parse(saved));
+            positions = normalizePositionsList(JSON.parse(saved), {
+                validateEmployeeIds: !deferEmployeeReconciliation
+            });
             const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
             positions = localHierarchyRepair.positions;
             if (positions.length > 0) {
+                if (deferEmployeeReconciliation) {
+                    positionsNeedEmployeeReconciliation = localHierarchyRepair.changed ? "local-save" : "local";
+                    return;
+                }
                 if (localHierarchyRepair.changed) saveLocalPositionsBackup();
                 return;
             }
         } catch (error) {
             console.warn("Failed to parse localStorage positions backup.", error);
         }
+    }
+
+    if (deferEmployeeReconciliation) {
+        positions = [];
+        positionsNeedEmployeeReconciliation = "local";
+        return;
     }
 
     positions = derivePositionsFromEmployees();
@@ -2431,6 +2508,10 @@ function getChartDisplayPositions() {
 }
 
 function getVisibleReportingManagerId(position, visiblePositionIds) {
+    const positionById = arguments[2] instanceof Map ? arguments[2] : null;
+    if (positionById) {
+        return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds, positionById);
+    }
     return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
 }
 
@@ -2439,9 +2520,10 @@ function getCollapsedHiddenPositionIds(modePositions) {
     if (!isOverallView()) return hiddenIds;
 
     const visibleIds = new Set(modePositions.map(position => position.id));
+    const positionById = new Map(positions.map(position => [Number(position.id), position]));
     const reportsMap = new Map();
     modePositions.forEach(position => {
-        const managerId = getVisibleReportingManagerId(position, visibleIds);
+        const managerId = getVisibleReportingManagerId(position, visibleIds, positionById);
         if (managerId === null) return;
         if (!reportsMap.has(managerId)) reportsMap.set(managerId, []);
         reportsMap.get(managerId).push(position.id);
@@ -2819,14 +2901,17 @@ function getRenderedPositionCoordinates(position) {
     };
 }
 
-function getPositionCardHTML(position) {
+function getPositionCardHTML(position, renderContext = null) {
     const employee = getAssignedEmployee(position);
     const title = getPositionTitle(position);
     const department = getPositionDepartment(position);
     const note = getPositionNote(position);
-    const displayPositions = getChartDisplayPositions();
-    const displayPositionIds = new Set(displayPositions.map(candidate => candidate.id));
-    const hasReports = displayPositions.some(child => getVisibleReportingManagerId(child, displayPositionIds) === position.id);
+    const displayPositions = renderContext?.displayPositions || getChartDisplayPositions();
+    const displayPositionIds = renderContext?.displayPositionIds
+        || new Set(displayPositions.map(candidate => candidate.id));
+    const hasReports = renderContext?.hasReportsByPositionId instanceof Set
+        ? renderContext.hasReportsByPositionId.has(position.id)
+        : displayPositions.some(child => getVisibleReportingManagerId(child, displayPositionIds) === position.id);
     const isCollapsed = collapsedNodes.has(position.id);
     const isVacant = !employee;
     const isFuturePlan = chartMode === "future" && PositionLifecycle.normalizeStatus(position.status) === "future";
@@ -2878,17 +2963,30 @@ function renderTree() {
     const modePositions = getChartModePositions();
     const hiddenIds = getCollapsedHiddenPositionIds(modePositions);
 
-    // 2. Filter visible positions (and by department if selectedDept is not "All")
-    let visiblePositions = modePositions.filter(position => !hiddenIds.has(position.id));
-    if (selectedDept !== "All") {
-        visiblePositions = visiblePositions.filter(position => position.department === selectedDept);
-    }
+    // 2. Build the display and reporting indexes once for every card in this render.
+    const displayPositions = selectedDept === "All"
+        ? modePositions
+        : modePositions.filter(position => position.department === selectedDept);
+    const visiblePositions = displayPositions.filter(position => !hiddenIds.has(position.id));
+    const displayPositionIds = new Set(displayPositions.map(position => position.id));
+    const positionById = new Map(positions.map(position => [Number(position.id), position]));
+    const hasReportsByPositionId = new Set();
+    displayPositions.forEach(position => {
+        const managerId = getVisibleReportingManagerId(position, displayPositionIds, positionById);
+        if (managerId !== null) hasReportsByPositionId.add(managerId);
+    });
+    const renderContext = {
+        displayPositions,
+        displayPositionIds,
+        positionById,
+        hasReportsByPositionId
+    };
 
     // 3. Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes
     calculateInitialCoordinates();
 
     // 4. Render cards flat with absolute positioning
-    const html = visiblePositions.map(position => getPositionCardHTML(position)).join("");
+    const html = visiblePositions.map(position => getPositionCardHTML(position, renderContext)).join("");
     treeContainer.innerHTML = html;
     wireTreeInteractions();
     scheduleConnectionDraw();
@@ -2899,25 +2997,52 @@ function drawConnections() {
     svgOverlay.innerHTML = "";
     updateCanvasBounds();
 
-    const visibleCards = document.querySelectorAll(".node-card");
-    const visibleCardIds = new Set();
-    visibleCards.forEach(card => visibleCardIds.add(parseInt(card.dataset.id)));
+    const visibleCards = document.querySelectorAll(".node-card.absolute-card");
+    const cardById = new Map();
+    visibleCards.forEach(card => {
+        const positionId = parseInt(card.dataset.id, 10);
+        if (Number.isInteger(positionId)) cardById.set(positionId, card);
+    });
+
+    const visibleCardIds = new Set(cardById.keys());
+    const positionById = new Map(positions.map(position => [Number(position.id), position]));
+    const effectiveManagerById = new Map();
+    const childrenByManager = new Map();
 
     positions.forEach(position => {
         if (!visibleCardIds.has(position.id)) return;
+        const visibleManagerId = getVisibleReportingManagerId(position, visibleCardIds, positionById);
+        effectiveManagerById.set(position.id, visibleManagerId);
+        if (visibleManagerId === null) return;
+        const childIds = childrenByManager.get(visibleManagerId) || [];
+        childIds.push(position.id);
+        childrenByManager.set(visibleManagerId, childIds);
+    });
 
-        const visibleManagerId = getVisibleReportingManagerId(position, visibleCardIds);
+    const minChildYByManager = new Map();
+    childrenByManager.forEach((childIds, managerId) => {
+        const childYs = childIds
+            .map(childId => cardById.get(childId))
+            .filter(Boolean)
+            .map(card => getCanvasLocalRect(card).y);
+        if (childYs.length > 0) {
+            minChildYByManager.set(managerId, Math.min(...childYs));
+        }
+    });
+
+    effectiveManagerById.forEach((visibleManagerId, positionId) => {
         if (visibleManagerId === null) return;
 
-        const childCard = document.querySelector(`.node-card[data-id="${position.id}"]`);
-        const parentCard = document.querySelector(`.node-card[data-id="${visibleManagerId}"]`);
+        const childCard = cardById.get(positionId);
+        const parentCard = cardById.get(visibleManagerId);
         if (!childCard || !parentCard) return;
 
         const pLocal = getCanvasLocalRect(parentCard);
         const cLocal = getCanvasLocalRect(childCard);
         if (pLocal.width === 0 || pLocal.height === 0 || cLocal.width === 0 || cLocal.height === 0) return;
 
-        const parentPosition = positions.find(p => p.id === visibleManagerId);
+        const position = positionById.get(positionId);
+        const parentPosition = positionById.get(visibleManagerId);
         const isVerticalLayout = parentPosition && parentPosition.layoutStyle === "vertical";
 
         let pathParts;
@@ -2938,18 +3063,7 @@ function drawConnections() {
             const endX = cLocal.x + cLocal.width / 2;
             const endY = cLocal.y;
 
-            // Calculate the minimum Y among all visible children of this manager to keep the horizontal bus line at the sibling level
-            const childrenPositions = positions.filter(p => visibleCardIds.has(p.id) && getVisibleReportingManagerId(p, visibleCardIds) === visibleManagerId);
-            const childYs = childrenPositions.map(p => {
-                const card = document.querySelector(`.node-card[data-id="${p.id}"]`);
-                if (card) {
-                    const rect = getCanvasLocalRect(card);
-                    return rect.y;
-                }
-                return p.y;
-            }).filter(y => y !== undefined && y !== null);
-            
-            const minChildY = childYs.length > 0 ? Math.min(...childYs) : endY;
+            const minChildY = minChildYByManager.get(visibleManagerId) ?? endY;
             const busY = startY + Math.max(20, (minChildY - startY) / 2);
 
             pathParts = [
@@ -2964,9 +3078,9 @@ function drawConnections() {
         path.setAttribute("d", pathParts.join(" "));
         path.setAttribute("class", "connection-path");
         path.dataset.parentId = String(visibleManagerId);
-        path.dataset.childId = String(position.id);
+        path.dataset.childId = String(positionId);
         
-        if (highlightedConnections.has(`${visibleManagerId}-${position.id}`) || highlightedConnections.has(`${position.managerId}-${position.id}`)) {
+        if (highlightedConnections.has(`${visibleManagerId}-${positionId}`) || highlightedConnections.has(`${position?.managerId}-${positionId}`)) {
             path.setAttribute("class", "connection-path highlighted");
         }
         svgOverlay.appendChild(path);
@@ -2990,11 +3104,12 @@ function calculateInitialCoordinates() {
     });
 
     const activeIds = new Set(activePositions.map(p => p.id));
+    const positionById = new Map(positions.map(position => [Number(position.id), position]));
     
     // 2. Find roots within active positions
     const effectiveManagerIds = new Map(activePositions.map(position => [
         position.id,
-        getVisibleReportingManagerId(position, activeIds)
+        getVisibleReportingManagerId(position, activeIds, positionById)
     ]));
     const roots = activePositions.filter(position => effectiveManagerIds.get(position.id) === null);
     
@@ -3039,7 +3154,7 @@ function calculateInitialCoordinates() {
         visitedWidths.add(positionId);
 
         const children = reportsMap[positionId] || [];
-        const position = positions.find(p => p.id === positionId);
+        const position = positionById.get(positionId);
         
         if (children.length === 0) {
             subtreeWidths[positionId] = xSpacing;
@@ -3128,12 +3243,20 @@ function calculateInitialCoordinates() {
     });
 }
 
+let connectionDrawFrame = null;
+
+function requestConnectionDraw() {
+    if (connectionDrawFrame !== null) return;
+    connectionDrawFrame = requestAnimationFrame(() => {
+        connectionDrawFrame = null;
+        drawConnections();
+    });
+}
+
 function scheduleConnectionDraw() {
     requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            drawConnections();
-            setTimeout(() => drawConnections(), 300);
-        });
+        requestConnectionDraw();
+        setTimeout(requestConnectionDraw, 300);
     });
 }
 
@@ -3182,7 +3305,7 @@ function updateCanvasBounds() {
 
 // Window resize handler to redraw connections
 window.addEventListener("resize", () => {
-    drawConnections();
+    requestConnectionDraw();
 });
 
 /* Drawer: Employee Details Profile Slide-out */
@@ -5090,7 +5213,7 @@ function handleCardDragMove(e) {
         dragDropCombineTargetId = null;
     }
 
-    drawConnections();
+    requestConnectionDraw();
 }
 
 function handleCardDragEnd(e) {
@@ -5192,7 +5315,7 @@ window.addEventListener("DOMContentLoaded", () => {
     startApplication();
     
     const treeResizeObserver = new ResizeObserver(() => {
-        drawConnections();
+        requestConnectionDraw();
     });
     treeResizeObserver.observe(treeContainer);
 });

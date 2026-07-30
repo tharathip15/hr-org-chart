@@ -45,7 +45,7 @@ test("positions can be managed in a dedicated UI", () => {
 
 test("org chart renders positions and clearly marks vacant seats", () => {
     assert.match(appSource, /function getAssignedEmployee\(position\)/);
-    assert.match(appSource, /function getPositionCardHTML\(position\)/);
+    assert.match(appSource, /function getPositionCardHTML\(position, renderContext = null\)/);
     assert.match(appSource, /VACANT/);
     assert.match(appSource, /position-card-vacant/);
     assert.match(appSource, /positions\.forEach\(position =>/);

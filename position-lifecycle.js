@@ -48,9 +48,11 @@
             .filter(position => isPositionVisible(position, mode, todayKey));
     }
 
-    function getNearestVisibleManagerId(position, positions, visiblePositionIds) {
+    function getNearestVisibleManagerId(position, positions, visiblePositionIds, positionById = null) {
         const positionList = Array.isArray(positions) ? positions : [];
-        const byId = new Map(positionList.map(candidate => [Number(candidate.id), candidate]));
+        const byId = positionById instanceof Map
+            ? positionById
+            : new Map(positionList.map(candidate => [Number(candidate.id), candidate]));
         const visibleIds = visiblePositionIds instanceof Set
             ? visiblePositionIds
             : new Set(Array.from(visiblePositionIds || []).map(Number));

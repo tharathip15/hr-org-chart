@@ -71,3 +71,22 @@ test("active children become roots when every manager above them is hidden", () 
 
     assert.equal(lifecycle.getNearestVisibleManagerId(positions[1], positions, currentIds), null);
 });
+
+test("nearest visible manager can reuse a prebuilt position map", () => {
+    const positions = [
+        { id: 1, managerId: null, status: "active" },
+        { id: 2, managerId: 1, status: "future", effectiveDate: "2026-08-01" },
+        { id: 3, managerId: 2, status: "active" }
+    ];
+    const positionById = new Map(positions.map(position => [position.id, position]));
+
+    assert.equal(
+        lifecycle.getNearestVisibleManagerId(
+            positions[2],
+            null,
+            new Set([1, 3]),
+            positionById
+        ),
+        1
+    );
+});

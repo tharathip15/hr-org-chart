@@ -7,10 +7,10 @@ const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 test("hidden lifecycle managers promote visible reports to the nearest visible manager", () => {
     assert.match(appSource, /function getVisibleReportingManagerId\(position, visiblePositionIds\)/);
     assert.match(appSource, /PositionLifecycle\.getNearestVisibleManagerId\(position, positions, visiblePositionIds\)/);
-    assert.match(appSource, /const visibleManagerId = getVisibleReportingManagerId\(position, visibleCardIds\)/);
-    assert.match(appSource, /data-id="\$\{visibleManagerId\}"/);
+    assert.match(appSource, /const visibleManagerId = getVisibleReportingManagerId\(position, visibleCardIds, positionById\)/);
+    assert.match(appSource, /const parentCard = cardById\.get\(visibleManagerId\)/);
     assert.match(appSource, /path\.dataset\.parentId = String\(visibleManagerId\)/);
-    assert.match(appSource, /path\.dataset\.childId = String\(position\.id\)/);
+    assert.match(appSource, /path\.dataset\.childId = String\(positionId\)/);
     assert.match(appSource, /const effectiveManagerIds = new Map\(activePositions\.map/);
 });
 
