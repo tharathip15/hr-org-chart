@@ -532,6 +532,7 @@ const viewport = document.getElementById("chart-viewport");
 const canvas = document.getElementById("chart-canvas");
 const svgOverlay = document.getElementById("svg-overlay");
 const alignmentGuidesOverlay = document.getElementById("alignment-guides-overlay");
+const combineDropZonesOverlay = document.getElementById("combine-drop-zones-overlay");
 const treeContainer = document.getElementById("tree-container");
 const EMPLOYEES_API_URL = "/api/employees";
 const POSITIONS_API_URL = "/api/positions";
@@ -2870,6 +2871,7 @@ function renderTree() {
     treeContainer.innerHTML = "";
     svgOverlay.innerHTML = "";
     clearAlignmentGuides();
+    clearCombineDropZones();
 
     // 1. Calculate hidden IDs using the hierarchy visible in this chart mode.
     // A hidden Future/Closed manager does not hide its active descendants.
@@ -4823,6 +4825,41 @@ function clearAlignmentGuides() {
     if (alignmentGuidesOverlay) alignmentGuidesOverlay.innerHTML = "";
 }
 
+function clearCombineDropZones() {
+    if (combineDropZonesOverlay) combineDropZonesOverlay.innerHTML = "";
+}
+
+function renderCombineDropZones(draggedPosition) {
+    clearCombineDropZones();
+    if (!combineDropZonesOverlay || !draggedPosition) return;
+
+    const draggedEmployee = getAssignedEmployee(draggedPosition);
+    if (!draggedEmployee) return;
+
+    positions.forEach(candidate => {
+        if (candidate.id === draggedPosition.id) return;
+        const candidateEmployee = getAssignedEmployee(candidate);
+        if (!candidateEmployee || !samePerson(draggedEmployee, candidateEmployee)) return;
+
+        const candidateCard = document.querySelector(`.node-card.absolute-card[data-id="${candidate.id}"]`);
+        if (!candidateCard || candidateCard.offsetWidth === 0 || candidateCard.offsetHeight === 0) return;
+
+        const rect = getCanvasLocalRect(candidateCard);
+        const zone = document.createElement("div");
+        zone.className = "combine-drop-zone";
+        zone.dataset.positionId = String(candidate.id);
+        zone.style.left = `${rect.x}px`;
+        zone.style.top = `${rect.y}px`;
+        zone.style.width = `${rect.width}px`;
+        zone.style.height = `${rect.height}px`;
+        zone.innerHTML = `
+            <span>รวมกับ</span>
+            <strong>${escapeHTML(getPositionTitle(candidate))}</strong>
+        `;
+        combineDropZonesOverlay.appendChild(zone);
+    });
+}
+
 function createAlignmentSvgElement(name, attributes = {}) {
     const element = document.createElementNS("http://www.w3.org/2000/svg", name);
     Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
@@ -4940,6 +4977,7 @@ function handleCardDragStart(e) {
         dragStartCoordinates.clear();
         activeDragCard = null;
         draggedId = null;
+        clearCombineDropZones();
         return;
     }
 
@@ -4954,6 +4992,7 @@ function handleCardDragStart(e) {
     cardDragMoved = false;
     dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
     dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
+    renderCombineDropZones(position);
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
@@ -5022,46 +5061,30 @@ function handleCardDragMove(e) {
 
     renderAlignmentGuides(snapResult);
 
-    // Check for drop-to-combine target if dragged card belongs to an assigned employee
+    // Check the stationary drop zones captured before the subtree started moving.
     let currentDropTargetId = null;
-    const draggedPos = positions.find(p => p.id === draggedId);
-    const draggedEmp = draggedPos ? getAssignedEmployee(draggedPos) : null;
-
-    if (draggedEmp && activeDragCard) {
+    if (activeDragCard) {
         const draggedRect = activeDragCard.getBoundingClientRect();
         const draggedCenterX = draggedRect.left + draggedRect.width / 2;
         const draggedCenterY = draggedRect.top + draggedRect.height / 2;
 
-        document.querySelectorAll(".node-card.absolute-card").forEach(otherCard => {
-            const otherId = parseInt(otherCard.dataset.id, 10);
-            if (otherId === draggedId) return;
+        document.querySelectorAll(".combine-drop-zone").forEach(zone => {
+            const zoneRect = zone.getBoundingClientRect();
+            const distance = Math.hypot(
+                draggedCenterX - (zoneRect.left + zoneRect.width / 2),
+                draggedCenterY - (zoneRect.top + zoneRect.height / 2)
+            );
+            const threshold = Math.max(90, Math.min(zoneRect.width, zoneRect.height) * 0.55);
+            const positionId = parseInt(zone.dataset.positionId, 10);
 
-            const otherPos = positions.find(p => p.id === otherId);
-            const otherEmp = otherPos ? getAssignedEmployee(otherPos) : null;
-
-            if (otherEmp && samePerson(draggedEmp, otherEmp)) {
-                const otherRect = otherCard.getBoundingClientRect();
-                const distance = Math.hypot(
-                    draggedCenterX - (otherRect.left + otherRect.width / 2),
-                    draggedCenterY - (otherRect.top + otherRect.height / 2)
-                );
-
-                if (distance < 90) {
-                    currentDropTargetId = otherId;
-                }
+            zone.classList.toggle("is-active", distance < threshold);
+            if (distance < threshold && Number.isInteger(positionId)) {
+                currentDropTargetId = positionId;
             }
         });
     }
 
-    document.querySelectorAll(".node-card.drop-combine-target").forEach(card => {
-        if (parseInt(card.dataset.id, 10) !== currentDropTargetId) {
-            card.classList.remove("drop-combine-target");
-        }
-    });
-
     if (currentDropTargetId !== null) {
-        const targetCard = document.querySelector(`.node-card[data-id="${currentDropTargetId}"]`);
-        if (targetCard) targetCard.classList.add("drop-combine-target");
         dragDropCombineTargetId = currentDropTargetId;
     } else {
         dragDropCombineTargetId = null;
@@ -5076,8 +5099,8 @@ function handleCardDragEnd(e) {
     window.removeEventListener("pointercancel", handleCardDragEnd);
     
     const combineTargetId = dragDropCombineTargetId;
-    document.querySelectorAll(".node-card.drop-combine-target").forEach(card => card.classList.remove("drop-combine-target"));
     dragDropCombineTargetId = null;
+    clearCombineDropZones();
 
     if (combineTargetId !== null && draggedId !== null && combineTargetId !== draggedId) {
         const targetPos = positions.find(p => p.id === combineTargetId);
@@ -5095,6 +5118,7 @@ function handleCardDragEnd(e) {
             draggedPositionIds = [];
             dragStartCoordinates.clear();
             clearAlignmentGuides();
+            clearCombineDropZones();
             draggedId = null;
             dragStartClientX = 0;
             dragStartClientY = 0;
@@ -5142,6 +5166,7 @@ function handleCardDragEnd(e) {
     draggedPositionIds = [];
     dragStartCoordinates.clear();
     clearAlignmentGuides();
+    clearCombineDropZones();
     draggedId = null;
     dragStartClientX = 0;
     dragStartClientY = 0;
