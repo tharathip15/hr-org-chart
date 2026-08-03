@@ -93,7 +93,7 @@ test("invalid explicit metadata fails open", () => {
   assert.deepEqual(model.displayPositions.map(position => position.id), [1, 2]);
 });
 
-test("a group remains visible when its configured primary is filtered out", () => {
+test("all real group members map to the visible representative when the configured primary is filtered out", () => {
   const all = [
     { id: 75, employeeId: 75, managerId: 136, overviewGroupId: "overview-75", overviewGroupTitle: "Combined", overviewPrimaryPositionId: 75 },
     { id: 183, employeeId: 75, managerId: 136, overviewGroupId: "overview-75", overviewGroupTitle: "Combined", overviewPrimaryPositionId: 75 }
@@ -106,4 +106,6 @@ test("a group remains visible when its configured primary is filtered out", () =
   assert.equal(model.displayPositions.length, 1);
   assert.equal(model.displayPositions[0].id, 183);
   assert.equal(model.displayPositions[0].displayTitle, "Combined");
+  assert.equal(model.realToDisplayId.get(75), 183);
+  assert.equal(model.realToDisplayId.get(183), 183);
 });

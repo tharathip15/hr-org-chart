@@ -315,7 +315,7 @@
                 displayTitle: group.title,
                 overviewGroupMemberIds: memberIds
             });
-            visibleMembers.forEach(member => realToDisplayId.set(toInteger(member.id), representativeId));
+            group.members.forEach(member => realToDisplayId.set(toInteger(member.id), representativeId));
             membersByDisplayId.set(representativeId, [...visibleMembers]);
         });
 

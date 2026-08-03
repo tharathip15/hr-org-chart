@@ -2811,7 +2811,9 @@ function expandPathToEmployee(id) {
     while (displayPositionId !== null && displayPositionId !== undefined) {
         const managerId = currentChartRenderContext?.effectiveManagerByDisplayId.get(displayPositionId) ?? null;
         if (managerId === null) break;
-        collapsedNodes.delete(managerId);
+        getCollapsedRealPositionIdsForDisplayId(managerId).forEach(positionId => {
+            collapsedNodes.delete(positionId);
+        });
         displayPositionId = managerId;
     }
 }
@@ -2820,22 +2822,22 @@ function isOverallView() {
     return selectedDept === "All";
 }
 
-function isDisplayPositionCollapsed(positionId, renderContext = currentChartRenderContext) {
-    return [...collapsedNodes].some(collapsedPositionId => {
+function getCollapsedRealPositionIdsForDisplayId(positionId, renderContext = currentChartRenderContext) {
+    return [...collapsedNodes].filter(collapsedPositionId => {
         const displayPositionId = renderContext?.realToDisplayId.get(collapsedPositionId)
             ?? collapsedPositionId;
         return displayPositionId === positionId;
     });
 }
 
+function isDisplayPositionCollapsed(positionId, renderContext = currentChartRenderContext) {
+    return getCollapsedRealPositionIdsForDisplayId(positionId, renderContext).length > 0;
+}
+
 // Expand / Collapse sub-tree toggle
 function toggleNode(id) {
     if (selectedDept !== "All") return;
-    const collapsedMemberIds = [...collapsedNodes].filter(positionId => {
-        const displayPositionId = currentChartRenderContext?.realToDisplayId.get(positionId)
-            ?? positionId;
-        return displayPositionId === id;
-    });
+    const collapsedMemberIds = getCollapsedRealPositionIdsForDisplayId(id);
     if (collapsedMemberIds.length > 0) {
         collapsedMemberIds.forEach(positionId => collapsedNodes.delete(positionId));
     } else {
