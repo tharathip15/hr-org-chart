@@ -197,6 +197,11 @@ function createAuthHarness({
     ConnectionRouting: {
       normalizeRoutes(value) { return structuredClone(value || {}); },
     },
+    PositionPersistence: {
+      serializeConnectionRoutes(connectionRoutes, normalizeRoutes) {
+        return normalizeRoutes(connectionRoutes);
+      },
+    },
     setSyncStatus() {},
     renderAll() {},
     renderPositionsList() {},

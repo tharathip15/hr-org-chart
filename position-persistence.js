@@ -13,8 +13,13 @@
             && canEdit === true;
     }
 
+    function serializeConnectionRoutes(connectionRoutes, normalizeRoutes) {
+        return normalizeRoutes(connectionRoutes);
+    }
+
     root.PositionPersistence = Object.freeze({
         commitCandidate,
-        shouldPersistAutomaticRepair
+        shouldPersistAutomaticRepair,
+        serializeConnectionRoutes
     });
 })(globalThis);

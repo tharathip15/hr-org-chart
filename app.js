@@ -1823,7 +1823,10 @@ async function savePositions() {
             layoutStyle: p.layoutStyle || "horizontal",
             isManual: !!p.isManual,
             manualLayouts: p.manualLayouts || {},
-            connectionRoutes: ConnectionRouting.normalizeRoutes(p.connectionRoutes),
+            connectionRoutes: PositionPersistence.serializeConnectionRoutes(
+                p.connectionRoutes,
+                ConnectionRouting.normalizeRoutes
+            ),
             status: PositionLifecycle.normalizeStatus(p.status),
             effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
             statusReason: p.statusReason || "",

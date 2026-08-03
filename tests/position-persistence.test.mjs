@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import "../connection-routing.js";
 import "../position-persistence.js";
 import { syncPositionRows } from "../api/_helpers/position_storage.js";
 
@@ -111,4 +112,34 @@ test("automatic reconciliation only persists remote repairs for editors", () => 
     globalThis.PositionPersistence.shouldPersistAutomaticRepair("local-save", true),
     false
   );
+});
+
+test("notes envelopes preserve populated routes and persist an explicit route reset", () => {
+  const routing = globalThis.ConnectionRouting;
+  const populatedPosition = {
+    layoutStyle: "horizontal",
+    isManual: false,
+    connectionRoutes: {
+      Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+    },
+    notes: "Route adjusted"
+  };
+  const populatedNotes = JSON.stringify({
+    connectionRoutes: globalThis.PositionPersistence.serializeConnectionRoutes(
+      populatedPosition.connectionRoutes,
+      routing.normalizeRoutes
+    )
+  });
+
+  const resetNotes = JSON.stringify({
+    connectionRoutes: globalThis.PositionPersistence.serializeConnectionRoutes(
+      {},
+      routing.normalizeRoutes
+    )
+  });
+
+  assert.deepEqual(JSON.parse(populatedNotes).connectionRoutes, {
+    Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+  });
+  assert.deepEqual(JSON.parse(resetNotes).connectionRoutes, {});
 });
