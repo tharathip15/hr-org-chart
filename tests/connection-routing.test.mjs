@@ -304,6 +304,92 @@ test("dragging a route handle converts viewport coordinates and saves only on po
   assert.deepEqual(result.overlayListeners, []);
 });
 
+test("a second drag re-resolves its child after an earlier save replaces positions", async () => {
+  let resolveFirstSave;
+  const firstSavePromise = new Promise(resolve => { resolveFirstSave = resolve; });
+  const outbound = [];
+  const overlayListeners = new Map();
+  const handle = {
+    dataset: { parentId: "1", childId: "2" },
+    classList: { contains: value => value === "is-branch" },
+    closest: selector => selector === ".connection-route-handle" ? handle : null,
+  };
+  const context = vm.createContext({
+    ConnectionRouting: globalThis.ConnectionRouting,
+    canvas: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
+    currentScale: 1,
+    selectedDept: "Sales",
+    positions: [{
+      id: 2,
+      connectionRoutes: { Sales: { parentId: 1, branchOffsetX: 10, laneOffsetY: 20 } },
+    }],
+    activeConnectionRouteDrag: null,
+    latestPositionsSavePromise: Promise.resolve(true),
+    currentChartRenderContext: {
+      displayPositionIds: new Set([2]),
+      effectiveManagerByDisplayId: new Map([[2, 1]]),
+    },
+    getConnectionRouteCapabilities: () => ({ draggable: true }),
+    getConnectionRouteStoragePosition: childId => context.positions.find(position => position.id === Number(childId)),
+    requestConnectionDraw() {},
+    renderTree() {},
+    structuredClone,
+    firstSavePromise,
+    resolveFirstSave,
+    outbound,
+    handle,
+    svgOverlay: {
+      setPointerCapture() {},
+      releasePointerCapture() {},
+      addEventListener: (type, listener) => overlayListeners.set(type, listener),
+      removeEventListener: type => overlayListeners.delete(type),
+    },
+    window: { addEventListener() {}, removeEventListener() {} },
+  });
+  vm.runInContext(`${extractConnectionRouteDragFunctions()}\n
+    let saveCalls = 0;
+    function savePositions() {
+      const snapshot = structuredClone(positions);
+      saveCalls += 1;
+      if (saveCalls === 1) {
+        outbound.push(snapshot);
+        return firstSavePromise.then(() => {
+          positions = structuredClone(snapshot);
+          return true;
+        });
+      }
+      outbound.push(snapshot);
+      return Promise.resolve(true);
+    }
+    globalThis.runOverlap = async () => {
+      const down = pointerId => handleConnectionRoutePointerDown({
+        target: handle, pointerId, clientX: 0, clientY: 0,
+        isPrimary: true, pointerType: "mouse", button: 0,
+        preventDefault() {}, stopPropagation() {},
+      });
+
+      down(1);
+      handleConnectionRoutePointerMove({ pointerId: 1, clientX: 20, clientY: 0 });
+      const firstUp = handleConnectionRoutePointerUp({ pointerId: 1 });
+
+      down(2);
+      resolveFirstSave();
+      await firstUp;
+      handleConnectionRoutePointerMove({ pointerId: 2, clientX: 30, clientY: 0 });
+      await handleConnectionRoutePointerUp({ pointerId: 2 });
+      return { positions, outbound, saveCalls };
+    };`, context);
+
+  const result = JSON.parse(JSON.stringify(await context.runOverlap()));
+  assert.equal(result.saveCalls, 2);
+  assert.deepEqual(result.positions[0].connectionRoutes.Sales, {
+    parentId: 1, branchOffsetX: 60, laneOffsetY: 20,
+  });
+  assert.deepEqual(result.outbound[1][0].connectionRoutes.Sales, {
+    parentId: 1, branchOffsetX: 60, laneOffsetY: 20,
+  });
+});
+
 test("pointer cancel and disappearing edges restore the pre-drag route without saving", async (t) => {
   for (const cancelKind of ["pointercancel", "missing edge"]) {
     await t.test(cancelKind, () => {
@@ -474,13 +560,13 @@ test("non-primary, right-button, and second pointers cannot replace an active dr
       preventDefault() {}, stopPropagation() {}, ...overrides,
     });
     down(1);
-    const firstSnapshot = activeConnectionRouteDrag.previousConnectionRoutes;
+    const firstSnapshot = activeConnectionRouteDrag.beforeRoutes;
     down(2);
     down(3, { isPrimary: false, pointerType: "touch" });
     down(4, { button: 2 });
     globalThis.result = {
       pointerId: activeConnectionRouteDrag.pointerId,
-      sameSnapshot: activeConnectionRouteDrag.previousConnectionRoutes === firstSnapshot,
+      sameSnapshot: activeConnectionRouteDrag.beforeRoutes === firstSnapshot,
     };`, context);
 
   assert.deepEqual(JSON.parse(JSON.stringify(context.result)), { pointerId: 1, sameSnapshot: true });

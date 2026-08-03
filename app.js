@@ -3700,7 +3700,8 @@ function hasActiveConnectionRouteEdge() {
     if (!activeConnectionRouteDrag || !currentChartRenderContext) return false;
     const { childId, parentId } = activeConnectionRouteDrag;
     return currentChartRenderContext.displayPositionIds.has(childId)
-        && currentChartRenderContext.effectiveManagerByDisplayId.get(childId) === parentId;
+        && currentChartRenderContext.effectiveManagerByDisplayId.get(childId) === parentId
+        && Boolean(getConnectionRouteStoragePosition(childId));
 }
 
 function clearActiveConnectionRouteDrag(restore) {
@@ -3716,7 +3717,10 @@ function clearActiveConnectionRouteDrag(restore) {
     } catch (error) {}
 
     if (restore) {
-        drag.storagePosition.connectionRoutes = structuredClone(drag.previousConnectionRoutes);
+        const storagePosition = getConnectionRouteStoragePosition(drag.childId);
+        if (storagePosition) {
+            storagePosition.connectionRoutes = structuredClone(drag.beforeRoutes);
+        }
     }
     activeConnectionRouteDrag = null;
 }
@@ -3744,8 +3748,7 @@ function handleConnectionRoutePointerDown(event) {
         childId,
         pointerId: event.pointerId,
         scopeKey,
-        storagePosition,
-        previousConnectionRoutes: structuredClone(storagePosition.connectionRoutes),
+        beforeRoutes: structuredClone(storagePosition.connectionRoutes),
         handle,
         captureElement: svgOverlay,
         model: ConnectionRouting.beginDrag({
@@ -3772,12 +3775,13 @@ function handleConnectionRoutePointerMove(event) {
         return;
     }
 
+    const storagePosition = getConnectionRouteStoragePosition(activeConnectionRouteDrag.childId);
     const route = ConnectionRouting.updateDrag(
         activeConnectionRouteDrag.model,
         getCanvasPoint(event.clientX, event.clientY)
     );
-    activeConnectionRouteDrag.storagePosition.connectionRoutes = ConnectionRouting.setScopedRoute(
-        activeConnectionRouteDrag.storagePosition.connectionRoutes,
+    storagePosition.connectionRoutes = ConnectionRouting.setScopedRoute(
+        storagePosition.connectionRoutes,
         activeConnectionRouteDrag.scopeKey,
         route
     );
