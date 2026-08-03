@@ -70,6 +70,12 @@ test("Overview group drag reads member IDs from the grouped render context befor
     assert.match(appSource, /OrgHierarchy\.getOverviewDragPositionIds\(positions, draggedId, overviewMembers\.map\(position => position\.id\)\)/);
 });
 
+test("Overview group drag gives hidden members representative-card start coordinates", () => {
+    assert.match(appSource, /const displayPositionId = currentChartRenderContext\?\.realToDisplayId\.get\(positionId\) \?\? positionId;/);
+    assert.match(appSource, /document\.querySelector\(`\.node-card\.absolute-card\[data-id="\$\{displayPositionId\}"\]`\)/);
+    assert.match(appSource, /dragStartCoordinates\.set\(positionId, startCoordinates\)[\s\S]*draggedPositionIds\.forEach\(positionId =>[\s\S]*subtreePosition\.renderX = Math\.round\(start\.x \+ deltaX\);[\s\S]*movedPosition\.isManual = true;/);
+});
+
 test("dragging a subtree applies one snapped delta to every descendant", () => {
     assert.match(appSource, /const rootStart = dragStartCoordinates\.get\(draggedId\);/);
     assert.match(appSource, /const deltaX = snappedX - rootStart\.x;/);

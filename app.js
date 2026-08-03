@@ -5512,7 +5512,10 @@ function handleCardDragStart(e) {
     dragStartCoordinates = new Map();
     draggedPositionIds.forEach(positionId => {
         const draggedPosition = positions.find(candidate => candidate.id === positionId);
-        const startCard = positionId === draggedId ? card : document.querySelector(`.node-card.absolute-card[data-id="${positionId}"]`);
+        const displayPositionId = currentChartRenderContext?.realToDisplayId.get(positionId) ?? positionId;
+        const startCard = positionId === draggedId
+            ? card
+            : document.querySelector(`.node-card.absolute-card[data-id="${displayPositionId}"]`);
         const startCoordinates = getDragStartCoordinates(draggedPosition, startCard);
         if (startCoordinates) {
             dragStartCoordinates.set(positionId, startCoordinates);
