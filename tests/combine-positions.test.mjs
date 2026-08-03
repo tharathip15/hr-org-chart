@@ -229,6 +229,27 @@ test("Employee Profile separates Overview grouping from real Combine", () => {
     assert.match(appSource, /OrgHierarchy\.ungroupOverviewPositions\(/);
 });
 
+test("Overview Group dialog leaves the keyboard flow while closed and closes on Escape", () => {
+    const modalStart = htmlSource.indexOf('id="overview-group-modal"');
+    const modalTag = htmlSource.slice(htmlSource.lastIndexOf("<div", modalStart), htmlSource.indexOf(">", modalStart) + 1);
+    const openSource = appSource.slice(
+        appSource.indexOf("function openOverviewGroupModal"),
+        appSource.indexOf("function closeOverviewGroupModal")
+    );
+    const closeSource = appSource.slice(
+        appSource.indexOf("function closeOverviewGroupModal"),
+        appSource.indexOf("function getOverviewGroupErrorMessage")
+    );
+
+    assert.match(modalTag, /aria-hidden="true"/);
+    assert.match(modalTag, /\binert\b/);
+    assert.match(openSource, /setAttribute\("aria-hidden", "false"\)/);
+    assert.match(openSource, /removeAttribute\("inert"\)/);
+    assert.match(closeSource, /setAttribute\("aria-hidden", "true"\)/);
+    assert.match(closeSource, /setAttribute\("inert", ""\)/);
+    assert.match(appSource, /overviewGroupModal\?\.classList\.contains\("active"\)[\s\S]*?closeOverviewGroupModal\(\)/);
+});
+
 test("split preserves the original title as one explicit Overview group", () => {
   const result = OrgHierarchy.splitPosition([
     { id: 75, title: "Logistics and Procurement Manager", employeeId: 75, managerId: 136 }

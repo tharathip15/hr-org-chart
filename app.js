@@ -2685,6 +2685,11 @@ function setupEventListeners() {
         if (event.key === "Escape" && lifecycleDrawer?.classList.contains("active")) {
             closePositionLifecycleDrawer();
         }
+
+        const overviewGroupModal = document.getElementById("overview-group-modal");
+        if (event.key === "Escape" && overviewGroupModal?.classList.contains("active")) {
+            closeOverviewGroupModal();
+        }
     });
     document.getElementById("employee-search").addEventListener("input", (event) => renderEmployeeList(event.target.value));
     document.getElementById("position-list-search-input").addEventListener("input", () => renderPositionsList());
@@ -4576,6 +4581,8 @@ function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
 
     document.getElementById("overview-group-modal-overlay")?.classList.add("active");
     modal?.classList.add("active");
+    modal?.setAttribute("aria-hidden", "false");
+    modal?.removeAttribute("inert");
     if (window.lucide) window.lucide.createIcons();
     titleInput?.focus();
     return true;
@@ -4583,7 +4590,10 @@ function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
 
 function closeOverviewGroupModal() {
     document.getElementById("overview-group-modal-overlay")?.classList.remove("active");
-    document.getElementById("overview-group-modal")?.classList.remove("active");
+    const modal = document.getElementById("overview-group-modal");
+    modal?.classList.remove("active");
+    modal?.setAttribute("aria-hidden", "true");
+    modal?.setAttribute("inert", "");
 }
 
 function getOverviewGroupErrorMessage(error) {
