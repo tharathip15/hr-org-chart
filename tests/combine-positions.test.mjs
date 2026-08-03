@@ -217,3 +217,25 @@ test("Employee Profile exposes Split as a persistent footer action outside the s
     assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);
     assert.match(styleSource, /\.detail-split-action\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
 });
+
+test("split preserves the original title as one explicit Overview group", () => {
+  const result = OrgHierarchy.splitPosition([
+    { id: 75, title: "Logistics and Procurement Manager", employeeId: 75, managerId: 136 }
+  ], 75, ["Logistics Manager", "Procurement Manager"]);
+
+  assert.equal(result.changed, true);
+  assert.equal(result.positions.length, 2);
+  assert.ok(result.positions.every(position => position.overviewGroupId === "overview-75"));
+  assert.ok(result.positions.every(position => position.overviewGroupTitle === "Logistics and Procurement Manager"));
+  assert.ok(result.positions.every(position => position.overviewPrimaryPositionId === 75));
+});
+
+test("real Combine clears presentation grouping from the survivor", () => {
+  const result = OrgHierarchy.combinePositions([
+    { id: 75, title: "Logistics Manager", employeeId: 75, managerId: 136, overviewGroupId: "overview-75" },
+    { id: 183, title: "Procurement Manager", employeeId: 75, managerId: 136, overviewGroupId: "overview-75" }
+  ], 75, [183], { title: "Logistics and Procurement Manager" });
+
+  assert.equal(result.positions.length, 1);
+  assert.equal(result.positions[0].overviewGroupId, undefined);
+});

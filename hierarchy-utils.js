@@ -143,6 +143,92 @@
         return result;
     }
 
+    function clearOverviewMetadata(position) {
+        const next = { ...position };
+        delete next.overviewGroupId;
+        delete next.overviewGroupTitle;
+        delete next.overviewPrimaryPositionId;
+        return next;
+    }
+
+    function groupPositionsForOverview(sourcePositions, memberIds, options = {}) {
+        const positions = Array.isArray(sourcePositions)
+            ? sourcePositions.map(position => ({ ...position }))
+            : [];
+        const requestedIds = [...new Set((memberIds || []).map(toInteger).filter(Number.isInteger))];
+        const requestedMembers = positions.filter(position => requestedIds.includes(toInteger(position.id)));
+        const primaryId = toInteger(options.primaryPositionId);
+        const title = String(options.title || "").trim();
+
+        if (requestedMembers.length < 2 || requestedMembers.length !== requestedIds.length) {
+            return { positions, changed: false, error: "need_at_least_two_positions" };
+        }
+
+        const existingIds = [...new Set(requestedMembers.map(position => position.overviewGroupId).filter(Boolean))];
+        if (existingIds.length > 1) {
+            return { positions, changed: false, error: "conflicting_groups" };
+        }
+
+        const groupId = existingIds.length === 1 ? existingIds[0] : `overview-${primaryId}`;
+        const memberIdsToUpdate = new Set(requestedIds);
+        if (existingIds.length === 1) {
+            positions.forEach(position => {
+                if (position.overviewGroupId === groupId) memberIdsToUpdate.add(toInteger(position.id));
+            });
+        }
+        const members = positions.filter(position => memberIdsToUpdate.has(toInteger(position.id)));
+
+        if (!members.some(position => toInteger(position.id) === primaryId)) {
+            return { positions, changed: false, error: "invalid_primary_id" };
+        }
+        if (!title) return { positions, changed: false, error: "missing_title" };
+
+        const employeeIds = new Set(members.map(position => toInteger(position.employeeId)));
+        if (employeeIds.size !== 1 || employeeIds.has(null)) {
+            return { positions, changed: false, error: "different_employees" };
+        }
+        const managerIds = new Set(members.map(position => toInteger(position.managerId)));
+        if (managerIds.size !== 1) {
+            return { positions, changed: false, error: "different_managers" };
+        }
+
+        const nextPositions = positions.map(position => memberIdsToUpdate.has(toInteger(position.id))
+            ? {
+                ...position,
+                overviewGroupId: groupId,
+                overviewGroupTitle: title,
+                overviewPrimaryPositionId: primaryId
+            }
+            : position
+        );
+
+        return {
+            positions: nextPositions,
+            changed: true,
+            groupId,
+            primaryPosition: nextPositions.find(position => toInteger(position.id) === primaryId)
+        };
+    }
+
+    function ungroupOverviewPositions(sourcePositions, groupId) {
+        const positions = Array.isArray(sourcePositions)
+            ? sourcePositions.map(position => ({ ...position }))
+            : [];
+        const matchingPositions = positions.filter(position => position.overviewGroupId === groupId);
+
+        if (!groupId || matchingPositions.length === 0) {
+            return { positions, changed: false, error: "invalid_group_id" };
+        }
+
+        return {
+            positions: positions.map(position => position.overviewGroupId === groupId
+                ? clearOverviewMetadata(position)
+                : position
+            ),
+            changed: true
+        };
+    }
+
     function combinePositions(sourcePositions, primaryPositionId, secondaryPositionIds, options = {}) {
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
@@ -159,7 +245,7 @@
             return { positions, changed: false, error: "invalid_primary_id" };
         }
 
-        const primaryPosition = positions.find(position => toInteger(position.id) === primaryId);
+        let primaryPosition = positions.find(position => toInteger(position.id) === primaryId);
 
         if (options.title) primaryPosition.title = String(options.title).trim();
         if (options.department) primaryPosition.department = String(options.department).trim();
@@ -168,6 +254,8 @@
             const managerId = toInteger(options.managerId);
             if (managerId !== primaryId) primaryPosition.managerId = managerId;
         }
+        primaryPosition = clearOverviewMetadata(primaryPosition);
+        positions[positions.findIndex(position => toInteger(position.id) === primaryId)] = primaryPosition;
 
         positions.forEach(position => {
             const currentManagerId = toInteger(position.managerId);
@@ -205,6 +293,10 @@
         }
 
         const primaryPosition = positions.find(position => toInteger(position.id) === targetId);
+        const originalTitle = primaryPosition.title;
+        const originalGroupId = primaryPosition.overviewGroupId;
+        const originalGroupTitle = String(primaryPosition.overviewGroupTitle || "").trim();
+        const originalPrimaryId = toInteger(primaryPosition.overviewPrimaryPositionId);
         primaryPosition.title = titles[0];
 
         const createdPositions = [];
@@ -241,13 +333,34 @@
             createdPositions.push(newPos);
         }
 
-        const repairResult = repairPositionHierarchy(positions);
+        const existingGroupMembers = originalGroupId
+            ? positions.filter(position => position.overviewGroupId === originalGroupId)
+            : [];
+        const hasValidExistingGroup = Boolean(
+            originalGroupId &&
+            originalGroupTitle &&
+            originalPrimaryId !== null &&
+            existingGroupMembers.some(position => toInteger(position.id) === originalPrimaryId)
+        );
+        const groupingResult = groupPositionsForOverview(
+            positions,
+            [targetId, ...createdPositions.map(position => toInteger(position.id))],
+            {
+                title: hasValidExistingGroup ? originalGroupTitle : originalTitle,
+                primaryPositionId: hasValidExistingGroup ? originalPrimaryId : targetId
+            }
+        );
+        const repairResult = repairPositionHierarchy(
+            groupingResult.changed ? groupingResult.positions : positions
+        );
 
         return {
             positions: repairResult.positions,
             changed: true,
-            primaryPosition,
-            createdPositions
+            primaryPosition: repairResult.positions.find(position => toInteger(position.id) === targetId),
+            createdPositions: createdPositions.map(createdPosition => repairResult.positions.find(
+                position => toInteger(position.id) === toInteger(createdPosition.id)
+            ))
         };
     }
 
@@ -257,6 +370,8 @@
         repairEmployeeManagers,
         isPrimaryEmployeePosition,
         getDescendantPositionIds,
+        groupPositionsForOverview,
+        ungroupOverviewPositions,
         combinePositions,
         splitPosition
     });
