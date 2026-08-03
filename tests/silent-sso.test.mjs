@@ -607,6 +607,45 @@ function evaluateMutationSaves(harness) {
   return harness.context.__mutationSaves;
 }
 
+test("position saves serialize scoped routes and preserve an explicit reset", async () => {
+  const harness = createAuthHarness({
+    fetchImpl: async () => jsonResponse({ ok: true }),
+  });
+  harness.api.applyAuthSession({
+    identity: { name: "HR Admin", canEdit: true },
+    csrfToken: "known-csrf",
+  });
+  harness.context.positions = [{
+    id: 12,
+    title: "Sales manager",
+    department: "Sales",
+    managerId: null,
+    employeeId: null,
+    x: 100,
+    y: 200,
+    connectionRoutes: {
+      Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 },
+    },
+  }];
+
+  const { savePositions } = evaluateMutationSaves(harness);
+  assert.equal(await savePositions(), true);
+
+  harness.context.positions[0].connectionRoutes = {};
+  assert.equal(await savePositions(), true);
+
+  const savedPayloads = harness.fetchCalls
+    .filter(({ input, options }) => input === "/api/positions" && options.method === "PUT")
+    .map(({ options }) => JSON.parse(options.body));
+  assert.equal(savedPayloads.length, 2);
+  assert.deepEqual(JSON.parse(savedPayloads[0][0].notes).connectionRoutes, {
+    Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 },
+  });
+  const resetRoutes = JSON.parse(savedPayloads[1][0].notes).connectionRoutes;
+  assert.deepEqual(resetRoutes, {});
+  assert.equal(Object.hasOwn(resetRoutes, "Sales"), false);
+});
+
 test("expired Admin card-drag save restores confirmed positions and local backup", async () => {
   const harness = createAuthHarness({
     fetchImpl: async (input) => {
