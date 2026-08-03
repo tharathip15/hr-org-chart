@@ -229,6 +229,116 @@
         };
     }
 
+    function buildOverviewDisplayModel(allPositions, visiblePositions, effectiveManagerByRealId) {
+        const all = Array.isArray(allPositions) ? allPositions : [];
+        const visible = Array.isArray(visiblePositions) ? visiblePositions : [];
+        const managers = effectiveManagerByRealId instanceof Map
+            ? effectiveManagerByRealId
+            : new Map();
+        const groupsById = new Map();
+
+        function getGroupId(position) {
+            return String(position?.overviewGroupId || "").trim();
+        }
+
+        function getEffectiveManagerId(position) {
+            const id = toInteger(position?.id);
+            const value = managers.has(position?.id)
+                ? managers.get(position.id)
+                : managers.has(id)
+                    ? managers.get(id)
+                    : position?.managerId;
+            return toInteger(value);
+        }
+
+        all.forEach(position => {
+            const groupId = getGroupId(position);
+            if (!groupId) return;
+            const members = groupsById.get(groupId) || [];
+            members.push(position);
+            groupsById.set(groupId, members);
+        });
+
+        const validGroupByRealId = new Map();
+        groupsById.forEach(members => {
+            const employeeIds = new Set(members.map(position => toInteger(position.employeeId)));
+            const managerIds = new Set(members.map(getEffectiveManagerId));
+            const titles = new Set(members.map(position => String(position.overviewGroupTitle || "").trim()));
+            const primaryIds = new Set(members.map(position => toInteger(position.overviewPrimaryPositionId)));
+            const [primaryId] = primaryIds;
+            const isValid = members.length >= 2 &&
+                employeeIds.size === 1 && !employeeIds.has(null) &&
+                managerIds.size === 1 &&
+                titles.size === 1 && !titles.has("") &&
+                primaryIds.size === 1 && primaryId !== null &&
+                members.some(position => toInteger(position.id) === primaryId);
+
+            if (!isValid) return;
+            const group = { members, primaryId, title: [...titles][0] };
+            members.forEach(position => validGroupByRealId.set(toInteger(position.id), group));
+        });
+
+        const visibleMembersByGroup = new Map();
+        visible.forEach(position => {
+            const group = validGroupByRealId.get(toInteger(position.id));
+            if (!group) return;
+            const members = visibleMembersByGroup.get(group) || [];
+            members.push(position);
+            visibleMembersByGroup.set(group, members);
+        });
+
+        const displayPositions = [];
+        const realToDisplayId = new Map();
+        const membersByDisplayId = new Map();
+        const effectiveManagerByDisplayId = new Map();
+        const emittedGroups = new Set();
+
+        visible.forEach(position => {
+            const realId = toInteger(position.id);
+            const group = validGroupByRealId.get(realId);
+            if (!group) {
+                displayPositions.push(position);
+                realToDisplayId.set(realId, realId);
+                membersByDisplayId.set(realId, [position]);
+                return;
+            }
+
+            if (emittedGroups.has(group)) return;
+            emittedGroups.add(group);
+            const visibleMembers = visibleMembersByGroup.get(group) || [];
+            const representative = visibleMembers.find(member => toInteger(member.id) === group.primaryId) || visibleMembers[0];
+            const representativeId = toInteger(representative.id);
+            const memberIds = visibleMembers.map(member => toInteger(member.id)).sort((a, b) => a - b);
+
+            displayPositions.push({
+                ...representative,
+                displayTitle: group.title,
+                overviewGroupMemberIds: memberIds
+            });
+            visibleMembers.forEach(member => realToDisplayId.set(toInteger(member.id), representativeId));
+            membersByDisplayId.set(representativeId, [...visibleMembers]);
+        });
+
+        visible.forEach(position => {
+            const displayId = realToDisplayId.get(toInteger(position.id));
+            if (displayId === undefined || effectiveManagerByDisplayId.has(displayId)) return;
+            const realManagerId = getEffectiveManagerId(position);
+            const displayManagerId = realManagerId === null
+                ? null
+                : realToDisplayId.get(realManagerId) ?? realManagerId;
+            if (displayManagerId !== displayId) {
+                effectiveManagerByDisplayId.set(displayId, displayManagerId);
+            }
+        });
+
+        return {
+            displayPositions,
+            realToDisplayId,
+            membersByDisplayId,
+            effectiveManagerByDisplayId
+        };
+    }
+
     function combinePositions(sourcePositions, primaryPositionId, secondaryPositionIds, options = {}) {
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
@@ -376,6 +486,7 @@
         getDescendantPositionIds,
         groupPositionsForOverview,
         ungroupOverviewPositions,
+        buildOverviewDisplayModel,
         combinePositions,
         splitPosition
     });
