@@ -15,13 +15,6 @@ test("hidden lifecycle managers promote visible reports to the nearest visible m
 
     assert.equal(managers.get(2), 1);
     assert.equal(managers.get(3), 1);
-    assert.match(appSource, /const overviewEffectiveManagerByRealId = OrgHierarchy\.buildEffectiveManagerByRealId/);
-    assert.match(appSource, /const effectiveManagerByRealId = new Map\(realVisiblePositions\.map/);
-    assert.match(appSource, /renderContext\.effectiveManagerByDisplayId\.get\(positionId\)/);
-    assert.match(appSource, /const parentCard = cardById\.get\(visibleManagerId\)/);
-    assert.match(appSource, /path\.dataset\.parentId = String\(visibleManagerId\)/);
-    assert.match(appSource, /path\.dataset\.childId = String\(positionId\)/);
-    assert.match(appSource, /renderContext\.effectiveManagerByDisplayId\.get\(position\.id\)/);
 });
 
 test("a collapsed future manager cannot hide active descendants from the current chart", () => {

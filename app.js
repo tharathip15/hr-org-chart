@@ -2932,12 +2932,12 @@ function buildChartRenderContext() {
     const realVisiblePositions = selectedDept === "All"
         ? modePositions
         : modePositions.filter(position => position.department === selectedDept);
-    const overviewVisibleIds = new Set(modePositions.map(position => position.id));
     const realVisibleIds = new Set(realVisiblePositions.map(position => position.id));
-    const overviewEffectiveManagerByRealId = OrgHierarchy.buildEffectiveManagerByRealId(
+    const overviewRenderModel = OverviewGroupConsumer.buildRenderModel(
         positions,
-        overviewVisibleIds
+        modePositions
     );
+    const overviewEffectiveManagerByRealId = overviewRenderModel.overviewEffectiveManagerByRealId;
     const viewEffectiveManagerByRealId = selectedDept === "All"
         ? overviewEffectiveManagerByRealId
         : OrgHierarchy.buildEffectiveManagerByRealId(positions, realVisibleIds);
@@ -2947,11 +2947,7 @@ function buildChartRenderContext() {
     ]));
 
     const model = selectedDept === "All"
-        ? OrgHierarchy.buildOverviewDisplayModel(
-            positions,
-            realVisiblePositions,
-            overviewEffectiveManagerByRealId
-        )
+        ? overviewRenderModel
         : {
             displayPositions: realVisiblePositions,
             realToDisplayId: new Map(realVisiblePositions.map(position => [position.id, position.id])),
@@ -3296,7 +3292,7 @@ function wireTreeInteractions(renderContext = currentChartRenderContext) {
             }
             const position = renderContext?.positionByDisplayId.get(id)
                 || positions.find(position => position.id === id);
-            const members = renderContext?.membersByDisplayId.get(id) || [position];
+            const members = OverviewGroupConsumer.getVisibleMembers(renderContext, id, position);
             const representativePosition = members.find(position => position?.id === id) || position;
             const employee = representativePosition ? getAssignedEmployee(representativePosition) : null;
 
@@ -3368,7 +3364,7 @@ function getRenderedPositionCoordinates(position) {
 
 function getPositionCardHTML(position, renderContext = null) {
     renderContext = renderContext || currentChartRenderContext;
-    const members = renderContext?.membersByDisplayId.get(position.id) || [position];
+    const members = OverviewGroupConsumer.getVisibleMembers(renderContext, position.id, position);
     const representativePosition = members.find(member => member.id === position.id) || position;
     const employee = getAssignedEmployee(representativePosition);
     const title = getPositionTitle(position);
@@ -3799,7 +3795,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
         ? currentChartRenderContext?.positionByDisplayId.get(displayPositionId) || selectedPosition
         : null;
     const representedPositions = displayPositionId !== null
-        ? currentChartRenderContext?.allMembersByDisplayId.get(displayPositionId) || (selectedPosition ? [selectedPosition] : [])
+        ? OverviewGroupConsumer.getProfileMembers(currentChartRenderContext, displayPositionId, selectedPosition)
         : [];
     const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
     const chartStructuralActionsAllowed = selectedDept !== "All" && canEditHr();
@@ -5904,12 +5900,11 @@ function handleCardDragStart(e) {
     const position = positions.find(position => position.id === draggedId);
     if (!position) return;
 
-    const overviewMembers = isOverallView()
-        ? currentChartRenderContext?.allMembersByDisplayId?.get(draggedId) || []
-        : [];
-    draggedPositionIds = overviewMembers.length > 1
-        ? OrgHierarchy.getOverviewDragPositionIds(positions, draggedId, overviewMembers.map(position => position.id))
-        : OrgHierarchy.getDescendantPositionIds(positions, draggedId);
+    const groupedOverviewDragPositionIds = isOverallView()
+        ? OverviewGroupConsumer.getGroupedDragPositionIds(positions, currentChartRenderContext, draggedId)
+        : null;
+    draggedPositionIds = groupedOverviewDragPositionIds
+        ?? OrgHierarchy.getDescendantPositionIds(positions, draggedId);
     dragStartCoordinates = new Map();
     draggedPositionIds.forEach(positionId => {
         const draggedPosition = positions.find(candidate => candidate.id === positionId);

@@ -10,7 +10,7 @@ test("app supports free-form canvas coordinates calculation", () => {
 
 test("Overview cards, layout, and connections consume one grouped render context", () => {
     assert.match(appSource, /function buildChartRenderContext\(\)/);
-    assert.match(appSource, /OrgHierarchy\.buildOverviewDisplayModel\(/);
+    assert.match(appSource, /OverviewGroupConsumer\.buildRenderModel\(/);
     assert.match(appSource, /calculateInitialCoordinates\(renderContext\)/);
     assert.match(appSource, /drawConnections\(renderContext = currentChartRenderContext\)/);
     assert.match(appSource, /effectiveManagerByDisplayId/);
@@ -18,7 +18,6 @@ test("Overview cards, layout, and connections consume one grouped render context
 });
 
 test("department views use every real department position", () => {
-    assert.match(appSource, /selectedDept === "All"[\s\S]*buildOverviewDisplayModel/);
     assert.match(appSource, /position\.department === selectedDept/);
 });
 
@@ -65,18 +64,11 @@ test("dragging a position captures its complete subtree", () => {
     assert.match(appSource, /dragStartCoordinates\.set\(positionId/);
 });
 
-test("Overview group drag reads member IDs from the grouped render context before capture", () => {
-    assert.match(appSource, /const overviewMembers = isOverallView\(\)[\s\S]*currentChartRenderContext\?\.allMembersByDisplayId\?\.get\(draggedId\) \|\| \[\]/);
-    assert.match(appSource, /OrgHierarchy\.getOverviewDragPositionIds\(positions, draggedId, overviewMembers\.map\(position => position\.id\)\)/);
-});
-
-test("Overview profile details use every valid group member including lifecycle-hidden members", () => {
-    const profileSource = appSource.slice(
-        appSource.indexOf("function showEmployeeDetails"),
-        appSource.indexOf("function closeDetailDrawer")
-    );
-
-    assert.match(profileSource, /currentChartRenderContext\?\.allMembersByDisplayId\.get\(displayPositionId\)/);
+test("app delegates Overview membership and drag decisions to the executable consumer", () => {
+    assert.match(appSource, /OverviewGroupConsumer\.buildRenderModel\(/);
+    assert.match(appSource, /OverviewGroupConsumer\.getVisibleMembers\(/);
+    assert.match(appSource, /OverviewGroupConsumer\.getProfileMembers\(/);
+    assert.match(appSource, /OverviewGroupConsumer\.getGroupedDragPositionIds\(/);
 });
 
 test("Overview group drag gives hidden members representative-card start coordinates", () => {

@@ -66,3 +66,45 @@ test("history restore rebuilds the notes envelope used by legacy flattened snaps
     text: "Legacy audit note"
   });
 });
+
+test("legacy flattened JSON-looking note text remains text while every metadata field is rebuilt", () => {
+  assert.equal(typeof historyPositions.mapPositionSnapshotToDbRow, "function");
+
+  const humanNoteText = '{"human":"text"}';
+  const restored = historyPositions.mapPositionSnapshotToDbRow({
+    id: 18,
+    title: "Legacy future manager",
+    department: "Operations",
+    managerId: 10,
+    employeeId: 6,
+    x: 210,
+    y: 310,
+    layoutStyle: "vertical",
+    isManual: true,
+    manualLayouts: {
+      Operations: { x: 800, y: 900 }
+    },
+    status: "future",
+    effectiveDate: "2026-10-01",
+    statusReason: "Approved plan",
+    overviewGroupId: "overview-18",
+    overviewGroupTitle: "Operations and Planning Manager",
+    overviewPrimaryPositionId: 18,
+    notes: humanNoteText
+  });
+
+  assert.deepEqual(JSON.parse(restored.notes), {
+    layoutStyle: "vertical",
+    isManual: true,
+    manualLayouts: {
+      Operations: { x: 800, y: 900 }
+    },
+    status: "future",
+    effectiveDate: "2026-10-01",
+    statusReason: "Approved plan",
+    overviewGroupId: "overview-18",
+    overviewGroupTitle: "Operations and Planning Manager",
+    overviewPrimaryPositionId: 18,
+    text: humanNoteText
+  });
+});

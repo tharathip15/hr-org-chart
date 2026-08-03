@@ -20,19 +20,43 @@ function isNotesEnvelope(value) {
   }
 }
 
+const LEGACY_NOTE_METADATA_FIELDS = [
+  "layoutStyle",
+  "isManual",
+  "manualLayouts",
+  "status",
+  "effectiveDate",
+  "statusReason",
+  "overviewGroupId",
+  "overviewGroupTitle",
+  "overviewPrimaryPositionId"
+];
+
+function isLegacyFlattenedSnapshot(position) {
+  return LEGACY_NOTE_METADATA_FIELDS.some(field => Object.hasOwn(position || {}, field));
+}
+
+function rebuildLegacyNotesEnvelope(position, rawNotes) {
+  const envelope = {
+    layoutStyle: position?.layoutStyle || "horizontal",
+    isManual: Boolean(position?.isManual)
+  };
+
+  LEGACY_NOTE_METADATA_FIELDS.slice(2).forEach(field => {
+    if (Object.hasOwn(position || {}, field)) {
+      envelope[field] = position[field];
+    }
+  });
+  envelope.text = rawNotes;
+  return JSON.stringify(envelope);
+}
+
 function getRestoredNotes(position) {
   const rawNotes = getRawNotes(position?.notes);
+  // Legacy snapshots carry note metadata as top-level fields. Classify them
+  // before inspecting note text because a human note may itself be valid JSON.
+  if (isLegacyFlattenedSnapshot(position)) return rebuildLegacyNotesEnvelope(position, rawNotes);
   if (isNotesEnvelope(rawNotes)) return rawNotes;
-
-  const isLegacyFlattenedSnapshot = Object.hasOwn(position || {}, "layoutStyle")
-    || Object.hasOwn(position || {}, "isManual");
-  if (isLegacyFlattenedSnapshot) {
-    return JSON.stringify({
-      layoutStyle: position?.layoutStyle || "horizontal",
-      isManual: Boolean(position?.isManual),
-      text: rawNotes
-    });
-  }
 
   return rawNotes || null;
 }
