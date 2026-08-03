@@ -55,7 +55,7 @@ test("chart wires alignment guides into the drag workflow", () => {
     assert.match(appSource, /renderAlignmentGuides\(snapResult\)/);
     assert.match(appSource, /clearAlignmentGuides\(\)/);
     assert.match(htmlSource, /id="alignment-guides-overlay"/);
-    assert.match(htmlSource, /alignment-utils\.js\?v=1/);
+    assert.match(htmlSource, /alignment-utils\.js\?v=2/);
     assert.match(cssSource, /\.alignment-guides-overlay/);
     assert.match(cssSource, /\.alignment-measure-line/);
 });

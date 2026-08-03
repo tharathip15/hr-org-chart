@@ -2586,6 +2586,13 @@ function setupEventListeners() {
     if (submitSplitBtn) submitSplitBtn.addEventListener("click", handleSplitPositionSubmit);
     const addSplitTitleBtn = document.getElementById("btn-add-split-title");
     if (addSplitTitleBtn) addSplitTitleBtn.addEventListener("click", () => addSplitTitleInput(""));
+    const btnSplitEmployeePosition = document.getElementById("btn-split-employee-position");
+    if (btnSplitEmployeePosition) {
+        btnSplitEmployeePosition.addEventListener("click", () => {
+            const positionId = parseInt(btnSplitEmployeePosition.dataset.positionId, 10);
+            if (Number.isInteger(positionId)) openSplitPositionModal(positionId);
+        });
+    }
     const btnSplitLifecycle = document.getElementById("btn-split-position-lifecycle");
     if (btnSplitLifecycle) {
         btnSplitLifecycle.addEventListener("click", () => {
@@ -3644,6 +3651,16 @@ function showEmployeeDetails(id) {
     
     // Derive reporting from the employee's primary assigned position.
     const primaryPosition = getPrimaryPositionForEmployee(id);
+    const btnSplitEmployeePosition = document.getElementById("btn-split-employee-position");
+    if (btnSplitEmployeePosition) {
+        btnSplitEmployeePosition.hidden = !primaryPosition;
+        btnSplitEmployeePosition.disabled = !primaryPosition;
+        if (primaryPosition) {
+            btnSplitEmployeePosition.dataset.positionId = String(primaryPosition.id);
+        } else {
+            delete btnSplitEmployeePosition.dataset.positionId;
+        }
+    }
     const parentPosition = primaryPosition && primaryPosition.managerId !== null
         ? positions.find(position => position.id === primaryPosition.managerId)
         : null;
@@ -3748,12 +3765,6 @@ function showEmployeeDetails(id) {
         `;
     }
     
-    const splitButtonHTML = primaryPosition ? `
-        <button type="button" class="btn btn-secondary" id="btn-open-split-modal" style="margin-top: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
-            <i data-lucide="scissors"></i> แยกตำแหน่งงานออกเป็น 2 ตำแหน่ง (Split Position)
-        </button>
-    ` : "";
-
     const body = document.getElementById("detail-drawer-body");
     const deptClass = getDeptClass(emp.department);
     
@@ -3794,7 +3805,6 @@ function showEmployeeDetails(id) {
         </div>
         
         ${siblingsHTML}
-        ${splitButtonHTML}
         
         ${emp.bio ? `
             <div>
@@ -3808,13 +3818,6 @@ function showEmployeeDetails(id) {
     if (btnCombine) {
         btnCombine.addEventListener("click", () => {
             openCombinePositionsModal(id);
-        });
-    }
-
-    const btnSplit = document.getElementById("btn-open-split-modal");
-    if (btnSplit && primaryPosition) {
-        btnSplit.addEventListener("click", () => {
-            openSplitPositionModal(primaryPosition.id);
         });
     }
 
@@ -4409,7 +4412,10 @@ async function handleCombinePositionsSubmit() {
 }
 
 function openSplitPositionModal(positionId) {
-    if (document.body.classList.contains("role-viewer")) return false;
+    if (!requireEditorAction({ notify: false })) {
+        showLoginOverlay();
+        return false;
+    }
 
     const pos = positions.find(p => p.id === positionId);
     if (!pos) return false;
@@ -4439,6 +4445,8 @@ function openSplitPositionModal(positionId) {
 
     if (modal) modal.dataset.positionId = positionId;
 
+    closeDetailDrawer();
+    closePositionLifecycleDrawer();
     const overlay = document.getElementById("split-positions-modal-overlay");
     if (overlay) overlay.classList.add("active");
     if (modal) modal.classList.add("active");
@@ -4505,7 +4513,7 @@ function closeSplitPositionModal() {
 }
 
 async function handleSplitPositionSubmit() {
-    if (document.body.classList.contains("role-viewer")) return;
+    if (!requireEditorAction()) return;
 
     const modal = document.getElementById("split-positions-modal");
     if (!modal) return;
@@ -5242,6 +5250,7 @@ let cardDragMoved = false;
 let suppressCardClickId = null;
 let draggedPositionIds = [];
 let dragStartCoordinates = new Map();
+let suppressedCombineDropTargetIds = new Set();
 
 function getDragStartCoordinates(position, card) {
     if (!position) return null;
@@ -5274,6 +5283,7 @@ function clearAlignmentGuides() {
 
 function clearCombineDropZones() {
     if (combineDropZonesOverlay) combineDropZonesOverlay.innerHTML = "";
+    suppressedCombineDropTargetIds.clear();
 }
 
 function renderCombineDropZones(draggedPosition) {
@@ -5304,6 +5314,31 @@ function renderCombineDropZones(draggedPosition) {
             <strong>${escapeHTML(getPositionTitle(candidate))}</strong>
         `;
         combineDropZonesOverlay.appendChild(zone);
+    });
+}
+
+function captureStartingCombineDropTargets(card) {
+    suppressedCombineDropTargetIds.clear();
+    if (!card) return;
+
+    const cardRect = card.getBoundingClientRect();
+    const cardCenterX = cardRect.left + cardRect.width / 2;
+    const cardCenterY = cardRect.top + cardRect.height / 2;
+
+    document.querySelectorAll(".combine-drop-zone").forEach(zone => {
+        const zoneRect = zone.getBoundingClientRect();
+        const positionId = parseInt(zone.dataset.positionId, 10);
+        if (!Number.isInteger(positionId)) return;
+
+        const decision = AlignmentAssist.getCombineDropDecision({
+            distance: Math.hypot(
+                cardCenterX - (zoneRect.left + zoneRect.width / 2),
+                cardCenterY - (zoneRect.top + zoneRect.height / 2)
+            ),
+            targetWidth: zoneRect.width,
+            targetHeight: zoneRect.height
+        });
+        if (decision.active) suppressedCombineDropTargetIds.add(positionId);
     });
 }
 
@@ -5441,6 +5476,7 @@ function handleCardDragStart(e) {
     dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
     dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
     renderCombineDropZones(position);
+    captureStartingCombineDropTargets(card);
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
@@ -5522,11 +5558,20 @@ function handleCardDragMove(e) {
                 draggedCenterX - (zoneRect.left + zoneRect.width / 2),
                 draggedCenterY - (zoneRect.top + zoneRect.height / 2)
             );
-            const threshold = Math.max(90, Math.min(zoneRect.width, zoneRect.height) * 0.55);
             const positionId = parseInt(zone.dataset.positionId, 10);
+            const decision = AlignmentAssist.getCombineDropDecision({
+                distance,
+                targetWidth: zoneRect.width,
+                targetHeight: zoneRect.height,
+                suppressed: suppressedCombineDropTargetIds.has(positionId)
+            });
 
-            zone.classList.toggle("is-active", distance < threshold);
-            if (distance < threshold && Number.isInteger(positionId)) {
+            if (!decision.suppressed) {
+                suppressedCombineDropTargetIds.delete(positionId);
+            }
+
+            zone.classList.toggle("is-active", decision.active);
+            if (decision.active && Number.isInteger(positionId)) {
                 currentDropTargetId = positionId;
             }
         });

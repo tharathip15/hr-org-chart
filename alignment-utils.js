@@ -116,6 +116,35 @@
         return Math.abs(target - value) <= GRID_THRESHOLD ? target : null;
     }
 
+    function getCombineDropDecision({
+        distance,
+        targetWidth,
+        targetHeight,
+        suppressed = false
+    } = {}) {
+        const safeDistance = Math.max(0, toFiniteNumber(distance));
+        const targetSize = Math.max(
+            1,
+            toFiniteNumber(targetWidth, 1),
+            toFiniteNumber(targetHeight, 1)
+        );
+        const threshold = Math.max(24, Math.min(90, targetSize * 0.55));
+
+        if (suppressed) {
+            return {
+                active: false,
+                suppressed: safeDistance <= threshold * 1.5,
+                threshold
+            };
+        }
+
+        return {
+            active: safeDistance < threshold,
+            suppressed: false,
+            threshold
+        };
+    }
+
     function findSnap({ bounds, candidates = [], threshold = DEFAULT_THRESHOLD, gridSize = DEFAULT_GRID_SIZE } = {}) {
         const moving = normalizeBounds(bounds);
         const normalizedCandidates = candidates.map(normalizeBounds).filter(candidate => candidate.id !== moving.id);
@@ -189,6 +218,7 @@
     root.AlignmentAssist = Object.freeze({
         findSnap,
         getAxisAnchors,
-        getHorizontalMeasurement
+        getHorizontalMeasurement,
+        getCombineDropDecision
     });
 })(globalThis);

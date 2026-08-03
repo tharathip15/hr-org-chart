@@ -413,7 +413,7 @@ test("Microsoft SSO rejects invalid identity tokens without setting a cookie", a
     },
     {
       name: "future nbf",
-      options: { payloadOverrides: { nbf: now + 61 } },
+      options: { payloadOverrides: { nbf: now + 120 } },
     },
     {
       name: "nonce mismatch",

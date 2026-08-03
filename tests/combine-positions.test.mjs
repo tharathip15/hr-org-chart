@@ -9,6 +9,7 @@ const { combinePositions } = globalThis.OrgHierarchy || {};
 const { suggestCombinedTitle } = globalThis.EmployeeDirectory || {};
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const styleSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
 
 test("suggestCombinedTitle generates clean merged title", () => {
     assert.equal(typeof suggestCombinedTitle, "function");
@@ -181,4 +182,38 @@ test("Split modal accepts a dynamic list of two or more position titles", () => 
     assert.match(appSource, /function addSplitTitleInput\(/);
     assert.match(appSource, /querySelectorAll\("\.split-title-input"\)/);
     assert.doesNotMatch(appSource, /const title1 = input1/);
+});
+
+test("Split modal is not nested inside the hidden Combine modal", () => {
+    const combineId = htmlSource.indexOf('id="combine-positions-modal"');
+    const combineStart = htmlSource.lastIndexOf("<div", combineId);
+    const splitStart = htmlSource.indexOf("<!-- Split Positions Modal -->");
+    const combineMarkup = htmlSource.slice(combineStart, splitStart);
+    const openingDivs = (combineMarkup.match(/<div\b/g) || []).length;
+    const closingDivs = (combineMarkup.match(/<\/div>/g) || []).length;
+
+    assert.notEqual(combineId, -1);
+    assert.notEqual(combineStart, -1);
+    assert.notEqual(splitStart, -1);
+    assert.equal(
+        openingDivs,
+        closingDivs,
+        "combine modal must be closed before the split modal begins"
+    );
+});
+
+test("Employee Profile exposes Split as a persistent footer action outside the scrollable Overview details", () => {
+    const detailDrawerSource = htmlSource.slice(
+        htmlSource.indexOf('id="detail-drawer"'),
+        htmlSource.indexOf("<!-- Position Lifecycle Drawer -->")
+    );
+
+    assert.match(detailDrawerSource, /class="drawer-footer detail-drawer-footer"/);
+    assert.match(detailDrawerSource, /id="btn-split-employee-position"/);
+    assert.match(htmlSource, /href="style\.css\?v=2"/);
+    assert.match(htmlSource, /src="app\.js\?v=3\.14"/);
+    assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(primaryPosition\.id\)/);
+    assert.match(appSource, /btnSplitEmployeePosition\.addEventListener\("click"/);
+    assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);
+    assert.match(styleSource, /\.detail-split-action\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
 });

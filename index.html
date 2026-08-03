@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2">
     <!-- SVG Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👥</text></svg>">
 </head>
@@ -434,7 +434,10 @@
         <div class="drawer-body" id="detail-drawer-body">
             <!-- Rendered dynamically -->
         </div>
-        <div class="drawer-footer">
+        <div class="drawer-footer detail-drawer-footer">
+            <button type="button" class="btn btn-secondary detail-split-action" id="btn-split-employee-position" hidden>
+                <i data-lucide="scissors"></i> แยกตำแหน่งงาน (Split Position)
+            </button>
             <button class="btn btn-secondary" id="btn-edit-employee">
                 <i data-lucide="edit"></i> Edit Details
             </button>
@@ -540,6 +543,7 @@
         <div class="modal-footer" style="padding: 16px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 8px;">
             <button type="button" class="btn btn-secondary" id="btn-cancel-combine">ยกเลิก</button>
             <button type="button" class="btn btn-primary" id="btn-submit-combine">ยืนยันการรวบตำแหน่ง</button>
+        </div>
     </div>
 
     <!-- Split Positions Modal -->
@@ -663,9 +667,9 @@
     <script src="hierarchy-utils.js?v=1"></script>
     <script src="employee-utils.js?v=1"></script>
     <script src="position-lifecycle.js?v=1"></script>
-    <script src="alignment-utils.js?v=1"></script>
+    <script src="alignment-utils.js?v=2"></script>
     <script src="position-persistence.js?v=1"></script>
     <script src="microsoft-sync-ui.js?v=1"></script>
-    <script src="app.js?v=3.11"></script>
+    <script src="app.js?v=3.14"></script>
 </body>
 </html>
