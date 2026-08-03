@@ -19,6 +19,15 @@ test("position lifecycle metadata persists inside the existing notes payload", (
     assert.match(appSource, /statusReason:\s*p\.statusReason \|\| ""/);
 });
 
+test("Overview group metadata round-trips through the position notes envelope", () => {
+    assert.match(appSource, /overviewGroupId\s*=\s*String\(parsed\.overviewGroupId/);
+    assert.match(appSource, /overviewGroupTitle\s*=\s*String\(parsed\.overviewGroupTitle/);
+    assert.match(appSource, /overviewPrimaryPositionId\s*=\s*toNullableInteger\(parsed\.overviewPrimaryPositionId/);
+    assert.match(appSource, /overviewGroupId:\s*p\.overviewGroupId/);
+    assert.match(appSource, /overviewGroupTitle:\s*p\.overviewGroupTitle/);
+    assert.match(appSource, /overviewPrimaryPositionId:\s*p\.overviewPrimaryPositionId/);
+});
+
 test("vacant positions open a lifecycle drawer that can close without deleting history", () => {
     assert.match(htmlSource, /id="position-lifecycle-drawer"/);
     assert.match(htmlSource, /id="btn-close-position"/);

@@ -1521,6 +1521,9 @@ function normalizePosition(position, fallbackId) {
     let status = PositionLifecycle.normalizeStatus(position?.status);
     let effectiveDate = PositionLifecycle.normalizeDate(position?.effectiveDate);
     let statusReason = String(position?.statusReason || "").trim();
+    let overviewGroupId = String(position?.overviewGroupId || "").trim();
+    let overviewGroupTitle = String(position?.overviewGroupTitle || "").trim();
+    let overviewPrimaryPositionId = toNullableInteger(position?.overviewPrimaryPositionId);
 
     // Check if notes contains layout style JSON
     if (notesText.startsWith("{") && notesText.endsWith("}")) {
@@ -1535,6 +1538,9 @@ function normalizePosition(position, fallbackId) {
             status = PositionLifecycle.normalizeStatus(parsed.status ?? status);
             effectiveDate = PositionLifecycle.normalizeDate(parsed.effectiveDate ?? effectiveDate);
             statusReason = String(parsed.statusReason ?? statusReason).trim();
+            overviewGroupId = String(parsed.overviewGroupId ?? overviewGroupId).trim();
+            overviewGroupTitle = String(parsed.overviewGroupTitle ?? overviewGroupTitle).trim();
+            overviewPrimaryPositionId = toNullableInteger(parsed.overviewPrimaryPositionId ?? overviewPrimaryPositionId);
             notesText = parsed.text || "";
         } catch (e) {
             // Not valid JSON, keep as is
@@ -1555,6 +1561,9 @@ function normalizePosition(position, fallbackId) {
         status,
         effectiveDate,
         statusReason,
+        overviewGroupId: overviewGroupId || undefined,
+        overviewGroupTitle: overviewGroupTitle || undefined,
+        overviewPrimaryPositionId: overviewPrimaryPositionId ?? undefined,
         notes: notesText
     };
 }
@@ -1811,6 +1820,9 @@ async function savePositions() {
             status: PositionLifecycle.normalizeStatus(p.status),
             effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
             statusReason: p.statusReason || "",
+            overviewGroupId: p.overviewGroupId || undefined,
+            overviewGroupTitle: p.overviewGroupTitle || undefined,
+            overviewPrimaryPositionId: p.overviewPrimaryPositionId ?? undefined,
             text: p.notes || ""
         })
     }));
