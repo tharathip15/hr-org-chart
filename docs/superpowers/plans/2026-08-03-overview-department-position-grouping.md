@@ -187,6 +187,7 @@ function groupPositionsForOverview(sourcePositions, memberIds, options = {}) {
 
 Implement `ungroupOverviewPositions()` with the same clone-first pattern and `clearOverviewMetadata()`.
 When one selected member already belongs to a valid group, include every existing member of that group in the update. Reject `conflicting_groups` rather than silently merging two established groups.
+The human-approved preflight resolution makes this expansion mandatory: expand the candidate ID set before final employee/manager validation and before applying metadata, so every existing member is validated and updated together.
 
 - [ ] **Step 4: Add failing Split/Combine metadata tests**
 
@@ -720,6 +721,7 @@ Expected: FAIL because Group/Ungroup controls and view-aware entry guards do not
 In `index.html`:
 
 - Add `Group in Overview` and `Ungroup from Overview` buttons to `.detail-drawer-footer`, initially hidden.
+- Add `Combine Real Positions` to the Position Lifecycle drawer. Show it only for an assigned employee with at least two real positions, and call `openCombinePositionsModal(employeeId, selectedIds, { source: "position-management" })` so Position Management has an explicit Combine entry independent of the selected chart view.
 - Add a modal with employee summary, checkboxes for compatible positions, required Overview title, primary-position select, Cancel, and Save buttons.
 - Give the modal `role="dialog"`, `aria-modal="true"`, a labelled heading, and a separate overlay.
 - Bump `style.css` and `app.js` query-string versions after all UI edits are complete.
@@ -762,7 +764,7 @@ requestAnimationFrame(fitToScreen);
 
 - Hide Employee Profile Split, Group, Ungroup, and real Combine in Overview.
 - Keep department card Split/Group/Ungroup/Combine available to editors.
-- Track lifecycle drawer source as `chart` or `position-management`; allow Split from Position Management even while Overview is selected.
+- Track lifecycle drawer source as `chart` or `position-management`; allow both Split and `Combine Real Positions` from Position Management even while Overview is selected.
 - Keep Viewer guards at every mutation entry point, not only in CSS.
 - Rename destructive copy to `Combine Real Positions` and state that secondary records are removed.
 
