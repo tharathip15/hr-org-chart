@@ -1520,6 +1520,7 @@ function normalizePosition(position, fallbackId) {
     let layoutStyle = "horizontal";
     let isManual = false;
     let manualLayouts = normalizeManualLayouts(position?.manualLayouts);
+    let connectionRoutes = ConnectionRouting.normalizeRoutes(position?.connectionRoutes);
     let notesText = (position?.notes || "").trim();
     let status = PositionLifecycle.normalizeStatus(position?.status);
     let effectiveDate = PositionLifecycle.normalizeDate(position?.effectiveDate);
@@ -1538,6 +1539,7 @@ function normalizePosition(position, fallbackId) {
                 ...manualLayouts,
                 ...normalizeManualLayouts(parsed.manualLayouts)
             };
+            connectionRoutes = ConnectionRouting.normalizeRoutes(parsed.connectionRoutes ?? connectionRoutes);
             status = PositionLifecycle.normalizeStatus(parsed.status ?? status);
             effectiveDate = PositionLifecycle.normalizeDate(parsed.effectiveDate ?? effectiveDate);
             statusReason = String(parsed.statusReason ?? statusReason).trim();
@@ -1561,6 +1563,7 @@ function normalizePosition(position, fallbackId) {
         layoutStyle,
         isManual: isManual || (position?.isManual === true),
         manualLayouts,
+        connectionRoutes,
         status,
         effectiveDate,
         statusReason,
@@ -1820,6 +1823,7 @@ async function savePositions() {
             layoutStyle: p.layoutStyle || "horizontal",
             isManual: !!p.isManual,
             manualLayouts: p.manualLayouts || {},
+            connectionRoutes: ConnectionRouting.normalizeRoutes(p.connectionRoutes),
             status: PositionLifecycle.normalizeStatus(p.status),
             effectiveDate: PositionLifecycle.normalizeDate(p.effectiveDate),
             statusReason: p.statusReason || "",

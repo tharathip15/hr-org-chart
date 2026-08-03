@@ -194,6 +194,9 @@ function createAuthHarness({
       normalizeStatus(value) { return value || "active"; },
       normalizeDate(value) { return value || ""; },
     },
+    ConnectionRouting: {
+      normalizeRoutes(value) { return structuredClone(value || {}); },
+    },
     setSyncStatus() {},
     renderAll() {},
     renderPositionsList() {},

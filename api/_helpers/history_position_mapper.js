@@ -24,6 +24,7 @@ const LEGACY_NOTE_METADATA_FIELDS = [
   "layoutStyle",
   "isManual",
   "manualLayouts",
+  "connectionRoutes",
   "status",
   "effectiveDate",
   "statusReason",

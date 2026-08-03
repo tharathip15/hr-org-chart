@@ -17,6 +17,10 @@ test("history snapshots preserve the complete raw position notes envelope throug
       Logistics: { x: 410, y: 520 },
       Procurement: { x: 730, y: 520 }
     },
+    connectionRoutes: {
+      __overview__: { parentId: 12, branchOffsetX: -80, laneOffsetY: 45 },
+      Logistics: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+    },
     status: "future",
     effectiveDate: "2026-10-01",
     statusReason: "Approved workforce plan",
@@ -57,12 +61,20 @@ test("history restore rebuilds the notes envelope used by legacy flattened snaps
     y: 300,
     layoutStyle: "vertical",
     isManual: true,
+    connectionRoutes: {
+      __overview__: { parentId: 12, branchOffsetX: -80, laneOffsetY: 45 },
+      Logistics: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+    },
     notes: "Legacy audit note"
   });
 
   assert.deepEqual(JSON.parse(restored.notes), {
     layoutStyle: "vertical",
     isManual: true,
+    connectionRoutes: {
+      __overview__: { parentId: 12, branchOffsetX: -80, laneOffsetY: 45 },
+      Logistics: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+    },
     text: "Legacy audit note"
   });
 });
