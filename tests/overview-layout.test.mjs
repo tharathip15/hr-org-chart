@@ -108,8 +108,8 @@ test("auto arrange restores the latest saved layout", () => {
 });
 
 test("fit to screen keeps oversized charts inside the chart viewport edge", () => {
-    assert.match(appSource, /const scaledContentWidth = bounds\.width \* currentScale;/);
-    assert.match(appSource, /panX = padding - bounds\.minX \* currentScale;/);
+    assert.match(appSource, /const scaledContentWidth = bounds\.width \* nextScale;/);
+    assert.match(appSource, /nextPanX = padding - bounds\.minX \* nextScale;/);
 });
 
 test("toggling a position refits the chart after visibility changes", () => {

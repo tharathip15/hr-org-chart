@@ -2359,13 +2359,11 @@ function setupEventListeners() {
         const canvasMouseX = (mouseX - panX) / currentScale;
         const canvasMouseY = (mouseY - panY) / currentScale;
         
-        currentScale = nextScale;
-        
         // Shift pan coordinates to anchor the mouse position
-        panX = mouseX - canvasMouseX * currentScale;
-        panY = mouseY - canvasMouseY * currentScale;
-        
-        updateCanvasTransform();
+        const nextPanX = mouseX - canvasMouseX * nextScale;
+        const nextPanY = mouseY - canvasMouseY * nextScale;
+
+        setCanvasZoom(nextScale, nextPanX, nextPanY);
     }, { passive: false });
     
     // Drag/Pan Canvas
@@ -2803,6 +2801,14 @@ function updateCanvasTransform() {
     document.getElementById("zoom-percent").innerText = `${Math.round(currentScale * 100)}%`;
 }
 
+function setCanvasZoom(nextScale, nextPanX, nextPanY) {
+    currentScale = nextScale;
+    panX = nextPanX;
+    panY = nextPanY;
+    updateCanvasTransform();
+    requestConnectionDraw();
+}
+
 // Simple Zoom function
 function zoom(factor) {
     const nextScale = Math.max(0.15, Math.min(3.0, currentScale * factor));
@@ -2815,12 +2821,10 @@ function zoom(factor) {
     const canvasMidX = (midX - panX) / currentScale;
     const canvasMidY = (midY - panY) / currentScale;
     
-    currentScale = nextScale;
-    
-    panX = midX - canvasMidX * currentScale;
-    panY = midY - canvasMidY * currentScale;
-    
-    updateCanvasTransform();
+    const nextPanX = midX - canvasMidX * nextScale;
+    const nextPanY = midY - canvasMidY * nextScale;
+
+    setCanvasZoom(nextScale, nextPanX, nextPanY);
 }
 
 // Helper: get bounding box of all employee cards in canvas-local coordinates
@@ -2865,26 +2869,21 @@ function fitToScreen() {
     const scaleX = (viewportRect.width - padding * 2) / bounds.width;
     const scaleY = (viewportRect.height - padding * 2) / bounds.height;
     
-    currentScale = Math.min(scaleX, scaleY);
-    currentScale = Math.max(0.15, Math.min(1.2, currentScale)); // clamp fitting scale
+    const nextScale = Math.max(0.15, Math.min(1.2, Math.min(scaleX, scaleY)));
     
     // Center compact trees, but keep oversized trees anchored inside the chart viewport.
-    const scaledContentWidth = bounds.width * currentScale;
+    const scaledContentWidth = bounds.width * nextScale;
     const availableWidth = viewportRect.width - padding * 2;
+    let nextPanX;
     if (scaledContentWidth > availableWidth) {
-        panX = padding - bounds.minX * currentScale;
+        nextPanX = padding - bounds.minX * nextScale;
     } else {
         const centerX = bounds.minX + bounds.width / 2;
-        panX = (viewportRect.width / 2) - centerX * currentScale;
+        nextPanX = (viewportRect.width / 2) - centerX * nextScale;
     }
-    panY = 80 - bounds.minY * currentScale;
-    
-    updateCanvasTransform();
-    
-    // Redraw connectors in case anything moved
-    setTimeout(() => {
-        drawConnections();
-    }, 50);
+    const nextPanY = 80 - bounds.minY * nextScale;
+
+    setCanvasZoom(nextScale, nextPanX, nextPanY);
 }
 
 // Highlight employee and zoom into them
