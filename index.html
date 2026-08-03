@@ -236,6 +236,12 @@
                     <button class="tool-btn tool-danger" id="tool-clear" title="Clear All (ล้างทั้งหมด)"><i data-lucide="trash-2"></i></button>
                 </div>
 
+                <div class="connection-route-toolbar" id="connection-route-toolbar" aria-label="Connection route controls" hidden>
+                    <strong>Line</strong>
+                    <button class="btn btn-secondary" id="btn-reset-connection-route" type="button">Reset Line</button>
+                    <button class="btn btn-secondary" id="btn-reset-all-connection-routes" type="button">Reset All Lines</button>
+                </div>
+
                 <div class="canvas-lock-banner" id="canvas-lock-banner" role="status" aria-live="polite" aria-hidden="true">
                     <i data-lucide="shield-check"></i>
                     <div>
@@ -713,6 +719,7 @@
     <script src="position-persistence.js?v=1"></script>
     <script src="microsoft-sync-ui.js?v=1"></script>
     <script src="dialog-focus.js?v=1"></script>
-    <script src="app.js?v=3.17"></script>
+    <script src="connection-routing.js?v=1"></script>
+    <script src="app.js?v=3.18"></script>
 </body>
 </html>

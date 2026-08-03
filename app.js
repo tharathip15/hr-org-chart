@@ -513,6 +513,8 @@ let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
 let overviewGroupDialogController = null;
 let highlightedConnections = new Set();
+let selectedConnection = null;
+let activeConnectionRouteDrag = null;
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
 let currentScale = 1.0;
@@ -672,6 +674,7 @@ function updateLayoutLockUI() {
     if (typeof updateAnnotationToolbarButtons === "function") {
         updateAnnotationToolbarButtons();
     }
+    updateConnectionRouteToolbar();
     refreshDisplayModeIcons();
 }
 
@@ -736,6 +739,32 @@ function cloneMutationState(value) {
 
 function canEditHr() {
     return authSession?.canEdit === true;
+}
+
+function getConnectionRouteCapabilities() {
+    return ConnectionRouting.getCapabilities({
+        canEdit: canEditHr(),
+        locked: isLayoutLocked,
+        presentation: isPresentationMode
+    });
+}
+
+function getConnectionRouteStoragePosition(childDisplayId) {
+    return positions.find(position => position.id === Number(childDisplayId)) || null;
+}
+
+function isSelectedConnection(parentId, childId) {
+    return selectedConnection?.parentId === Number(parentId)
+        && selectedConnection?.childId === Number(childId);
+}
+
+function updateConnectionRouteToolbar() {
+    const toolbar = document.getElementById("connection-route-toolbar");
+    const capabilities = getConnectionRouteCapabilities();
+    const hasSelection = Boolean(selectedConnection);
+    toolbar.hidden = !capabilities.selectable || !hasSelection;
+    document.getElementById("btn-reset-connection-route").disabled = !hasSelection || !capabilities.resettable;
+    document.getElementById("btn-reset-all-connection-routes").disabled = !capabilities.resettable;
 }
 
 function requireEditorAction({ notify = true } = {}) {
@@ -852,6 +881,8 @@ function applyAuthSession(session) {
     if (appStarted) {
         renderAnnotations();
         if (canEditHr()) setupAnnotationListeners();
+        requestConnectionDraw();
+        updateConnectionRouteToolbar();
     }
 }
 
@@ -2219,6 +2250,27 @@ async function handleImportFileChange(e) {
 
 // Set up UI and canvas event listeners
 function setupEventListeners() {
+    const selectConnectionFromTarget = target => {
+        const hitPath = target.closest(".connection-hit-path");
+        if (!hitPath || !getConnectionRouteCapabilities().selectable) return false;
+        selectedConnection = {
+            parentId: Number(hitPath.dataset.parentId),
+            childId: Number(hitPath.dataset.childId)
+        };
+        requestConnectionDraw();
+        updateConnectionRouteToolbar();
+        return true;
+    };
+
+    svgOverlay.addEventListener("click", event => {
+        selectConnectionFromTarget(event.target);
+    });
+
+    svgOverlay.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (selectConnectionFromTarget(event.target)) event.preventDefault();
+    });
+
     const layoutLockButton = document.getElementById("btn-layout-lock");
     if (layoutLockButton) {
         layoutLockButton.addEventListener("click", toggleLayoutLock);
@@ -2321,7 +2373,13 @@ function setupEventListeners() {
         // Left click only
         if (e.button !== 0) return;
         // Don't drag if clicking buttons, input fields or profile cards
-        if (e.target.closest(".node-card") || e.target.closest("button") || e.target.closest("input") || e.target.closest(".drawer") || e.target.closest(".modal") || e.target.closest(".annotation-card") || e.target.closest(".annotation-text-wrapper")) return;
+        if (e.target.closest(".node-card") || e.target.closest("button") || e.target.closest("input") || e.target.closest(".drawer") || e.target.closest(".modal") || e.target.closest(".annotation-card") || e.target.closest(".annotation-text-wrapper") || e.target.closest(".connection-hit-path") || e.target.closest(".connection-route-handle") || e.target.closest(".connection-route-toolbar")) return;
+
+        if (selectedConnection) {
+            selectedConnection = null;
+            requestConnectionDraw();
+            updateConnectionRouteToolbar();
+        }
         
         isDragging = true;
         viewport.style.cursor = "grabbing";
@@ -3452,7 +3510,10 @@ function renderTree() {
 function drawConnections(renderContext = currentChartRenderContext) {
     svgOverlay.innerHTML = "";
     updateCanvasBounds();
-    if (!renderContext) return;
+    if (!renderContext) {
+        updateConnectionRouteToolbar();
+        return;
+    }
 
     const visibleCards = document.querySelectorAll(".node-card.absolute-card");
     const cardById = new Map();
@@ -3473,6 +3534,9 @@ function drawConnections(renderContext = currentChartRenderContext) {
     });
 
     const minChildYByManager = new Map();
+    const capabilities = getConnectionRouteCapabilities();
+    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    let selectedRouteGeometry = null;
     childrenByManager.forEach((childIds, managerId) => {
         const childYs = childIds
             .map(childId => cardById.get(childId))
@@ -3499,46 +3563,66 @@ function drawConnections(renderContext = currentChartRenderContext) {
         const parentPosition = renderContext.positionByDisplayId.get(visibleManagerId);
         const isVerticalLayout = parentPosition && parentPosition.layoutStyle === "vertical";
 
-        let pathParts;
-        if (isVerticalLayout) {
-            const startX = pLocal.x + pLocal.width / 2;
-            const startY = pLocal.y + pLocal.height;
-            const endX = cLocal.x; // connect to the left edge of the child card
-            const endY = cLocal.y + cLocal.height / 2; // vertical center of the child card
-
-            pathParts = [
-                `M ${startX} ${startY}`,
-                `L ${startX} ${endY}`,
-                `L ${endX} ${endY}`
-            ];
-        } else {
-            const startX = pLocal.x + pLocal.width / 2;
-            const startY = pLocal.y + pLocal.height;
-            const endX = cLocal.x + cLocal.width / 2;
-            const endY = cLocal.y;
-
-            const minChildY = minChildYByManager.get(visibleManagerId) ?? endY;
-            const busY = startY + Math.max(20, (minChildY - startY) / 2);
-
-            pathParts = [
-                `M ${startX} ${startY}`,
-                `L ${startX} ${busY}`,
-                `L ${endX} ${busY}`,
-                `L ${endX} ${endY}`
-            ];
-        }
+        const storagePosition = getConnectionRouteStoragePosition(positionId);
+        const routeGeometry = ConnectionRouting.calculateRoute({
+            parentRect: pLocal,
+            childRect: cLocal,
+            minChildY: minChildYByManager.get(visibleManagerId) ?? cLocal.y,
+            layoutStyle: isVerticalLayout ? "vertical" : "horizontal",
+            parentId: visibleManagerId,
+            route: ConnectionRouting.getScopedRoute(
+                storagePosition?.connectionRoutes,
+                scopeKey,
+                visibleManagerId
+            )
+        });
 
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", pathParts.join(" "));
+        path.setAttribute("d", routeGeometry.pathData);
         path.setAttribute("class", "connection-path");
         path.dataset.parentId = String(visibleManagerId);
         path.dataset.childId = String(positionId);
         
         if (highlightedConnections.has(`${visibleManagerId}-${positionId}`) || highlightedConnections.has(`${position.managerId}-${positionId}`)) {
-            path.setAttribute("class", "connection-path highlighted");
+            path.classList.add("highlighted");
         }
+        const selected = capabilities.selectable && isSelectedConnection(visibleManagerId, positionId);
+        if (selected) path.classList.add("is-selected");
         svgOverlay.appendChild(path);
+
+        if (capabilities.selectable) {
+            const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            hitPath.setAttribute("d", routeGeometry.pathData);
+            hitPath.setAttribute("class", "connection-hit-path");
+            hitPath.dataset.parentId = String(visibleManagerId);
+            hitPath.dataset.childId = String(positionId);
+            hitPath.setAttribute("tabindex", "0");
+            hitPath.setAttribute("role", "button");
+            hitPath.setAttribute("aria-label", `Select reporting line from position ${visibleManagerId} to position ${positionId}`);
+            svgOverlay.appendChild(hitPath);
+        }
+
+        if (selected) {
+            selectedRouteGeometry = { routeGeometry, parentId: visibleManagerId, childId: positionId };
+        }
     });
+    if (selectedRouteGeometry) {
+        const { routeGeometry, parentId, childId } = selectedRouteGeometry;
+        createConnectionRouteHandle("branch", routeGeometry.branchHandle, parentId, childId);
+        createConnectionRouteHandle("lane", routeGeometry.laneHandle, parentId, childId);
+    }
+    updateConnectionRouteToolbar();
+}
+
+function createConnectionRouteHandle(kind, point, parentId, childId) {
+    const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    handle.setAttribute("class", `connection-route-handle is-${kind}`);
+    handle.setAttribute("cx", point.x);
+    handle.setAttribute("cy", point.y);
+    handle.setAttribute("r", 9 / currentScale);
+    handle.dataset.parentId = String(parentId);
+    handle.dataset.childId = String(childId);
+    svgOverlay.appendChild(handle);
 }
 
 function calculateInitialCoordinates(renderContext) {

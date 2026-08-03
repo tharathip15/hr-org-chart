@@ -1004,6 +1004,31 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     stroke-width: 3.5px;
 }
 
+.connection-hit-path {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 18px;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+
+.connection-path.is-selected {
+    stroke: var(--accent-primary);
+    stroke-width: 4px;
+}
+
+.connection-route-handle {
+    fill: #ffffff;
+    stroke: var(--accent-primary);
+    stroke-width: 3px;
+    vector-effect: non-scaling-stroke;
+    pointer-events: all;
+}
+
+.connection-route-handle.is-branch { cursor: ew-resize; }
+.connection-route-handle.is-lane { cursor: ns-resize; }
+body.layout-locked .connection-route-handle { cursor: not-allowed; opacity: 0.55; }
+
 /* Dom Tree Layout styling */
 .tree-container {
     display: flex;
@@ -3185,6 +3210,25 @@ body.role-viewer .detail-drawer-footer {
     background-color: #fee2e2;
     color: #ef4444;
 }
+
+.connection-route-toolbar {
+    position: absolute;
+    top: 68px;
+    left: 20px;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-md);
+}
+
+.connection-route-toolbar[hidden],
+body.role-viewer .connection-route-toolbar,
+body.presentation-mode .connection-route-toolbar { display: none; }
 
 /* Annotation Canvas Elements */
 .annotation-card {
