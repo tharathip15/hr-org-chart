@@ -152,9 +152,10 @@ test("save helpers report persistence failures and delete rolls back partial sav
     }
 
     assert.match(appSource, /async function savePositions\(\)/);
-    assert.match(appSource, /const candidatePositions = arguments\.length > 0 \? arguments\[0\] : positions;/);
+    assert.match(appSource, /const candidatePositions = cloneMutationState\(arguments\.length > 0 \? arguments\[0\] : positions\);/);
+    assert.match(appSource, /const queuedSave = positionsSaveQueue\.then\(run, run\);/);
     assert.match(appSource, /positions = repairedCandidate;/);
-    assert.match(appSource, /confirmMutationState\("positions"\);/);
+    assert.match(appSource, /confirmMutationState\("positions", repairedCandidate\);/);
     assert.match(appSource, /restoreConfirmedMutationState\("positions"\);/);
 
     const deleteEmployeeFunction = appSource.match(

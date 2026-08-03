@@ -8,6 +8,7 @@ await import(new URL("../connection-routing.js", import.meta.url)).catch(error =
 });
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const styleSource = readFileSync(new URL("../style.css", import.meta.url), "utf8");
 
 function extractFunction(name) {
   const marker = `function ${name}(`;
@@ -36,6 +37,7 @@ function extractConnectionRouteDragFunctions() {
     "handleConnectionRoutePointerMove",
     "handleConnectionRoutePointerUp",
     "handleConnectionRoutePointerCancel",
+    "handleConnectionRouteLostPointerCapture",
   ].map(extractFunction).join("\n");
 }
 
@@ -221,12 +223,17 @@ test("reset all removes only the active scope from every position", () => {
 test("dragging a route handle converts viewport coordinates and saves only on pointer-up", async () => {
   const events = [];
   const listeners = new Map();
+  const overlayListeners = new Map();
   const handle = {
     dataset: { parentId: "1", childId: "2" },
     classList: { contains: value => value === "is-branch" },
     closest: selector => selector === ".connection-route-handle" ? handle : null,
+  };
+  const svgOverlay = {
     setPointerCapture: pointerId => events.push(["capture", pointerId]),
     releasePointerCapture: pointerId => events.push(["release", pointerId]),
+    addEventListener: (type, listener) => overlayListeners.set(type, listener),
+    removeEventListener: type => overlayListeners.delete(type),
   };
   const positions = [{
     id: 2,
@@ -257,12 +264,14 @@ test("dragging a route handle converts viewport coordinates and saves only on po
     },
     structuredClone,
     handle,
+    svgOverlay,
     window: {
       addEventListener: (type, listener) => listeners.set(type, listener),
       removeEventListener: type => listeners.delete(type),
     },
     events,
     listeners,
+    overlayListeners,
   });
 
   vm.runInContext(`${extractConnectionRouteDragFunctions()}\n    globalThis.runDrag = async () => {
@@ -275,7 +284,13 @@ test("dragging a route handle converts viewport coordinates and saves only on po
       handleConnectionRoutePointerMove({ pointerId: 7, clientX: 160, clientY: 260 });
       const beforeUp = { routes: structuredClone(positions[0].connectionRoutes), events: structuredClone(events) };
       await handleConnectionRoutePointerUp({ pointerId: 7 });
-      return { beforeUp, routes: positions[0].connectionRoutes, events, listeners: [...listeners.keys()] };
+      return {
+        beforeUp,
+        routes: positions[0].connectionRoutes,
+        events,
+        listeners: [...listeners.keys()],
+        overlayListeners: [...overlayListeners.keys()],
+      };
     };`, context);
 
   const result = JSON.parse(JSON.stringify(await context.runDrag()));
@@ -286,18 +301,24 @@ test("dragging a route handle converts viewport coordinates and saves only on po
     ["stop"], ["prevent"], ["capture", 7], ["redraw"], ["release", 7], ["save", 0], ["redraw"],
   ]);
   assert.deepEqual(result.listeners, []);
+  assert.deepEqual(result.overlayListeners, []);
 });
 
 test("pointer cancel and disappearing edges restore the pre-drag route without saving", async (t) => {
   for (const cancelKind of ["pointercancel", "missing edge"]) {
     await t.test(cancelKind, () => {
       const events = [];
+      const overlayListeners = new Map();
       const handle = {
         dataset: { parentId: "1", childId: "2" },
         classList: { contains: value => value === "is-lane" },
         closest: selector => selector === ".connection-route-handle" ? handle : null,
+      };
+      const svgOverlay = {
         setPointerCapture() {},
         releasePointerCapture() {},
+        addEventListener: (type, listener) => overlayListeners.set(type, listener),
+        removeEventListener: type => overlayListeners.delete(type),
       };
       const positions = [{
         id: 2,
@@ -324,6 +345,8 @@ test("pointer cancel and disappearing edges restore the pre-drag route without s
         structuredClone,
         handle,
         events,
+        svgOverlay,
+        overlayListeners,
         window: { addEventListener() {}, removeEventListener() {} },
       });
       vm.runInContext(`${extractConnectionRouteDragFunctions()}\n        const event = { target: handle, pointerId: 4, clientX: 10, clientY: 20, preventDefault() {}, stopPropagation() {} };
@@ -342,6 +365,131 @@ test("pointer cancel and disappearing edges restore the pre-drag route without s
       assert.equal(result.events.includes("save"), false);
     });
   }
+});
+
+test("lost stable-overlay pointer capture cancels and restores the route", () => {
+  const events = [];
+  const overlayListeners = new Map();
+  const handle = {
+    dataset: { parentId: "1", childId: "2" },
+    classList: { contains: value => value === "is-branch" },
+    closest: selector => selector === ".connection-route-handle" ? handle : null,
+  };
+  const svgOverlay = {
+    setPointerCapture: pointerId => events.push(["capture", pointerId]),
+    releasePointerCapture: pointerId => events.push(["release", pointerId]),
+    addEventListener: (type, listener) => overlayListeners.set(type, listener),
+    removeEventListener: type => overlayListeners.delete(type),
+  };
+  const positions = [{
+    id: 2,
+    connectionRoutes: { Sales: { parentId: 1, branchOffsetX: 10, laneOffsetY: 20 } },
+  }];
+  const context = vm.createContext({
+    ConnectionRouting: globalThis.ConnectionRouting,
+    canvas: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
+    currentScale: 1,
+    selectedDept: "Sales",
+    positions,
+    activeConnectionRouteDrag: null,
+    latestPositionsSavePromise: Promise.resolve(true),
+    currentChartRenderContext: {
+      displayPositionIds: new Set([2]),
+      effectiveManagerByDisplayId: new Map([[2, 1]]),
+    },
+    getConnectionRouteCapabilities: () => ({ draggable: true }),
+    getConnectionRouteStoragePosition: () => positions[0],
+    requestConnectionDraw: () => events.push(["redraw"]),
+    renderTree() {},
+    savePositions: async () => { events.push(["save"]); return true; },
+    structuredClone,
+    handle,
+    svgOverlay,
+    overlayListeners,
+    events,
+    window: { addEventListener() {}, removeEventListener() {} },
+  });
+  vm.runInContext(`${extractConnectionRouteDragFunctions()}\n
+    handleConnectionRoutePointerDown({
+      target: handle, pointerId: 11, clientX: 10, clientY: 20,
+      isPrimary: true, pointerType: "touch", button: 0,
+      preventDefault() {}, stopPropagation() {},
+    });
+    handleConnectionRoutePointerMove({ pointerId: 11, clientX: 50, clientY: 20 });
+    overlayListeners.get("lostpointercapture")({ pointerId: 11 });
+    globalThis.result = {
+      routes: positions[0].connectionRoutes,
+      events,
+      overlayListeners: [...overlayListeners.keys()],
+    };`, context);
+
+  const result = JSON.parse(JSON.stringify(context.result));
+  assert.deepEqual(result.routes, { Sales: { parentId: 1, branchOffsetX: 10, laneOffsetY: 20 } });
+  assert.equal(result.events.some(([type]) => type === "save"), false);
+  assert.deepEqual(result.overlayListeners, []);
+});
+
+test("non-primary, right-button, and second pointers cannot replace an active drag snapshot", () => {
+  const captures = [];
+  const overlayListeners = new Map();
+  const handle = {
+    dataset: { parentId: "1", childId: "2" },
+    classList: { contains: value => value === "is-branch" },
+    closest: selector => selector === ".connection-route-handle" ? handle : null,
+  };
+  const positions = [{
+    id: 2,
+    connectionRoutes: { Sales: { parentId: 1, branchOffsetX: 10, laneOffsetY: 20 } },
+  }];
+  const context = vm.createContext({
+    ConnectionRouting: globalThis.ConnectionRouting,
+    canvas: { getBoundingClientRect: () => ({ left: 0, top: 0 }) },
+    currentScale: 1,
+    selectedDept: "Sales",
+    positions,
+    activeConnectionRouteDrag: null,
+    currentChartRenderContext: {
+      displayPositionIds: new Set([2]),
+      effectiveManagerByDisplayId: new Map([[2, 1]]),
+    },
+    getConnectionRouteCapabilities: () => ({ draggable: true }),
+    getConnectionRouteStoragePosition: () => positions[0],
+    requestConnectionDraw() {},
+    renderTree() {},
+    savePositions: async () => true,
+    structuredClone,
+    handle,
+    svgOverlay: {
+      setPointerCapture: pointerId => captures.push(pointerId),
+      releasePointerCapture() {},
+      addEventListener: (type, listener) => overlayListeners.set(type, listener),
+      removeEventListener: type => overlayListeners.delete(type),
+    },
+    window: { addEventListener() {}, removeEventListener() {} },
+  });
+  vm.runInContext(`${extractConnectionRouteDragFunctions()}\n
+    const down = (pointerId, overrides = {}) => handleConnectionRoutePointerDown({
+      target: handle, pointerId, clientX: pointerId * 10, clientY: 20,
+      isPrimary: true, pointerType: "mouse", button: 0,
+      preventDefault() {}, stopPropagation() {}, ...overrides,
+    });
+    down(1);
+    const firstSnapshot = activeConnectionRouteDrag.previousConnectionRoutes;
+    down(2);
+    down(3, { isPrimary: false, pointerType: "touch" });
+    down(4, { button: 2 });
+    globalThis.result = {
+      pointerId: activeConnectionRouteDrag.pointerId,
+      sameSnapshot: activeConnectionRouteDrag.previousConnectionRoutes === firstSnapshot,
+    };`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.result)), { pointerId: 1, sameSnapshot: true });
+  assert.deepEqual(captures, [1]);
+});
+
+test("route handles disable native touch gestures", () => {
+  const handleRule = styleSource.match(/\.connection-route-handle\s*\{([^}]*)\}/)?.[1] || "";
+  assert.match(handleRule, /touch-action:\s*none/);
 });
 
 test("scoped resets persist candidates once and leave live positions unchanged on failure", async () => {

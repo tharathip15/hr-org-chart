@@ -1023,6 +1023,7 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     stroke-width: 3px;
     vector-effect: non-scaling-stroke;
     pointer-events: all;
+    touch-action: none;
 }
 
 .connection-route-handle.is-branch { cursor: ew-resize; }

@@ -623,6 +623,16 @@ function evaluateMutationSaves(harness) {
   return harness.context.__mutationSaves;
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test("position saves serialize scoped routes and preserve an explicit reset", async () => {
   const harness = createAuthHarness({
     fetchImpl: async () => jsonResponse({ ok: true }),
@@ -671,6 +681,128 @@ test("position saves serialize scoped routes and preserve an explicit reset", as
   );
   assert.deepEqual(resetRoutes, harness.positionRouteSerializationCalls[1].result);
   assert.equal(Object.hasOwn(resetRoutes, "__persistence_serializer__"), true);
+});
+
+test("rapid position candidates persist in order and only the newest response commits live state", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  let requestIndex = 0;
+  const harness = createAuthHarness({
+    fetchImpl: () => [firstResponse.promise, secondResponse.promise][requestIndex++],
+  });
+  harness.api.applyAuthSession({
+    identity: { name: "HR Admin", canEdit: true },
+    csrfToken: "known-csrf",
+  });
+  harness.context.positions = [{ id: 1, title: "Current" }];
+  harness.api.recordConfirmedMutationState("positions");
+  const { savePositions } = evaluateMutationSaves(harness);
+
+  const firstSave = savePositions([{ id: 1, title: "First" }]);
+  const secondSave = savePositions([{ id: 1, title: "Second" }]);
+  await Promise.resolve();
+  assert.equal(harness.fetchCalls.length, 1);
+
+  firstResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await firstSave, true);
+  await Promise.resolve();
+  assert.equal(harness.fetchCalls.length, 2);
+  assert.deepEqual(harness.context.positions, [{ id: 1, title: "Current" }]);
+
+  secondResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await secondSave, true);
+  assert.deepEqual(harness.context.positions, [{ id: 1, title: "Second" }]);
+});
+
+test("a queued reset supersedes an in-flight live drag save without stale commit", async () => {
+  const dragResponse = deferred();
+  const resetResponse = deferred();
+  let requestIndex = 0;
+  const harness = createAuthHarness({
+    fetchImpl: () => [dragResponse.promise, resetResponse.promise][requestIndex++],
+  });
+  harness.api.applyAuthSession({
+    identity: { name: "HR Admin", canEdit: true },
+    csrfToken: "known-csrf",
+  });
+  harness.context.positions = [{
+    id: 2,
+    connectionRoutes: { Sales: { parentId: 1, branchOffsetX: 40, laneOffsetY: 20 } },
+  }];
+  harness.api.recordConfirmedMutationState("positions");
+  const { savePositions } = evaluateMutationSaves(harness);
+
+  const dragSave = savePositions();
+  const resetSave = savePositions([{ id: 2, connectionRoutes: {} }]);
+  await Promise.resolve();
+  assert.equal(harness.fetchCalls.length, 1);
+
+  dragResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await dragSave, true);
+  assert.deepEqual(harness.context.positions[0].connectionRoutes, {
+    Sales: { parentId: 1, branchOffsetX: 40, laneOffsetY: 20 },
+  });
+
+  resetResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await resetSave, true);
+  assert.deepEqual(harness.context.positions[0].connectionRoutes, {});
+});
+
+test("a failed stale save cannot restore over a newer queued live edit", async () => {
+  const staleResponse = deferred();
+  const latestResponse = deferred();
+  let requestIndex = 0;
+  const harness = createAuthHarness({
+    fetchImpl: () => [staleResponse.promise, latestResponse.promise][requestIndex++],
+  });
+  harness.api.applyAuthSession({
+    identity: { name: "HR Admin", canEdit: true },
+    csrfToken: "known-csrf",
+  });
+  harness.context.positions = [{ id: 1, title: "Confirmed" }];
+  harness.api.recordConfirmedMutationState("positions");
+  const { savePositions } = evaluateMutationSaves(harness);
+
+  harness.context.positions = [{ id: 1, title: "First drag" }];
+  const staleSave = savePositions();
+  harness.context.positions = [{ id: 1, title: "Second drag" }];
+  const latestSave = savePositions();
+
+  staleResponse.resolve(jsonResponse({ error: "temporary failure" }, 500));
+  assert.equal(await staleSave, false);
+  assert.deepEqual(harness.context.positions, [{ id: 1, title: "Second drag" }]);
+
+  latestResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await latestSave, true);
+  assert.deepEqual(harness.context.positions, [{ id: 1, title: "Second drag" }]);
+});
+
+test("a failed latest save rolls back to the preceding queued success", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  let requestIndex = 0;
+  const harness = createAuthHarness({
+    fetchImpl: () => [firstResponse.promise, secondResponse.promise][requestIndex++],
+  });
+  harness.api.applyAuthSession({
+    identity: { name: "HR Admin", canEdit: true },
+    csrfToken: "known-csrf",
+  });
+  harness.context.positions = [{ id: 1, title: "Original" }];
+  harness.api.recordConfirmedMutationState("positions");
+  const { savePositions } = evaluateMutationSaves(harness);
+
+  const firstSave = savePositions([{ id: 1, title: "First confirmed" }]);
+  const secondSave = savePositions([{ id: 1, title: "Second rejected" }]);
+  firstResponse.resolve(jsonResponse({ ok: true }));
+  assert.equal(await firstSave, true);
+
+  secondResponse.resolve(jsonResponse({ error: "temporary failure" }, 500));
+  assert.equal(await secondSave, false);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.context.positions)),
+    [{ id: 1, title: "First confirmed" }],
+  );
 });
 
 test("expired Admin card-drag save restores confirmed positions and local backup", async () => {

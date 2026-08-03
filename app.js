@@ -837,13 +837,13 @@ function applyMutationState(collection, value) {
     }
 }
 
-function writeMutationBackup(collection) {
+function writeMutationBackup(collection, state = getCurrentMutationState(collection)) {
     const storageKey = MUTATION_STORAGE_KEYS[collection];
     if (!storageKey) return;
     try {
         localStorage.setItem(
             storageKey,
-            JSON.stringify(getCurrentMutationState(collection))
+            JSON.stringify(state)
         );
     } catch (error) {
         console.warn(`Failed to write ${collection} to localStorage:`, error);
@@ -859,10 +859,10 @@ function renderMutationCollection(collection) {
     if (collection === "positions") renderPositionsList();
 }
 
-function recordConfirmedMutationState(collection) {
+function recordConfirmedMutationState(collection, state = getCurrentMutationState(collection)) {
     confirmedMutationState.set(
         collection,
-        cloneMutationState(getCurrentMutationState(collection))
+        cloneMutationState(state)
     );
 }
 
@@ -895,9 +895,9 @@ function restoreMutationSnapshot(snapshot) {
     renderAnnotations();
 }
 
-function confirmMutationState(collection) {
-    recordConfirmedMutationState(collection);
-    writeMutationBackup(collection);
+function confirmMutationState(collection, state = getCurrentMutationState(collection)) {
+    recordConfirmedMutationState(collection, state);
+    writeMutationBackup(collection, state);
 }
 
 function restoreRejectedMutation(collection, response) {
@@ -1875,13 +1875,32 @@ async function loadPositions() {
 let latestPositionsSavePromise = Promise.resolve(true);
 
 async function savePositions() {
-    const candidatePositions = arguments.length > 0 ? arguments[0] : positions;
+    const candidatePositions = cloneMutationState(arguments.length > 0 ? arguments[0] : positions);
+    const basePositions = cloneMutationState(positions);
+    const sequence = ++positionsSaveSequence;
+    const run = () => persistPositions(candidatePositions, basePositions, sequence);
+    const queuedSave = positionsSaveQueue.then(run, run);
+    positionsSaveQueue = queuedSave.catch(() => false);
+    latestPositionsSavePromise = queuedSave;
+    return queuedSave;
+}
+
+let positionsSaveQueue = Promise.resolve(true);
+let positionsSaveSequence = 0;
+
+function canApplyPositionSave(sequence, basePositions) {
+    return sequence === positionsSaveSequence
+        && JSON.stringify(positions) === JSON.stringify(basePositions);
+}
+
+async function persistPositions(candidatePositions, basePositions, sequence) {
     if (!requireEditorAction({ notify: false })) {
-        restoreConfirmedMutationState("positions");
+        if (canApplyPositionSave(sequence, basePositions)) {
+            restoreConfirmedMutationState("positions");
+        }
         return false;
     }
     setSyncStatus("saving");
-    const currentPositions = positions;
     const normalizedCandidate = normalizePositionsList(candidatePositions);
     const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate);
     const repairedCandidate = saveHierarchyRepair.positions;
@@ -1916,13 +1935,17 @@ async function savePositions() {
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
-        positions = repairedCandidate;
-        confirmMutationState("positions");
+        if (canApplyPositionSave(sequence, basePositions)) {
+            positions = repairedCandidate;
+        }
+        confirmMutationState("positions", repairedCandidate);
         setSyncStatus("success");
         return true;
     } catch (error) {
-        const restored = restoreConfirmedMutationState("positions");
-        if (!restored) positions = currentPositions;
+        if (canApplyPositionSave(sequence, basePositions)) {
+            const restored = restoreConfirmedMutationState("positions");
+            if (!restored) positions = basePositions;
+        }
         console.error("Failed to save positions to database.", error);
         setSyncStatus("error");
         showNotification(
@@ -3687,8 +3710,9 @@ function clearActiveConnectionRouteDrag(restore) {
     window.removeEventListener("pointermove", handleConnectionRoutePointerMove);
     window.removeEventListener("pointerup", handleConnectionRoutePointerUp);
     window.removeEventListener("pointercancel", handleConnectionRoutePointerCancel);
+    drag.captureElement.removeEventListener("lostpointercapture", handleConnectionRouteLostPointerCapture);
     try {
-        drag.handle.releasePointerCapture(drag.pointerId);
+        drag.captureElement.releasePointerCapture(drag.pointerId);
     } catch (error) {}
 
     if (restore) {
@@ -3703,6 +3727,9 @@ function handleConnectionRoutePointerDown(event) {
     event.stopPropagation();
     event.preventDefault();
     if (!getConnectionRouteCapabilities().draggable) return;
+    if (activeConnectionRouteDrag) return;
+    if (event.isPrimary === false) return;
+    if ((event.pointerType === "mouse" || event.pointerType === "pen") && event.button !== 0) return;
 
     const parentId = Number(handle.dataset.parentId);
     const childId = Number(handle.dataset.childId);
@@ -3720,6 +3747,7 @@ function handleConnectionRoutePointerDown(event) {
         storagePosition,
         previousConnectionRoutes: structuredClone(storagePosition.connectionRoutes),
         handle,
+        captureElement: svgOverlay,
         model: ConnectionRouting.beginDrag({
             kind: handle.classList.contains("is-lane") ? "lane" : "branch",
             pointerId: event.pointerId,
@@ -3729,8 +3757,9 @@ function handleConnectionRoutePointerDown(event) {
     };
 
     try {
-        handle.setPointerCapture(event.pointerId);
+        svgOverlay.setPointerCapture(event.pointerId);
     } catch (error) {}
+    svgOverlay.addEventListener("lostpointercapture", handleConnectionRouteLostPointerCapture);
     window.addEventListener("pointermove", handleConnectionRoutePointerMove);
     window.addEventListener("pointerup", handleConnectionRoutePointerUp);
     window.addEventListener("pointercancel", handleConnectionRoutePointerCancel);
@@ -3773,6 +3802,10 @@ function handleConnectionRoutePointerCancel(event) {
     if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
     clearActiveConnectionRouteDrag(true);
     requestConnectionDraw();
+}
+
+function handleConnectionRouteLostPointerCapture(event) {
+    handleConnectionRoutePointerCancel(event);
 }
 
 function calculateInitialCoordinates(renderContext) {
