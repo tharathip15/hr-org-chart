@@ -65,6 +65,11 @@ test("dragging a position captures its complete subtree", () => {
     assert.match(appSource, /dragStartCoordinates\.set\(positionId/);
 });
 
+test("Overview group drag reads member IDs from the grouped render context before capture", () => {
+    assert.match(appSource, /const overviewMembers = isOverallView\(\)[\s\S]*currentChartRenderContext\?\.membersByDisplayId\?\.get\(draggedId\) \|\| \[\]/);
+    assert.match(appSource, /OrgHierarchy\.getOverviewDragPositionIds\(positions, draggedId, overviewMembers\.map\(position => position\.id\)\)/);
+});
+
 test("dragging a subtree applies one snapped delta to every descendant", () => {
     assert.match(appSource, /const rootStart = dragStartCoordinates\.get\(draggedId\);/);
     assert.match(appSource, /const deltaX = snappedX - rootStart\.x;/);

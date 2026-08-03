@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 await import("../hierarchy-utils.js");
 
-const { groupPositionsForOverview, ungroupOverviewPositions } = globalThis.OrgHierarchy;
+const { groupPositionsForOverview, ungroupOverviewPositions, getOverviewDragPositionIds } = globalThis.OrgHierarchy;
 
 const sourcePositions = [
   { id: 75, title: "Logistics Manager", employeeId: 75, managerId: 136, department: "Logistics" },
@@ -108,4 +108,16 @@ test("all real group members map to the visible representative when the configur
   assert.equal(model.displayPositions[0].displayTitle, "Combined");
   assert.equal(model.realToDisplayId.get(75), 183);
   assert.equal(model.realToDisplayId.get(183), 183);
+});
+
+test("group drag includes every member and descendant exactly once", () => {
+  const positions = [
+    { id: 75, managerId: 136 },
+    { id: 183, managerId: 136 },
+    { id: 200, managerId: 75 },
+    { id: 201, managerId: 183 },
+    { id: 202, managerId: 200 }
+  ];
+  const ids = getOverviewDragPositionIds(positions, 75, [75, 183]);
+  assert.deepEqual(ids.sort((a, b) => a - b), [75, 183, 200, 201, 202]);
 });

@@ -36,6 +36,11 @@ test("dragging exposes stationary same-person combine drop zones", () => {
     assert.match(cssSource, /\.combine-drop-zone\s*\{/);
 });
 
+test("Overview dragging never renders or opens structural Combine targets", () => {
+    assert.match(appSource, /function renderCombineDropZones\(draggedPosition\)[\s\S]*if \(isOverallView\(\)\) return;/);
+    assert.match(appSource, /combineTargetId !== null[\s\S]*!isOverallView\(\)/);
+});
+
 test("an overlapping same-person card must leave its starting drop zone before combine activates", () => {
     const { getCombineDropDecision } = alignmentSandbox.AlignmentAssist;
 

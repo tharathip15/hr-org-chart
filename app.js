@@ -5346,6 +5346,7 @@ function clearCombineDropZones() {
 
 function renderCombineDropZones(draggedPosition) {
     clearCombineDropZones();
+    if (isOverallView()) return;
     if (!combineDropZonesOverlay || !draggedPosition) return;
 
     const draggedEmployee = getAssignedEmployee(draggedPosition);
@@ -5502,7 +5503,12 @@ function handleCardDragStart(e) {
     const position = positions.find(position => position.id === draggedId);
     if (!position) return;
 
-    draggedPositionIds = OrgHierarchy.getDescendantPositionIds(positions, draggedId);
+    const overviewMembers = isOverallView()
+        ? currentChartRenderContext?.membersByDisplayId?.get(draggedId) || []
+        : [];
+    draggedPositionIds = overviewMembers.length > 1
+        ? OrgHierarchy.getOverviewDragPositionIds(positions, draggedId, overviewMembers.map(position => position.id))
+        : OrgHierarchy.getDescendantPositionIds(positions, draggedId);
     dragStartCoordinates = new Map();
     draggedPositionIds.forEach(positionId => {
         const draggedPosition = positions.find(candidate => candidate.id === positionId);
@@ -5533,8 +5539,10 @@ function handleCardDragStart(e) {
     cardDragMoved = false;
     dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
     dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
-    renderCombineDropZones(position);
-    captureStartingCombineDropTargets(card);
+    if (!isOverallView()) {
+        renderCombineDropZones(position);
+        captureStartingCombineDropTargets(card);
+    }
 
     window.addEventListener("pointermove", handleCardDragMove);
     window.addEventListener("pointerup", handleCardDragEnd);
@@ -5653,7 +5661,7 @@ function handleCardDragEnd(e) {
     dragDropCombineTargetId = null;
     clearCombineDropZones();
 
-    if (combineTargetId !== null && draggedId !== null && combineTargetId !== draggedId) {
+    if (combineTargetId !== null && !isOverallView() && draggedId !== null && combineTargetId !== draggedId) {
         const targetPos = positions.find(p => p.id === combineTargetId);
         const draggedPos = positions.find(p => p.id === draggedId);
         const emp = draggedPos ? getAssignedEmployee(draggedPos) : null;

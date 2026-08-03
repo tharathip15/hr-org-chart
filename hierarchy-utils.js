@@ -143,6 +143,24 @@
         return result;
     }
 
+    function getOverviewDragPositionIds(sourcePositions, displayPositionId, memberIds) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const memberPositionIds = Array.isArray(memberIds) && memberIds.length > 0
+            ? memberIds
+            : [displayPositionId];
+        const draggedPositionIds = new Set();
+
+        memberPositionIds.forEach(memberId => {
+            getDescendantPositionIds(positions, memberId).forEach(positionId => {
+                draggedPositionIds.add(positionId);
+            });
+        });
+
+        return positions
+            .map(position => toInteger(position.id))
+            .filter(positionId => draggedPositionIds.has(positionId));
+    }
+
     function clearOverviewMetadata(position) {
         const next = { ...position };
         delete next.overviewGroupId;
@@ -484,6 +502,7 @@
         repairEmployeeManagers,
         isPrimaryEmployeePosition,
         getDescendantPositionIds,
+        getOverviewDragPositionIds,
         groupPositionsForOverview,
         ungroupOverviewPositions,
         buildOverviewDisplayModel,
