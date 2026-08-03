@@ -134,3 +134,19 @@ test("branch and lane handles update only their own offset", () => {
     parentId: 10, branchOffsetX: 25, laneOffsetY: 45
   });
 });
+
+test("beginDrag captures an immutable nested snapshot", () => {
+  const startPoint = { x: 100, y: 200 };
+  const route = { parentId: 10, branchOffsetX: 25, laneOffsetY: -15 };
+  const dragState = globalThis.ConnectionRouting.beginDrag({
+    kind: "branch", pointerId: 7, startPoint, route
+  });
+
+  startPoint.x = 900;
+  route.branchOffsetX = 900;
+  assert.throws(() => { dragState.startPoint.x = 900; }, TypeError);
+  assert.throws(() => { dragState.route.branchOffsetX = 900; }, TypeError);
+  assert.deepEqual(globalThis.ConnectionRouting.updateDrag(dragState, { x: 160, y: 260 }), {
+    parentId: 10, branchOffsetX: 85, laneOffsetY: -15
+  });
+});

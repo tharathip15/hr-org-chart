@@ -130,8 +130,8 @@
         return Object.freeze({
             kind: kind === "lane" ? "lane" : "branch",
             pointerId,
-            startPoint: { x: finite(startPoint?.x), y: finite(startPoint?.y) },
-            route: normalizeRoute(route)
+            startPoint: Object.freeze({ x: finite(startPoint?.x), y: finite(startPoint?.y) }),
+            route: Object.freeze(normalizeRoute(route))
         });
     }
 
