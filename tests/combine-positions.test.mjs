@@ -210,12 +210,23 @@ test("Employee Profile exposes Split as a persistent footer action outside the s
 
     assert.match(detailDrawerSource, /class="drawer-footer detail-drawer-footer"/);
     assert.match(detailDrawerSource, /id="btn-split-employee-position"/);
-    assert.match(htmlSource, /href="style\.css\?v=2"/);
-    assert.match(htmlSource, /src="app\.js\?v=3\.14"/);
-    assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(primaryPosition\.id\)/);
+    assert.match(htmlSource, /href="style\.css\?v=3"/);
+    assert.match(htmlSource, /src="app\.js\?v=3\.15"/);
+    assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(selectedPosition\.id\)/);
     assert.match(appSource, /btnSplitEmployeePosition\.addEventListener\("click"/);
     assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);
     assert.match(styleSource, /\.detail-split-action\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
+});
+
+test("Employee Profile separates Overview grouping from real Combine", () => {
+    assert.match(htmlSource, /id="btn-group-overview-positions"/);
+    assert.match(htmlSource, /id="btn-ungroup-overview-positions"/);
+    assert.match(htmlSource, /id="overview-group-modal"/);
+    assert.match(htmlSource, /id="overview-group-title"/);
+    assert.match(htmlSource, /id="overview-group-primary"/);
+    assert.match(appSource, /function openOverviewGroupModal\(/);
+    assert.match(appSource, /OrgHierarchy\.groupPositionsForOverview\(/);
+    assert.match(appSource, /OrgHierarchy\.ungroupOverviewPositions\(/);
 });
 
 test("split preserves the original title as one explicit Overview group", () => {

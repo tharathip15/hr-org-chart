@@ -31,7 +31,7 @@ test("Overview group metadata round-trips through the position notes envelope", 
 test("vacant positions open a lifecycle drawer that can close without deleting history", () => {
     assert.match(htmlSource, /id="position-lifecycle-drawer"/);
     assert.match(htmlSource, /id="btn-close-position"/);
-    assert.match(appSource, /openPositionLifecycleDrawer\(id\)/);
+    assert.match(appSource, /openPositionLifecycleDrawer\(id, \{ source: "chart" \}\)/);
     assert.match(appSource, /position\.status = status/);
     assert.doesNotMatch(
         appSource.slice(appSource.indexOf("async function savePositionLifecycle"), appSource.indexOf("/* Modals: CRUD Form management */")),
@@ -50,4 +50,10 @@ test("future positions use the selected dashed indigo card treatment without a s
     assert.match(appSource, /data-lucide="calendar-days"/);
     assert.match(styleSource, /\.node-card\.position-card-future[\s\S]*?border-style:\s*dashed/);
     assert.doesNotMatch(appSource, /future-status-badge/);
+});
+
+test("chart structural actions are hidden in Overview but Position Management can still Split", () => {
+    assert.match(appSource, /selectedDept !== "All"/);
+    assert.match(appSource, /source === "position-management"/);
+    assert.match(appSource, /showEmployeeDetails\(employee\.id, position\.id\)/);
 });

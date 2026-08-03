@@ -510,6 +510,7 @@ let positions = [];
 let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
 let currentChartRenderContext = null;
+let positionLifecycleDrawerSource = "chart";
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
@@ -2588,6 +2589,14 @@ function setupEventListeners() {
     if (cancelCombineBtn) cancelCombineBtn.addEventListener("click", closeCombinePositionsModal);
     const submitCombineBtn = document.getElementById("btn-submit-combine");
     if (submitCombineBtn) submitCombineBtn.addEventListener("click", handleCombinePositionsSubmit);
+    const closeOverviewGroupBtn = document.getElementById("close-overview-group-modal");
+    if (closeOverviewGroupBtn) closeOverviewGroupBtn.addEventListener("click", closeOverviewGroupModal);
+    const overviewGroupOverlay = document.getElementById("overview-group-modal-overlay");
+    if (overviewGroupOverlay) overviewGroupOverlay.addEventListener("click", closeOverviewGroupModal);
+    const cancelOverviewGroupBtn = document.getElementById("btn-cancel-overview-group");
+    if (cancelOverviewGroupBtn) cancelOverviewGroupBtn.addEventListener("click", closeOverviewGroupModal);
+    const submitOverviewGroupBtn = document.getElementById("btn-submit-overview-group");
+    if (submitOverviewGroupBtn) submitOverviewGroupBtn.addEventListener("click", handleOverviewGroupSubmit);
 
     const closeSplitBtn = document.getElementById("close-split-positions-modal");
     if (closeSplitBtn) closeSplitBtn.addEventListener("click", closeSplitPositionModal);
@@ -2603,7 +2612,24 @@ function setupEventListeners() {
     if (btnSplitEmployeePosition) {
         btnSplitEmployeePosition.addEventListener("click", () => {
             const positionId = parseInt(btnSplitEmployeePosition.dataset.positionId, 10);
-            if (Number.isInteger(positionId)) openSplitPositionModal(positionId);
+            if (Number.isInteger(positionId)) openSplitPositionModal(positionId, { source: "chart" });
+        });
+    }
+    const btnGroupOverviewPositions = document.getElementById("btn-group-overview-positions");
+    if (btnGroupOverviewPositions) {
+        btnGroupOverviewPositions.addEventListener("click", () => {
+            const employeeId = parseInt(btnGroupOverviewPositions.dataset.employeeId, 10);
+            const selectedPositionId = parseInt(btnGroupOverviewPositions.dataset.positionId, 10);
+            if (Number.isInteger(employeeId) && Number.isInteger(selectedPositionId)) {
+                openOverviewGroupModal(employeeId, [selectedPositionId]);
+            }
+        });
+    }
+    const btnUngroupOverviewPositions = document.getElementById("btn-ungroup-overview-positions");
+    if (btnUngroupOverviewPositions) {
+        btnUngroupOverviewPositions.addEventListener("click", () => {
+            const positionId = parseInt(btnUngroupOverviewPositions.dataset.positionId, 10);
+            if (Number.isInteger(positionId)) handleOverviewUngroup(positionId);
         });
     }
     const btnSplitLifecycle = document.getElementById("btn-split-position-lifecycle");
@@ -2612,7 +2638,29 @@ function setupEventListeners() {
             const positionId = parseInt(document.getElementById("position-lifecycle-id").value, 10);
             if (positionId) {
                 closePositionLifecycleDrawer();
-                openSplitPositionModal(positionId);
+                openSplitPositionModal(positionId, { source: positionLifecycleDrawerSource });
+            }
+        });
+    }
+    const btnCombineLifecycle = document.getElementById("btn-combine-position-lifecycle");
+    if (btnCombineLifecycle) {
+        btnCombineLifecycle.addEventListener("click", () => {
+            const employeeId = parseInt(btnCombineLifecycle.dataset.employeeId, 10);
+            const selectedIds = String(btnCombineLifecycle.dataset.positionIds || "")
+                .split(",")
+                .map(Number)
+                .filter(Number.isInteger);
+            if (!Number.isInteger(employeeId)) return;
+            closePositionLifecycleDrawer();
+            openCombinePositionsModal(employeeId, selectedIds, { source: "position-management" });
+        });
+    }
+    const btnOpenPositionActions = document.getElementById("btn-open-position-actions");
+    if (btnOpenPositionActions) {
+        btnOpenPositionActions.addEventListener("click", () => {
+            const positionId = parseInt(document.getElementById("form-position-id").value, 10);
+            if (Number.isInteger(positionId)) {
+                openPositionLifecycleDrawer(positionId, { source: "position-management" });
             }
         });
     }
@@ -3231,16 +3279,16 @@ function wireTreeInteractions(renderContext = currentChartRenderContext) {
                 suppressCardClickId = null;
                 return;
             }
-            const displayPosition = renderContext?.positionByDisplayId.get(id)
+            const position = renderContext?.positionByDisplayId.get(id)
                 || positions.find(position => position.id === id);
-            const members = renderContext?.membersByDisplayId.get(id) || [displayPosition];
-            const representativePosition = members.find(position => position?.id === id) || displayPosition;
+            const members = renderContext?.membersByDisplayId.get(id) || [position];
+            const representativePosition = members.find(position => position?.id === id) || position;
             const employee = representativePosition ? getAssignedEmployee(representativePosition) : null;
 
             if (employee) {
-                showEmployeeDetails(employee.id);
+                showEmployeeDetails(employee.id, position.id);
             } else if (representativePosition) {
-                openPositionLifecycleDrawer(id);
+                openPositionLifecycleDrawer(id, { source: "chart" });
             }
 
             document.querySelectorAll(".node-card").forEach(c => c.classList.remove("selected-focus"));
@@ -3694,9 +3742,50 @@ window.addEventListener("resize", () => {
 
 /* Drawer: Employee Details Profile Slide-out */
 
-function showEmployeeDetails(id) {
+function getEmployeeRealPositions(employee) {
+    if (!employee) return [];
+    return positions.filter(position => {
+        const assignedEmployee = getAssignedEmployee(position);
+        return assignedEmployee && samePerson(assignedEmployee, employee);
+    });
+}
+
+function getEffectiveOverviewManagerId(position) {
+    if (!position) return null;
+    const managerMap = currentChartRenderContext?.effectiveManagerByDisplayId;
+    if (managerMap?.has(position.id)) return managerMap.get(position.id);
+    return position.managerId ?? null;
+}
+
+function getCompatibleOverviewPositions(employeeId, selectedPosition) {
+    if (!selectedPosition) return [];
+    const selectedManagerId = getEffectiveOverviewManagerId(selectedPosition);
+    return positions.filter(position =>
+        position.employeeId === employeeId &&
+        getEffectiveOverviewManagerId(position) === selectedManagerId
+    );
+}
+
+function showEmployeeDetails(id, selectedPositionId = null) {
     const emp = employees.find(e => e.id === id);
     if (!emp) return;
+
+    const employeePositions = getEmployeeRealPositions(emp);
+    const selectedPosition = employeePositions.find(position => position.id === Number(selectedPositionId))
+        || getPrimaryPositionForEmployee(id)
+        || employeePositions[0]
+        || null;
+    const displayPositionId = selectedPosition
+        ? currentChartRenderContext?.realToDisplayId.get(selectedPosition.id) ?? selectedPosition.id
+        : null;
+    const displayPosition = displayPositionId !== null
+        ? currentChartRenderContext?.positionByDisplayId.get(displayPositionId) || selectedPosition
+        : null;
+    const representedPositions = displayPositionId !== null
+        ? currentChartRenderContext?.membersByDisplayId.get(displayPositionId) || (selectedPosition ? [selectedPosition] : [])
+        : [];
+    const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
+    const chartStructuralActionsAllowed = selectedDept !== "All" && canEditHr();
     
     // Add active classes
     document.getElementById("detail-drawer-overlay").classList.add("active");
@@ -3707,20 +3796,43 @@ function showEmployeeDetails(id) {
     document.getElementById("btn-edit-employee").dataset.id = id;
     document.getElementById("btn-delete-employee").dataset.id = id;
     
-    // Derive reporting from the employee's primary assigned position.
-    const primaryPosition = getPrimaryPositionForEmployee(id);
     const btnSplitEmployeePosition = document.getElementById("btn-split-employee-position");
     if (btnSplitEmployeePosition) {
-        btnSplitEmployeePosition.hidden = !primaryPosition;
-        btnSplitEmployeePosition.disabled = !primaryPosition;
-        if (primaryPosition) {
-            btnSplitEmployeePosition.dataset.positionId = String(primaryPosition.id);
+        const canSplit = chartStructuralActionsAllowed && Boolean(selectedPosition);
+        btnSplitEmployeePosition.hidden = !canSplit;
+        btnSplitEmployeePosition.disabled = !canSplit;
+        if (selectedPosition) {
+            btnSplitEmployeePosition.dataset.positionId = String(selectedPosition.id);
         } else {
             delete btnSplitEmployeePosition.dataset.positionId;
         }
     }
-    const parentPosition = primaryPosition && primaryPosition.managerId !== null
-        ? positions.find(position => position.id === primaryPosition.managerId)
+
+    const selectedEmployeeId = selectedPosition?.employeeId ?? id;
+    const compatibleOverviewPositions = getCompatibleOverviewPositions(selectedEmployeeId, selectedPosition);
+    const btnGroupOverviewPositions = document.getElementById("btn-group-overview-positions");
+    if (btnGroupOverviewPositions) {
+        const canGroup = chartStructuralActionsAllowed && compatibleOverviewPositions.length >= 2;
+        btnGroupOverviewPositions.hidden = !canGroup;
+        btnGroupOverviewPositions.disabled = !canGroup;
+        if (selectedPosition) {
+            btnGroupOverviewPositions.dataset.employeeId = String(selectedEmployeeId);
+            btnGroupOverviewPositions.dataset.positionId = String(selectedPosition.id);
+        }
+    }
+
+    const btnUngroupOverviewPositions = document.getElementById("btn-ungroup-overview-positions");
+    if (btnUngroupOverviewPositions) {
+        const canUngroup = chartStructuralActionsAllowed && Boolean(selectedPosition?.overviewGroupId);
+        btnUngroupOverviewPositions.hidden = !canUngroup;
+        btnUngroupOverviewPositions.disabled = !canUngroup;
+        if (selectedPosition) {
+            btnUngroupOverviewPositions.dataset.positionId = String(selectedPosition.id);
+        }
+    }
+
+    const parentPosition = selectedPosition && selectedPosition.managerId !== null
+        ? positions.find(position => position.id === selectedPosition.managerId)
         : null;
     const parentEmployee = parentPosition ? getAssignedEmployee(parentPosition) : null;
     const manager = parentPosition ? {
@@ -3743,8 +3855,8 @@ function showEmployeeDetails(id) {
     ` : `<p style="font-size: 13px; color: var(--text-tertiary); font-style: italic;">No manager (Top level)</p>`;
     
     // Direct reports are child positions, including vacant seats.
-    const reports = primaryPosition
-        ? positions.filter(position => position.managerId === primaryPosition.id).map(position => {
+    const reports = selectedPosition
+        ? positions.filter(position => position.managerId === selectedPosition.id).map(position => {
             const assignedEmployee = getAssignedEmployee(position);
             return {
                 ...position,
@@ -3763,7 +3875,7 @@ function showEmployeeDetails(id) {
         reportsHTML = `
             <div class="reports-list">
                 ${reports.map(rep => `
-                    <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${rep.id})">
+                    <div class="mini-profile-card" ${rep.id ? `onclick="focusAndHighlightEmployee(${rep.id})"` : ""}>
                         ${getAvatarHTML(rep, "avatar-sm")}
                         <div class="mini-profile-info">
                             <h5>${escapeHTML(rep.name)}</h5>
@@ -3775,12 +3887,8 @@ function showEmployeeDetails(id) {
         `;
     }
     
-    // Find sibling positions for the same person (dual-position profile)
-    const siblingPositions = positions
-        .filter(position => {
-            const assignedEmployee = getAssignedEmployee(position);
-            return assignedEmployee && samePerson(assignedEmployee, emp) && position.id !== primaryPosition?.id;
-        })
+    const siblingPositions = employeePositions
+        .filter(position => position.id !== selectedPosition?.id)
         .map(position => {
             const assignedEmployee = getAssignedEmployee(position);
             const parent = position.managerId !== null
@@ -3788,7 +3896,8 @@ function showEmployeeDetails(id) {
                 : null;
             return {
                 ...position,
-                id: assignedEmployee.id,
+                positionId: position.id,
+                employeeId: assignedEmployee.id,
                 name: assignedEmployee.name,
                 role: getPositionTitle(position),
                 department: getPositionDepartment(position),
@@ -3799,6 +3908,11 @@ function showEmployeeDetails(id) {
         });
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
+        const combineButtonHTML = chartStructuralActionsAllowed && employeePositions.length >= 2 ? `
+            <button type="button" class="btn btn-danger" id="btn-open-combine-modal" style="margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
+                <i data-lucide="combine"></i> Combine Real Positions
+            </button>
+        ` : "";
         siblingsHTML = `
             <div>
                 <div class="info-section-title">ตำแหน่งงานอื่น ๆ ของพนักงานคนนี้ (${siblingPositions.length})</div>
@@ -3806,7 +3920,7 @@ function showEmployeeDetails(id) {
                     ${siblingPositions.map(pos => {
                         const mgr = pos.managerName ? { name: pos.managerName } : null;
                         return `
-                            <div class="mini-profile-card" onclick="focusAndHighlightEmployee(${pos.id})">
+                            <div class="mini-profile-card" onclick="showEmployeeDetails(${id}, ${pos.positionId})">
                                 ${getAvatarHTML(pos, "avatar-sm")}
                                 <div class="mini-profile-info">
                                     <h5>${escapeHTML(pos.role)}</h5>
@@ -3816,22 +3930,36 @@ function showEmployeeDetails(id) {
                         `;
                     }).join("")}
                 </div>
-                <button type="button" class="btn btn-primary" id="btn-open-combine-modal" style="margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
-                    <i data-lucide="layers"></i> รวบตำแหน่งงานให้เป็นคนเดียว (Combine Positions)
-                </button>
+                ${combineButtonHTML}
             </div>
         `;
     }
+
+    const overviewGroupHTML = isGroupedOverviewCard ? `
+        <div>
+            <div class="info-section-title">Overview group (${representedPositions.length} real positions)</div>
+            <ul class="overview-group-member-list">
+                ${representedPositions.map(position => `
+                    <li>
+                        <strong>${escapeHTML(getPositionTitle(position))}</strong>
+                        <small>${escapeHTML(getPositionDepartment(position))} • Position #${position.id}</small>
+                    </li>
+                `).join("")}
+            </ul>
+        </div>
+    ` : "";
     
     const body = document.getElementById("detail-drawer-body");
-    const deptClass = getDeptClass(emp.department);
+    const profilePosition = displayPosition || selectedPosition;
+    const profileDepartment = profilePosition ? getPositionDepartment(profilePosition) : emp.department;
+    const deptClass = getDeptClass(profileDepartment);
     
     body.innerHTML = `
         <div class="profile-card-large">
             ${getAvatarHTML(emp, "avatar-lg")}
             <div class="profile-name">${escapeHTML(emp.name)}</div>
-            <div class="profile-role">${escapeHTML(primaryPosition ? getPositionTitle(primaryPosition) : emp.role)}</div>
-            <span class="profile-dept-badge ${deptClass}">${escapeHTML(primaryPosition ? getPositionDepartment(primaryPosition) : emp.department)}</span>
+            <div class="profile-role">${escapeHTML(profilePosition ? getPositionTitle(profilePosition) : emp.role)}</div>
+            <span class="profile-dept-badge ${deptClass}">${escapeHTML(profileDepartment)}</span>
         </div>
         
         <div class="info-section">
@@ -3861,6 +3989,8 @@ function showEmployeeDetails(id) {
             <div class="info-section-title">Direct Reports (${reports.length})</div>
             ${reportsHTML}
         </div>
+
+        ${overviewGroupHTML}
         
         ${siblingsHTML}
         
@@ -3875,7 +4005,10 @@ function showEmployeeDetails(id) {
     const btnCombine = document.getElementById("btn-open-combine-modal");
     if (btnCombine) {
         btnCombine.addEventListener("click", () => {
-            openCombinePositionsModal(id);
+            const selectedIds = selectedPosition
+                ? [selectedPosition.id, ...employeePositions.filter(position => position.id !== selectedPosition.id).map(position => position.id)]
+                : employeePositions.map(position => position.id);
+            openCombinePositionsModal(id, selectedIds, { source: "chart" });
         });
     }
 
@@ -3926,15 +4059,19 @@ function setPositionLifecycleStatus(status, force = false) {
     return true;
 }
 
-function openPositionLifecycleDrawer(positionId) {
+function openPositionLifecycleDrawer(positionId, options = {}) {
     const position = positions.find(candidate => candidate.id === positionId);
     if (!position) return;
 
+    const source = options.source === "position-management" ? "position-management" : "chart";
+    positionLifecycleDrawerSource = source;
     const employee = getAssignedEmployee(position);
+    const employeePositions = getEmployeeRealPositions(employee);
     const manager = position.managerId !== null
         ? positions.find(candidate => candidate.id === position.managerId)
         : null;
     const isViewer = document.body.classList.contains("role-viewer");
+    const structuralActionsAllowed = source === "position-management" || selectedDept !== "All";
 
     document.getElementById("position-lifecycle-id").value = position.id;
     document.getElementById("position-lifecycle-title").innerText = getPositionTitle(position);
@@ -3959,6 +4096,31 @@ function openPositionLifecycleDrawer(positionId) {
     document.getElementById("btn-close-position").title = employee
         ? "Unassign the employee before closing this position"
         : "Mark this vacant position as closed";
+
+    const btnSplitLifecycle = document.getElementById("btn-split-position-lifecycle");
+    if (btnSplitLifecycle) {
+        const canSplit = !isViewer && structuralActionsAllowed;
+        btnSplitLifecycle.hidden = !canSplit;
+        btnSplitLifecycle.disabled = !canSplit;
+    }
+
+    const btnCombineLifecycle = document.getElementById("btn-combine-position-lifecycle");
+    if (btnCombineLifecycle) {
+        const canCombine = !isViewer && structuralActionsAllowed && Boolean(employee) && employeePositions.length >= 2;
+        btnCombineLifecycle.hidden = !canCombine;
+        btnCombineLifecycle.disabled = !canCombine;
+        if (canCombine) {
+            const selectedIds = [
+                position.id,
+                ...employeePositions.filter(candidate => candidate.id !== position.id).map(candidate => candidate.id)
+            ];
+            btnCombineLifecycle.dataset.employeeId = String(employee.id);
+            btnCombineLifecycle.dataset.positionIds = selectedIds.join(",");
+        } else {
+            delete btnCombineLifecycle.dataset.employeeId;
+            delete btnCombineLifecycle.dataset.positionIds;
+        }
+    }
 
     closeDetailDrawer();
     document.getElementById("position-lifecycle-drawer-overlay").classList.add("active");
@@ -4271,6 +4433,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-effective-date").value = "";
     document.getElementById("form-position-status-reason").value = "";
     document.getElementById("btn-delete-position").disabled = true;
+    document.getElementById("btn-open-position-actions").disabled = true;
     populatePositionFormLookups(editId);
 
     if (editId === null) return;
@@ -4287,6 +4450,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-effective-date").value = PositionLifecycle.normalizeDate(position.effectiveDate);
     document.getElementById("form-position-status-reason").value = position.statusReason || "";
     document.getElementById("btn-delete-position").disabled = false;
+    document.getElementById("btn-open-position-actions").disabled = false;
 
     const manager = positions.find(candidate => candidate.id === position.managerId);
     document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
@@ -4324,8 +4488,199 @@ function closeEmployeeManagementModal() {
     document.getElementById("employee-management-modal").classList.remove("active");
 }
 
-function openCombinePositionsModal(employeeId, selectedPosIds = null) {
+function updateOverviewGroupPrimaryOptions(preferredPositionId = null) {
+    const primarySelect = document.getElementById("overview-group-primary");
+    if (!primarySelect) return;
+
+    const checkedPositionIds = Array.from(document.querySelectorAll(".overview-group-position-checkbox:checked"))
+        .map(checkbox => parseInt(checkbox.dataset.positionId, 10))
+        .filter(Number.isInteger);
+    const currentValue = Number(preferredPositionId) || parseInt(primarySelect.value, 10);
+
+    primarySelect.innerHTML = checkedPositionIds.map(positionId => {
+        const position = positions.find(candidate => candidate.id === positionId);
+        return position
+            ? `<option value="${position.id}">${escapeHTML(getPositionTitle(position))} (#${position.id})</option>`
+            : "";
+    }).join("");
+
+    if (checkedPositionIds.includes(currentValue)) {
+        primarySelect.value = String(currentValue);
+    }
+}
+
+function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
+    if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
+    if (selectedDept === "All") return false;
+
+    const employee = employees.find(candidate => candidate.id === employeeId);
+    if (!employee) return false;
+
+    const requestedIds = [...new Set(selectedPositionIds.map(Number).filter(Number.isInteger))];
+    const selectedPosition = positions.find(position =>
+        requestedIds.includes(position.id) && position.employeeId === employeeId
+    ) || positions.find(position => position.employeeId === employeeId);
+    if (!selectedPosition) return false;
+
+    const compatiblePositions = getCompatibleOverviewPositions(employeeId, selectedPosition);
+    if (compatiblePositions.length < 2) {
+        showNotification("At least two positions with the same employee and reporting manager are required.", "error");
+        return false;
+    }
+
+    const existingGroupId = selectedPosition.overviewGroupId || "";
+    const existingGroupMemberIds = existingGroupId
+        ? positions.filter(position => position.overviewGroupId === existingGroupId).map(position => position.id)
+        : [];
+    const preselectedIds = new Set([...requestedIds, ...existingGroupMemberIds]);
+    if (preselectedIds.size === 0) preselectedIds.add(selectedPosition.id);
+
+    const modal = document.getElementById("overview-group-modal");
+    const employeeName = document.getElementById("overview-group-employee-name");
+    const positionList = document.getElementById("overview-group-position-list");
+    const titleInput = document.getElementById("overview-group-title");
+    const suggestedPrimaryId = selectedPosition.overviewPrimaryPositionId || selectedPosition.id;
+
+    if (employeeName) employeeName.textContent = employee.name;
+    if (positionList) {
+        positionList.innerHTML = compatiblePositions.map(position => `
+            <label class="overview-group-position-option">
+                <input type="checkbox" class="overview-group-position-checkbox" data-position-id="${position.id}" ${preselectedIds.has(position.id) ? "checked" : ""}>
+                <span class="overview-group-position-copy">
+                    <strong>${escapeHTML(getPositionTitle(position))}</strong>
+                    <small>${escapeHTML(getPositionDepartment(position))} • Position #${position.id}</small>
+                </span>
+            </label>
+        `).join("");
+        positionList.querySelectorAll(".overview-group-position-checkbox").forEach(checkbox => {
+            checkbox.addEventListener("change", () => updateOverviewGroupPrimaryOptions());
+        });
+    }
+
+    const suggestedPositions = compatiblePositions.filter(position => preselectedIds.has(position.id));
+    const suggestedTitles = (suggestedPositions.length >= 2 ? suggestedPositions : compatiblePositions)
+        .map(position => getPositionTitle(position));
+    if (titleInput) {
+        titleInput.value = selectedPosition.overviewGroupTitle
+            || (EmployeeDirectory.suggestCombinedTitle
+                ? EmployeeDirectory.suggestCombinedTitle(suggestedTitles)
+                : suggestedTitles.join(" & "));
+    }
+
+    if (modal) {
+        modal.dataset.employeeId = String(employeeId);
+        modal.dataset.selectedPositionId = String(selectedPosition.id);
+    }
+    updateOverviewGroupPrimaryOptions(suggestedPrimaryId);
+
+    document.getElementById("overview-group-modal-overlay")?.classList.add("active");
+    modal?.classList.add("active");
+    if (window.lucide) window.lucide.createIcons();
+    titleInput?.focus();
+    return true;
+}
+
+function closeOverviewGroupModal() {
+    document.getElementById("overview-group-modal-overlay")?.classList.remove("active");
+    document.getElementById("overview-group-modal")?.classList.remove("active");
+}
+
+function getOverviewGroupErrorMessage(error) {
+    const messages = {
+        need_at_least_two_positions: "Choose at least two real positions.",
+        invalid_primary_id: "Choose a primary position from the selected positions.",
+        missing_title: "Enter a title for the Overview card.",
+        different_employees: "All selected positions must belong to the same employee.",
+        different_managers: "All selected positions must share the same reporting manager.",
+        conflicting_groups: "The selected positions belong to conflicting Overview groups.",
+        invalid_group_id: "This Overview group is no longer available."
+    };
+    return messages[error] || "Could not update the Overview group.";
+}
+
+async function handleOverviewGroupSubmit() {
+    if (!requireEditorAction()) return false;
+    if (document.body.classList.contains("role-viewer")) return false;
+    if (selectedDept === "All") return false;
+
+    const memberIds = Array.from(document.querySelectorAll(".overview-group-position-checkbox:checked"))
+        .map(checkbox => parseInt(checkbox.dataset.positionId, 10))
+        .filter(Number.isInteger);
+    const titleInput = document.getElementById("overview-group-title");
+    const primarySelect = document.getElementById("overview-group-primary");
+    const overviewTitle = titleInput?.value.trim() || "";
+    const primaryPositionId = parseInt(primarySelect?.value, 10);
+
+    if (memberIds.length < 2) {
+        showNotification("Choose at least two real positions.", "error");
+        return false;
+    }
+    if (!overviewTitle) {
+        showNotification("Enter a title for the Overview card.", "error");
+        titleInput?.focus();
+        return false;
+    }
+    if (!Number.isInteger(primaryPositionId) || !memberIds.includes(primaryPositionId)) {
+        showNotification("Choose a primary position from the selected positions.", "error");
+        primarySelect?.focus();
+        return false;
+    }
+
+    const result = OrgHierarchy.groupPositionsForOverview(positions, memberIds, {
+        title: overviewTitle,
+        primaryPositionId
+    });
+    if (!result.changed) {
+        showNotification(getOverviewGroupErrorMessage(result.error), "error");
+        return false;
+    }
+    const saved = await savePositions(result.positions);
+    if (!saved) return false;
+
+    closeOverviewGroupModal();
+    renderAll();
+    requestAnimationFrame(fitToScreen);
+    showNotification(`Grouped ${memberIds.length} positions in Overview.`, "success");
+    return true;
+}
+
+async function handleOverviewUngroup(positionId) {
+    if (!requireEditorAction()) return false;
+    if (document.body.classList.contains("role-viewer")) return false;
+    if (selectedDept === "All") return false;
+
+    const selectedPosition = positions.find(position => position.id === Number(positionId));
+    const groupId = selectedPosition?.overviewGroupId;
+    if (!groupId) {
+        showNotification("This position is not part of an Overview group.", "error");
+        return false;
+    }
+    if (!window.confirm("Ungroup these positions in Overview? Real positions and reporting lines will remain unchanged.")) {
+        return false;
+    }
+
+    const result = OrgHierarchy.ungroupOverviewPositions(positions, groupId);
+    if (!result.changed) {
+        showNotification(getOverviewGroupErrorMessage(result.error), "error");
+        return false;
+    }
+    const saved = await savePositions(result.positions);
+    if (!saved) return false;
+
+    closeDetailDrawer();
+    renderAll();
+    requestAnimationFrame(fitToScreen);
+    showNotification("Overview group removed. Real positions were not changed.", "success");
+    return true;
+}
+
+function openCombinePositionsModal(employeeId, selectedPosIds = null, options = {}) {
+    if (!requireEditorAction()) return false;
+    if (document.body.classList.contains("role-viewer")) return false;
+    const source = options.source === "position-management" ? "position-management" : "chart";
+    const sourceAllowsStructuralAction = source === "position-management" || selectedDept !== "All";
+    if (!sourceAllowsStructuralAction) return false;
 
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return false;
@@ -4341,6 +4696,14 @@ function openCombinePositionsModal(employeeId, selectedPosIds = null) {
     }
 
     const preSelectedSet = selectedPosIds ? new Set(selectedPosIds.map(Number)) : null;
+    if (preSelectedSet) {
+        assignedPositions.sort((left, right) => {
+            const leftIndex = selectedPosIds.map(Number).indexOf(left.id);
+            const rightIndex = selectedPosIds.map(Number).indexOf(right.id);
+            return (leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex)
+                - (rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex);
+        });
+    }
 
     const modal = document.getElementById("combine-positions-modal");
     const nameEl = document.getElementById("combine-employee-name");
@@ -4396,7 +4759,10 @@ function openCombinePositionsModal(employeeId, selectedPosIds = null) {
             .join("");
     }
 
-    if (modal) modal.dataset.employeeId = employeeId;
+    if (modal) {
+        modal.dataset.employeeId = employeeId;
+        modal.dataset.source = source;
+    }
 
     const overlay = document.getElementById("combine-positions-modal-overlay");
     if (overlay) overlay.classList.add("active");
@@ -4413,9 +4779,12 @@ function closeCombinePositionsModal() {
 }
 
 async function handleCombinePositionsSubmit() {
+    if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return;
 
     const modal = document.getElementById("combine-positions-modal");
+    const source = modal?.dataset.source === "position-management" ? "position-management" : "chart";
+    if (source !== "position-management" && selectedDept === "All") return false;
     const employeeId = parseInt(modal?.dataset.employeeId, 10);
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
@@ -4464,16 +4833,22 @@ async function handleCombinePositionsSubmit() {
     closeDetailDrawer();
     closePositionLifecycleDrawer();
     renderAll();
+    if (document.getElementById("position-modal")?.classList.contains("active")) {
+        renderPositionsList();
+        resetPositionForm(primaryId);
+    }
     requestAnimationFrame(fitToScreen);
 
     showNotification(`รวมตำแหน่งเป็น "${newTitle}" เรียบร้อยแล้ว`, "success");
 }
 
-function openSplitPositionModal(positionId) {
+function openSplitPositionModal(positionId, options = {}) {
     if (!requireEditorAction({ notify: false })) {
         showLoginOverlay();
         return false;
     }
+    const source = options.source === "position-management" ? "position-management" : "chart";
+    if (source !== "position-management" && selectedDept === "All") return false;
 
     const pos = positions.find(p => p.id === positionId);
     if (!pos) return false;
@@ -4501,7 +4876,10 @@ function openSplitPositionModal(positionId) {
         initialTitles.forEach(splitTitle => addSplitTitleInput(splitTitle));
     }
 
-    if (modal) modal.dataset.positionId = positionId;
+    if (modal) {
+        modal.dataset.positionId = positionId;
+        modal.dataset.source = source;
+    }
 
     closeDetailDrawer();
     closePositionLifecycleDrawer();
@@ -4575,6 +4953,8 @@ async function handleSplitPositionSubmit() {
 
     const modal = document.getElementById("split-positions-modal");
     if (!modal) return;
+    const source = modal.dataset.source === "position-management" ? "position-management" : "chart";
+    if (source !== "position-management" && selectedDept === "All") return false;
 
     const positionId = parseInt(modal.dataset.positionId, 10);
     if (!positionId) return;
@@ -4600,6 +4980,10 @@ async function handleSplitPositionSubmit() {
     closeDetailDrawer();
     closePositionLifecycleDrawer();
     renderAll();
+    if (document.getElementById("position-modal")?.classList.contains("active")) {
+        renderPositionsList();
+        resetPositionForm(positionId);
+    }
     requestAnimationFrame(fitToScreen);
 
     showNotification(`แยกตำแหน่งสำเร็จเป็น ${splitTitles.length} ตำแหน่ง`, "success");

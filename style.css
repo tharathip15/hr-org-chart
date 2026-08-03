@@ -1471,6 +1471,7 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
 #position-lifecycle-drawer-overlay {
     background-color: rgba(15, 23, 42, 0.08);
     backdrop-filter: none;
+    z-index: 1020;
 }
 
 /* Form Modal */
@@ -2196,8 +2197,141 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
 }
 
 .detail-split-action[hidden],
+.detail-structural-action[hidden],
+.position-structural-action[hidden],
 body.role-viewer .detail-drawer-footer {
     display: none !important;
+}
+
+.overview-group-modal {
+    width: min(560px, calc(100vw - 24px));
+}
+
+.overview-group-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-height: min(68vh, 620px);
+    overflow-y: auto;
+}
+
+.overview-group-employee-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+}
+
+.overview-group-employee-summary span,
+.overview-group-fieldset p {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.overview-group-employee-summary strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-primary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.overview-group-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.overview-group-fieldset legend {
+    margin-bottom: 5px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.overview-group-fieldset p {
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.overview-group-position-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.overview-group-position-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    cursor: pointer;
+}
+
+.overview-group-position-option input {
+    width: 16px;
+    height: 16px;
+    margin-top: 2px;
+    flex: 0 0 16px;
+    accent-color: var(--accent-primary);
+}
+
+.overview-group-position-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.overview-group-position-copy strong,
+.overview-group-position-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.overview-group-position-copy small {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.overview-group-member-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.overview-group-member-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 11px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+}
+
+.overview-group-member-list strong {
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.overview-group-member-list small {
+    color: var(--text-secondary);
+    font-size: 11px;
 }
 
 .position-row-lifecycle {
@@ -2211,6 +2345,7 @@ body.role-viewer .detail-drawer-footer {
 
 .position-lifecycle-drawer {
     width: min(390px, 100vw);
+    z-index: 1030;
 }
 
 .position-lifecycle-drawer-body {
@@ -2386,8 +2521,36 @@ body.role-viewer .detail-drawer-footer {
 }
 
 .position-lifecycle-footer {
+    flex-wrap: wrap;
     justify-content: space-between;
     background: var(--bg-secondary);
+}
+
+.position-lifecycle-footer .btn {
+    min-width: 0;
+}
+
+@media (max-width: 480px) {
+    .detail-drawer-footer {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .detail-drawer-footer .btn,
+    .detail-structural-action,
+    .position-lifecycle-footer .btn,
+    .overview-group-modal-footer .btn {
+        width: 100%;
+    }
+
+    .detail-structural-action {
+        grid-column: 1 / -1;
+    }
+
+    .position-lifecycle-footer,
+    .overview-group-modal-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
 }
 
 .btn-close-position {
@@ -3482,6 +3645,9 @@ body.role-viewer .employee-row-delete,
 body.role-viewer #btn-delete-position,
 body.role-viewer #btn-close-position,
 body.role-viewer #btn-save-position-lifecycle,
+body.role-viewer #btn-split-position-lifecycle,
+body.role-viewer #btn-combine-position-lifecycle,
+body.role-viewer #btn-open-position-actions,
 body.role-viewer .positions-form-card, /* Hide positions form for viewers */
 body.role-viewer #employee-modal .modal-footer button[type="submit"] {
     display: none !important;

@@ -305,8 +305,9 @@ test("employee editing no longer exposes a person-based Reports To control", () 
     assert.doesNotMatch(appSource, /employees\[empIndex\]\.managerId = managerId/);
 });
 
-test("employee detail reporting is derived from position hierarchy", () => {
+test("employee detail reporting follows the selected real position hierarchy", () => {
+    assert.match(appSource, /function showEmployeeDetails\(id, selectedPositionId = null\)/);
     assert.match(appSource, /getPrimaryPositionForEmployee\(id\)/);
-    assert.match(appSource, /primaryPosition\.managerId/);
+    assert.match(appSource, /selectedPosition\.managerId/);
     assert.match(appSource, /Reports To Position/);
 });
