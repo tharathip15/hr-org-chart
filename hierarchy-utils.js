@@ -278,6 +278,7 @@
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
             : [];
+        const originalPositions = positions.map(position => ({ ...position }));
 
         const targetId = toInteger(positionId);
         if (targetId === null || !positions.some(position => toInteger(position.id) === targetId)) {
@@ -350,8 +351,11 @@
                 primaryPositionId: hasValidExistingGroup ? originalPrimaryId : targetId
             }
         );
+        if (!groupingResult.changed) {
+            return { positions: originalPositions, changed: false, error: groupingResult.error };
+        }
         const repairResult = repairPositionHierarchy(
-            groupingResult.changed ? groupingResult.positions : positions
+            groupingResult.positions
         );
 
         return {

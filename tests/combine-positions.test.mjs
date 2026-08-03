@@ -239,3 +239,32 @@ test("real Combine clears presentation grouping from the survivor", () => {
   assert.equal(result.positions.length, 1);
   assert.equal(result.positions[0].overviewGroupId, undefined);
 });
+
+test("split rejects an established Overview group with incompatible expanded members", () => {
+  const sourcePositions = [
+    {
+      id: 75,
+      title: "Logistics and Procurement Manager",
+      employeeId: 75,
+      managerId: 136,
+      overviewGroupId: "overview-75",
+      overviewGroupTitle: "Logistics and Procurement Manager",
+      overviewPrimaryPositionId: 75
+    },
+    {
+      id: 183,
+      title: "Procurement Manager",
+      employeeId: 75,
+      managerId: 140,
+      overviewGroupId: "overview-75",
+      overviewGroupTitle: "Logistics and Procurement Manager",
+      overviewPrimaryPositionId: 75
+    }
+  ];
+
+  const result = OrgHierarchy.splitPosition(sourcePositions, 75, ["Logistics Manager", "Purchasing Manager"]);
+
+  assert.equal(result.changed, false);
+  assert.equal(result.error, "different_managers");
+  assert.deepEqual(result.positions, sourcePositions);
+});
