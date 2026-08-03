@@ -556,7 +556,7 @@
 
     <!-- Overview Group Modal -->
     <div class="modal-overlay" id="overview-group-modal-overlay"></div>
-    <div class="modal overview-group-modal" id="overview-group-modal" role="dialog" aria-modal="true" aria-labelledby="overview-group-modal-title" aria-hidden="true" inert>
+    <div class="modal overview-group-modal" id="overview-group-modal" role="dialog" aria-modal="true" aria-labelledby="overview-group-modal-title" aria-hidden="true" tabindex="-1" inert>
         <div class="modal-header">
             <h3 id="overview-group-modal-title">Group positions in Overview</h3>
             <button type="button" class="close-btn" id="close-overview-group-modal" aria-label="Close Overview group dialog"><i data-lucide="x"></i></button>
@@ -705,12 +705,13 @@
     <!-- Notification system -->
     <div class="notification-container" id="notification-container"></div>
 
-    <script src="hierarchy-utils.js?v=1"></script>
+    <script src="hierarchy-utils.js?v=2"></script>
     <script src="employee-utils.js?v=1"></script>
     <script src="position-lifecycle.js?v=1"></script>
     <script src="alignment-utils.js?v=2"></script>
     <script src="position-persistence.js?v=1"></script>
     <script src="microsoft-sync-ui.js?v=1"></script>
-    <script src="app.js?v=3.15"></script>
+    <script src="dialog-focus.js?v=1"></script>
+    <script src="app.js?v=3.16"></script>
 </body>
 </html>

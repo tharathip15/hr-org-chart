@@ -1,5 +1,6 @@
 import { supabase } from "./_helpers/supabase.js";
 import { normalizePhotoRows } from "./_helpers/photo_storage.js";
+import { mapPositionSnapshotToDbRow } from "./_helpers/history_position_mapper.js";
 import { requireEditorWithCsrf } from "./_helpers/session.js";
 
 const MAX_BODY_SIZE = 1024; // Small body limit for POST requests
@@ -116,16 +117,7 @@ async function handlePost(request, response) {
       await supabase.from("positions").delete().neq("id", 0);
       // Upsert historical
       if (positions.length > 0) {
-        const dbRows = positions.map(pos => ({
-          id: parseInt(pos.id, 10),
-          title: pos.title || "",
-          department: pos.department || "",
-          manager_id: pos.managerId ? parseInt(pos.managerId, 10) : null,
-          employee_id: pos.employeeId ? parseInt(pos.employeeId, 10) : null,
-          x: pos.x !== undefined && pos.x !== null ? parseInt(pos.x, 10) : null,
-          y: pos.y !== undefined && pos.y !== null ? parseInt(pos.y, 10) : null,
-          notes: pos.notes || null
-        }));
+        const dbRows = positions.map(mapPositionSnapshotToDbRow);
         const { error: upsertErr } = await supabase.from("positions").upsert(dbRows);
         if (upsertErr) throw upsertErr;
       }

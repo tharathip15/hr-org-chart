@@ -1,5 +1,6 @@
 import { supabase } from "./supabase.js";
 import { isDataImageUrl } from "./photo_storage.js";
+import { mapPositionRowToSnapshot } from "./history_position_mapper.js";
 
 export async function createSnapshotAndLog(action, summary) {
   try {
@@ -41,26 +42,9 @@ export async function createSnapshotAndLog(action, summary) {
       y: row.y
     }));
 
-    // Mapping db properties back to positions schema for client compatibility on restore
-    const positions = (positionsData || []).map(row => {
-      let parsedNotes = {};
-      try {
-        parsedNotes = JSON.parse(row.notes || "{}");
-      } catch (e) {}
-
-      return {
-        id: row.id,
-        title: row.title,
-        department: row.department,
-        managerId: row.manager_id,
-        employeeId: row.employee_id,
-        x: row.x,
-        y: row.y,
-        layoutStyle: parsedNotes.layoutStyle || "horizontal",
-        isManual: !!parsedNotes.isManual,
-        notes: parsedNotes.text || ""
-      };
-    });
+    // Preserve the raw notes envelope so every current and future metadata field
+    // remains restorable without this audit helper needing to understand it.
+    const positions = (positionsData || []).map(mapPositionRowToSnapshot);
 
     const annotations = annotationsData?.value || [];
 

@@ -5,6 +5,65 @@
         return Number.isInteger(parsed) ? parsed : null;
     }
 
+    function getEffectiveManagerId(position, effectiveManagerByRealId) {
+        const positionId = toInteger(position?.id);
+        if (effectiveManagerByRealId instanceof Map) {
+            if (effectiveManagerByRealId.has(position?.id)) {
+                return toInteger(effectiveManagerByRealId.get(position.id));
+            }
+            if (effectiveManagerByRealId.has(positionId)) {
+                return toInteger(effectiveManagerByRealId.get(positionId));
+            }
+        }
+        return toInteger(position?.managerId);
+    }
+
+    function buildEffectiveManagerByRealId(sourcePositions, visiblePositionIds) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const positionById = new Map(
+            positions
+                .map(position => [toInteger(position.id), position])
+                .filter(([positionId]) => positionId !== null)
+        );
+        const visibleIds = visiblePositionIds instanceof Set
+            ? new Set([...visiblePositionIds].map(toInteger).filter(Number.isInteger))
+            : new Set(Array.from(visiblePositionIds || []).map(toInteger).filter(Number.isInteger));
+        const effectiveManagerByRealId = new Map();
+
+        positionById.forEach((position, positionId) => {
+            const visited = new Set([positionId]);
+            let managerId = toInteger(position.managerId);
+
+            while (managerId !== null && !visited.has(managerId)) {
+                if (visibleIds.has(managerId)) break;
+                visited.add(managerId);
+                managerId = toInteger(positionById.get(managerId)?.managerId);
+            }
+
+            effectiveManagerByRealId.set(
+                positionId,
+                managerId !== null && visibleIds.has(managerId) && !visited.has(managerId)
+                    ? managerId
+                    : null
+            );
+        });
+
+        return effectiveManagerByRealId;
+    }
+
+    function getCompatibleOverviewPositions(sourcePositions, employeeId, selectedPositionId, effectiveManagerByRealId) {
+        const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
+        const normalizedEmployeeId = toInteger(employeeId);
+        const selectedPosition = positions.find(position => toInteger(position.id) === toInteger(selectedPositionId));
+        if (!selectedPosition || normalizedEmployeeId === null) return [];
+
+        const selectedManagerId = getEffectiveManagerId(selectedPosition, effectiveManagerByRealId);
+        return positions.filter(position =>
+            toInteger(position.employeeId) === normalizedEmployeeId
+            && getEffectiveManagerId(position, effectiveManagerByRealId) === selectedManagerId
+        );
+    }
+
     function repairPositionHierarchy(sourcePositions) {
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
@@ -205,7 +264,9 @@
         if (employeeIds.size !== 1 || employeeIds.has(null)) {
             return { positions, changed: false, error: "different_employees" };
         }
-        const managerIds = new Set(members.map(position => toInteger(position.managerId)));
+        const managerIds = new Set(members.map(position =>
+            getEffectiveManagerId(position, options.effectiveManagerByRealId)
+        ));
         if (managerIds.size !== 1) {
             return { positions, changed: false, error: "different_managers" };
         }
@@ -259,16 +320,6 @@
             return String(position?.overviewGroupId || "").trim();
         }
 
-        function getEffectiveManagerId(position) {
-            const id = toInteger(position?.id);
-            const value = managers.has(position?.id)
-                ? managers.get(position.id)
-                : managers.has(id)
-                    ? managers.get(id)
-                    : position?.managerId;
-            return toInteger(value);
-        }
-
         all.forEach(position => {
             const groupId = getGroupId(position);
             if (!groupId) return;
@@ -280,7 +331,7 @@
         const validGroupByRealId = new Map();
         groupsById.forEach(members => {
             const employeeIds = new Set(members.map(position => toInteger(position.employeeId)));
-            const managerIds = new Set(members.map(getEffectiveManagerId));
+            const managerIds = new Set(members.map(position => getEffectiveManagerId(position, managers)));
             const titles = new Set(members.map(position => String(position.overviewGroupTitle || "").trim()));
             const primaryIds = new Set(members.map(position => toInteger(position.overviewPrimaryPositionId)));
             const [primaryId] = primaryIds;
@@ -308,6 +359,7 @@
         const displayPositions = [];
         const realToDisplayId = new Map();
         const membersByDisplayId = new Map();
+        const allMembersByDisplayId = new Map();
         const effectiveManagerByDisplayId = new Map();
         const emittedGroups = new Set();
 
@@ -318,6 +370,7 @@
                 displayPositions.push(position);
                 realToDisplayId.set(realId, realId);
                 membersByDisplayId.set(realId, [position]);
+                allMembersByDisplayId.set(realId, [position]);
                 return;
             }
 
@@ -335,12 +388,13 @@
             });
             group.members.forEach(member => realToDisplayId.set(toInteger(member.id), representativeId));
             membersByDisplayId.set(representativeId, [...visibleMembers]);
+            allMembersByDisplayId.set(representativeId, [...group.members]);
         });
 
         visible.forEach(position => {
             const displayId = realToDisplayId.get(toInteger(position.id));
             if (displayId === undefined || effectiveManagerByDisplayId.has(displayId)) return;
-            const realManagerId = getEffectiveManagerId(position);
+            const realManagerId = getEffectiveManagerId(position, managers);
             const displayManagerId = realManagerId === null
                 ? null
                 : realToDisplayId.get(realManagerId) ?? realManagerId;
@@ -353,6 +407,7 @@
             displayPositions,
             realToDisplayId,
             membersByDisplayId,
+            allMembersByDisplayId,
             effectiveManagerByDisplayId
         };
     }
@@ -471,12 +526,22 @@
             originalPrimaryId !== null &&
             existingGroupMembers.some(position => toInteger(position.id) === originalPrimaryId)
         );
+        const effectiveManagerByRealId = options.effectiveManagerByRealId instanceof Map
+            ? new Map(options.effectiveManagerByRealId)
+            : null;
+        if (effectiveManagerByRealId) {
+            const sourceEffectiveManagerId = getEffectiveManagerId(primaryPosition, effectiveManagerByRealId);
+            createdPositions.forEach(position => {
+                effectiveManagerByRealId.set(toInteger(position.id), sourceEffectiveManagerId);
+            });
+        }
         const groupingResult = groupPositionsForOverview(
             positions,
             [targetId, ...createdPositions.map(position => toInteger(position.id))],
             {
                 title: hasValidExistingGroup ? originalGroupTitle : originalTitle,
-                primaryPositionId: hasValidExistingGroup ? originalPrimaryId : targetId
+                primaryPositionId: hasValidExistingGroup ? originalPrimaryId : targetId,
+                effectiveManagerByRealId
             }
         );
         if (!groupingResult.changed) {
@@ -503,6 +568,8 @@
         isPrimaryEmployeePosition,
         getDescendantPositionIds,
         getOverviewDragPositionIds,
+        buildEffectiveManagerByRealId,
+        getCompatibleOverviewPositions,
         groupPositionsForOverview,
         ungroupOverviewPositions,
         buildOverviewDisplayModel,

@@ -66,8 +66,17 @@ test("dragging a position captures its complete subtree", () => {
 });
 
 test("Overview group drag reads member IDs from the grouped render context before capture", () => {
-    assert.match(appSource, /const overviewMembers = isOverallView\(\)[\s\S]*currentChartRenderContext\?\.membersByDisplayId\?\.get\(draggedId\) \|\| \[\]/);
+    assert.match(appSource, /const overviewMembers = isOverallView\(\)[\s\S]*currentChartRenderContext\?\.allMembersByDisplayId\?\.get\(draggedId\) \|\| \[\]/);
     assert.match(appSource, /OrgHierarchy\.getOverviewDragPositionIds\(positions, draggedId, overviewMembers\.map\(position => position\.id\)\)/);
+});
+
+test("Overview profile details use every valid group member including lifecycle-hidden members", () => {
+    const profileSource = appSource.slice(
+        appSource.indexOf("function showEmployeeDetails"),
+        appSource.indexOf("function closeDetailDrawer")
+    );
+
+    assert.match(profileSource, /currentChartRenderContext\?\.allMembersByDisplayId\.get\(displayPositionId\)/);
 });
 
 test("Overview group drag gives hidden members representative-card start coordinates", () => {

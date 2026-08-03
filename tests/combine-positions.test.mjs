@@ -211,7 +211,7 @@ test("Employee Profile exposes Split as a persistent footer action outside the s
     assert.match(detailDrawerSource, /class="drawer-footer detail-drawer-footer"/);
     assert.match(detailDrawerSource, /id="btn-split-employee-position"/);
     assert.match(htmlSource, /href="style\.css\?v=3"/);
-    assert.match(htmlSource, /src="app\.js\?v=3\.15"/);
+    assert.match(htmlSource, /src="app\.js\?v=3\.16"/);
     assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(selectedPosition\.id\)/);
     assert.match(appSource, /btnSplitEmployeePosition\.addEventListener\("click"/);
     assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);
@@ -229,7 +229,7 @@ test("Employee Profile separates Overview grouping from real Combine", () => {
     assert.match(appSource, /OrgHierarchy\.ungroupOverviewPositions\(/);
 });
 
-test("Overview Group dialog leaves the keyboard flow while closed and closes on Escape", () => {
+test("Overview Group dialog starts inert and delegates its keyboard lifecycle to the tested controller", () => {
     const modalStart = htmlSource.indexOf('id="overview-group-modal"');
     const modalTag = htmlSource.slice(htmlSource.lastIndexOf("<div", modalStart), htmlSource.indexOf(">", modalStart) + 1);
     const openSource = appSource.slice(
@@ -243,11 +243,10 @@ test("Overview Group dialog leaves the keyboard flow while closed and closes on 
 
     assert.match(modalTag, /aria-hidden="true"/);
     assert.match(modalTag, /\binert\b/);
-    assert.match(openSource, /setAttribute\("aria-hidden", "false"\)/);
-    assert.match(openSource, /removeAttribute\("inert"\)/);
-    assert.match(closeSource, /setAttribute\("aria-hidden", "true"\)/);
-    assert.match(closeSource, /setAttribute\("inert", ""\)/);
-    assert.match(appSource, /overviewGroupModal\?\.classList\.contains\("active"\)[\s\S]*?closeOverviewGroupModal\(\)/);
+    assert.match(modalTag, /tabindex="-1"/);
+    assert.match(appSource, /DialogFocus\?\.createDialogController\(/);
+    assert.match(openSource, /overviewGroupDialogController\?\.open\(\)/);
+    assert.match(closeSource, /overviewGroupDialogController\?\.close\(\)/);
 });
 
 test("split preserves the original title as one explicit Overview group", () => {

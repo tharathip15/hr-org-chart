@@ -48,7 +48,7 @@ test("the login surface has Microsoft and Viewer choices with a header Admin con
   assert.match(indexSource, /id="btn-admin-login"/);
   assert.match(indexSource, /Continue as Viewer/);
   assert.doesNotMatch(indexSource, /id="login-form"|id="login-password"|id="btn-login-submit"/);
-  assert.match(indexSource, /<script src="app\.js\?v=3\.15"><\/script>/);
+  assert.match(indexSource, /<script src="app\.js\?v=3\.16"><\/script>/);
 });
 
 test("every browser HR API call is routed through authenticatedFetch", () => {

@@ -3,12 +3,20 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+await import("../hierarchy-utils.js");
 
 test("hidden lifecycle managers promote visible reports to the nearest visible manager", () => {
-    assert.match(appSource, /function getVisibleReportingManagerId\(position, visiblePositionIds\)/);
-    assert.match(appSource, /PositionLifecycle\.getNearestVisibleManagerId\(position, positions, visiblePositionIds\)/);
+    const positions = [
+        { id: 1, managerId: null },
+        { id: 2, managerId: 1 },
+        { id: 3, managerId: 2 }
+    ];
+    const managers = OrgHierarchy.buildEffectiveManagerByRealId(positions, new Set([1, 3]));
+
+    assert.equal(managers.get(2), 1);
+    assert.equal(managers.get(3), 1);
+    assert.match(appSource, /const overviewEffectiveManagerByRealId = OrgHierarchy\.buildEffectiveManagerByRealId/);
     assert.match(appSource, /const effectiveManagerByRealId = new Map\(realVisiblePositions\.map/);
-    assert.match(appSource, /getVisibleReportingManagerId\(position, realVisibleIds, realPositionById\)/);
     assert.match(appSource, /renderContext\.effectiveManagerByDisplayId\.get\(positionId\)/);
     assert.match(appSource, /const parentCard = cardById\.get\(visibleManagerId\)/);
     assert.match(appSource, /path\.dataset\.parentId = String\(visibleManagerId\)/);

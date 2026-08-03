@@ -511,6 +511,7 @@ let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
 let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
+let overviewGroupDialogController = null;
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
@@ -2590,11 +2591,15 @@ function setupEventListeners() {
     const submitCombineBtn = document.getElementById("btn-submit-combine");
     if (submitCombineBtn) submitCombineBtn.addEventListener("click", handleCombinePositionsSubmit);
     const closeOverviewGroupBtn = document.getElementById("close-overview-group-modal");
-    if (closeOverviewGroupBtn) closeOverviewGroupBtn.addEventListener("click", closeOverviewGroupModal);
     const overviewGroupOverlay = document.getElementById("overview-group-modal-overlay");
-    if (overviewGroupOverlay) overviewGroupOverlay.addEventListener("click", closeOverviewGroupModal);
     const cancelOverviewGroupBtn = document.getElementById("btn-cancel-overview-group");
-    if (cancelOverviewGroupBtn) cancelOverviewGroupBtn.addEventListener("click", closeOverviewGroupModal);
+    overviewGroupDialogController = window.DialogFocus?.createDialogController({
+        documentRef: document,
+        dialog: document.getElementById("overview-group-modal"),
+        overlay: overviewGroupOverlay,
+        closeElements: [closeOverviewGroupBtn, cancelOverviewGroupBtn],
+        initialFocus: document.getElementById("overview-group-title")
+    }) || null;
     const submitOverviewGroupBtn = document.getElementById("btn-submit-overview-group");
     if (submitOverviewGroupBtn) submitOverviewGroupBtn.addEventListener("click", handleOverviewGroupSubmit);
 
@@ -2922,32 +2927,36 @@ function getChartDisplayPositions() {
         : modePositions.filter(position => position.department === selectedDept);
 }
 
-function getVisibleReportingManagerId(position, visiblePositionIds) {
-    const positionById = arguments[2] instanceof Map ? arguments[2] : null;
-    if (positionById) {
-        return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds, positionById);
-    }
-    return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
-}
-
 function buildChartRenderContext() {
     const modePositions = getChartModePositions();
     const realVisiblePositions = selectedDept === "All"
         ? modePositions
         : modePositions.filter(position => position.department === selectedDept);
+    const overviewVisibleIds = new Set(modePositions.map(position => position.id));
     const realVisibleIds = new Set(realVisiblePositions.map(position => position.id));
-    const realPositionById = new Map(positions.map(position => [Number(position.id), position]));
+    const overviewEffectiveManagerByRealId = OrgHierarchy.buildEffectiveManagerByRealId(
+        positions,
+        overviewVisibleIds
+    );
+    const viewEffectiveManagerByRealId = selectedDept === "All"
+        ? overviewEffectiveManagerByRealId
+        : OrgHierarchy.buildEffectiveManagerByRealId(positions, realVisibleIds);
     const effectiveManagerByRealId = new Map(realVisiblePositions.map(position => [
         position.id,
-        getVisibleReportingManagerId(position, realVisibleIds, realPositionById)
+        viewEffectiveManagerByRealId.get(position.id) ?? null
     ]));
 
     const model = selectedDept === "All"
-        ? OrgHierarchy.buildOverviewDisplayModel(positions, realVisiblePositions, effectiveManagerByRealId)
+        ? OrgHierarchy.buildOverviewDisplayModel(
+            positions,
+            realVisiblePositions,
+            overviewEffectiveManagerByRealId
+        )
         : {
             displayPositions: realVisiblePositions,
             realToDisplayId: new Map(realVisiblePositions.map(position => [position.id, position.id])),
             membersByDisplayId: new Map(realVisiblePositions.map(position => [position.id, [position]])),
+            allMembersByDisplayId: new Map(realVisiblePositions.map(position => [position.id, [position]])),
             effectiveManagerByDisplayId: new Map(effectiveManagerByRealId)
         };
     const displayPositionIds = new Set(model.displayPositions.map(position => position.id));
@@ -2962,6 +2971,7 @@ function buildChartRenderContext() {
     return {
         modePositions,
         realVisiblePositions,
+        overviewEffectiveManagerByRealId,
         ...model,
         displayPositionIds,
         positionByDisplayId,
@@ -3755,19 +3765,21 @@ function getEmployeeRealPositions(employee) {
     });
 }
 
-function getEffectiveOverviewManagerId(position) {
-    if (!position) return null;
-    const managerMap = currentChartRenderContext?.effectiveManagerByDisplayId;
-    if (managerMap?.has(position.id)) return managerMap.get(position.id);
-    return position.managerId ?? null;
+function getOverviewEffectiveManagerByRealId() {
+    if (currentChartRenderContext?.overviewEffectiveManagerByRealId instanceof Map) {
+        return currentChartRenderContext.overviewEffectiveManagerByRealId;
+    }
+    const modePositionIds = new Set(getChartModePositions().map(position => position.id));
+    return OrgHierarchy.buildEffectiveManagerByRealId(positions, modePositionIds);
 }
 
 function getCompatibleOverviewPositions(employeeId, selectedPosition) {
     if (!selectedPosition) return [];
-    const selectedManagerId = getEffectiveOverviewManagerId(selectedPosition);
-    return positions.filter(position =>
-        position.employeeId === employeeId &&
-        getEffectiveOverviewManagerId(position) === selectedManagerId
+    return OrgHierarchy.getCompatibleOverviewPositions(
+        positions,
+        employeeId,
+        selectedPosition.id,
+        getOverviewEffectiveManagerByRealId()
     );
 }
 
@@ -3787,7 +3799,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
         ? currentChartRenderContext?.positionByDisplayId.get(displayPositionId) || selectedPosition
         : null;
     const representedPositions = displayPositionId !== null
-        ? currentChartRenderContext?.membersByDisplayId.get(displayPositionId) || (selectedPosition ? [selectedPosition] : [])
+        ? currentChartRenderContext?.allMembersByDisplayId.get(displayPositionId) || (selectedPosition ? [selectedPosition] : [])
         : [];
     const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
     const chartStructuralActionsAllowed = selectedDept !== "All" && canEditHr();
@@ -3953,7 +3965,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
             </ul>
         </div>
     ` : "";
-    
+
     const body = document.getElementById("detail-drawer-body");
     const profilePosition = displayPosition || selectedPosition;
     const profileDepartment = profilePosition ? getPositionDepartment(profilePosition) : emp.department;
@@ -4579,21 +4591,13 @@ function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
     }
     updateOverviewGroupPrimaryOptions(suggestedPrimaryId);
 
-    document.getElementById("overview-group-modal-overlay")?.classList.add("active");
-    modal?.classList.add("active");
-    modal?.setAttribute("aria-hidden", "false");
-    modal?.removeAttribute("inert");
     if (window.lucide) window.lucide.createIcons();
-    titleInput?.focus();
+    overviewGroupDialogController?.open();
     return true;
 }
 
 function closeOverviewGroupModal() {
-    document.getElementById("overview-group-modal-overlay")?.classList.remove("active");
-    const modal = document.getElementById("overview-group-modal");
-    modal?.classList.remove("active");
-    modal?.setAttribute("aria-hidden", "true");
-    modal?.setAttribute("inert", "");
+    overviewGroupDialogController?.close();
 }
 
 function getOverviewGroupErrorMessage(error) {
@@ -4639,7 +4643,8 @@ async function handleOverviewGroupSubmit() {
 
     const result = OrgHierarchy.groupPositionsForOverview(positions, memberIds, {
         title: overviewTitle,
-        primaryPositionId
+        primaryPositionId,
+        effectiveManagerByRealId: getOverviewEffectiveManagerByRealId()
     });
     if (!result.changed) {
         showNotification(getOverviewGroupErrorMessage(result.error), "error");
@@ -4977,7 +4982,9 @@ async function handleSplitPositionSubmit() {
         return;
     }
 
-    const result = OrgHierarchy.splitPosition(positions, positionId, splitTitles);
+    const result = OrgHierarchy.splitPosition(positions, positionId, splitTitles, {
+        effectiveManagerByRealId: getOverviewEffectiveManagerByRealId()
+    });
     if (!result.changed) {
         showNotification("ไม่สามารถแยกตำแหน่งได้: " + (result.error || "unknown_error"), "error");
         return;
@@ -5898,7 +5905,7 @@ function handleCardDragStart(e) {
     if (!position) return;
 
     const overviewMembers = isOverallView()
-        ? currentChartRenderContext?.membersByDisplayId?.get(draggedId) || []
+        ? currentChartRenderContext?.allMembersByDisplayId?.get(draggedId) || []
         : [];
     draggedPositionIds = overviewMembers.length > 1
         ? OrgHierarchy.getOverviewDragPositionIds(positions, draggedId, overviewMembers.map(position => position.id))

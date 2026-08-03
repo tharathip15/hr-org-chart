@@ -121,3 +121,73 @@ test("group drag includes every member and descendant exactly once", () => {
   const ids = getOverviewDragPositionIds(positions, 75, [75, 183]);
   assert.deepEqual(ids.sort((a, b) => a - b), [75, 183, 200, 201, 202]);
 });
+
+test("Overview effective managers resolve every real position against mode-visible IDs", () => {
+  assert.equal(typeof OrgHierarchy.buildEffectiveManagerByRealId, "function");
+  const all = [
+    { id: 1, managerId: null, department: "Executive" },
+    { id: 2, managerId: 1, department: "Logistics", status: "future" },
+    { id: 3, managerId: 2, employeeId: 75, department: "Logistics" },
+    { id: 4, managerId: 1, employeeId: 75, department: "Procurement" },
+    { id: 5, managerId: 2, employeeId: 75, department: "Planning", status: "future" }
+  ];
+
+  const managers = OrgHierarchy.buildEffectiveManagerByRealId(all, new Set([1, 3, 4]));
+
+  assert.equal(managers.size, 5);
+  assert.equal(managers.get(1), null);
+  assert.equal(managers.get(2), 1);
+  assert.equal(managers.get(3), 1);
+  assert.equal(managers.get(4), 1);
+  assert.equal(managers.get(5), 1);
+});
+
+test("group mutation and compatible-position discovery share effective managers across departments", () => {
+  assert.equal(typeof OrgHierarchy.buildEffectiveManagerByRealId, "function");
+  assert.equal(typeof OrgHierarchy.getCompatibleOverviewPositions, "function");
+  const all = [
+    { id: 1, managerId: null, department: "Executive" },
+    { id: 2, managerId: 1, department: "Logistics", status: "future" },
+    { id: 3, managerId: 2, employeeId: 75, department: "Logistics" },
+    { id: 4, managerId: 1, employeeId: 75, department: "Procurement" },
+    { id: 5, managerId: 2, employeeId: 75, department: "Planning", status: "future" },
+    { id: 6, managerId: 1, employeeId: 90, department: "Procurement" }
+  ];
+  const managers = OrgHierarchy.buildEffectiveManagerByRealId(all, new Set([1, 3, 4, 6]));
+
+  assert.deepEqual(
+    OrgHierarchy.getCompatibleOverviewPositions(all, 75, 3, managers).map(position => position.id),
+    [3, 4, 5]
+  );
+  const result = OrgHierarchy.groupPositionsForOverview(all, [3, 4], {
+    title: "Logistics and Procurement Manager",
+    primaryPositionId: 3,
+    effectiveManagerByRealId: managers
+  });
+  assert.equal(result.changed, true);
+});
+
+test("display model separates visible members from every valid hidden group member", () => {
+  assert.equal(typeof OrgHierarchy.buildEffectiveManagerByRealId, "function");
+  const all = [
+    { id: 1, managerId: null, employeeId: 1 },
+    { id: 2, managerId: 1, status: "future" },
+    { id: 3, managerId: 2, employeeId: 75, overviewGroupId: "g", overviewGroupTitle: "Combined", overviewPrimaryPositionId: 3 },
+    { id: 5, managerId: 2, employeeId: 75, status: "future", overviewGroupId: "g", overviewGroupTitle: "Combined", overviewPrimaryPositionId: 3 },
+    { id: 6, managerId: 5, employeeId: 6 }
+  ];
+  const visible = all.filter(position => [1, 3, 6].includes(position.id));
+  const managers = OrgHierarchy.buildEffectiveManagerByRealId(all, new Set(visible.map(position => position.id)));
+  const model = OrgHierarchy.buildOverviewDisplayModel(all, visible, managers);
+
+  assert.deepEqual(model.membersByDisplayId.get(3).map(position => position.id), [3]);
+  assert.deepEqual(model.allMembersByDisplayId.get(3).map(position => position.id), [3, 5]);
+  assert.deepEqual(
+    OrgHierarchy.getOverviewDragPositionIds(
+      all,
+      3,
+      model.allMembersByDisplayId.get(3).map(position => position.id)
+    ),
+    [3, 5, 6]
+  );
+});
