@@ -767,6 +767,43 @@ function updateConnectionRouteToolbar() {
     document.getElementById("btn-reset-all-connection-routes").disabled = !capabilities.resettable;
 }
 
+async function resetSelectedConnectionRoute() {
+    if (!requireEditorAction()) return false;
+    if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
+    if (!selectedConnection) return false;
+
+    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const childId = Number(selectedConnection.childId);
+    const candidatePositions = positions.map(position => position.id === childId
+        ? {
+            ...position,
+            connectionRoutes: ConnectionRouting.clearScopedRoute(position.connectionRoutes, scopeKey)
+        }
+        : position);
+
+    latestPositionsSavePromise = savePositions(candidatePositions);
+    const saved = await latestPositionsSavePromise;
+    if (!saved) return false;
+    requestConnectionDraw();
+    updateConnectionRouteToolbar();
+    return true;
+}
+
+async function resetAllConnectionRoutes() {
+    if (!requireEditorAction()) return false;
+    if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
+    if (!window.confirm("Reset all customized connector lines in this view?")) return false;
+
+    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const candidatePositions = ConnectionRouting.clearScopeFromPositions(positions, scopeKey);
+    latestPositionsSavePromise = savePositions(candidatePositions);
+    const saved = await latestPositionsSavePromise;
+    if (!saved) return false;
+    requestConnectionDraw();
+    updateConnectionRouteToolbar();
+    return true;
+}
+
 function requireEditorAction({ notify = true } = {}) {
     if (canEditHr()) return true;
     if (notify) {
@@ -2271,6 +2308,10 @@ function setupEventListeners() {
         if (selectConnectionFromTarget(event.target)) event.preventDefault();
     });
 
+    svgOverlay.addEventListener("pointerdown", handleConnectionRoutePointerDown);
+    document.getElementById("btn-reset-connection-route").addEventListener("click", resetSelectedConnectionRoute);
+    document.getElementById("btn-reset-all-connection-routes").addEventListener("click", resetAllConnectionRoutes);
+
     const layoutLockButton = document.getElementById("btn-layout-lock");
     if (layoutLockButton) {
         layoutLockButton.addEventListener("click", toggleLayoutLock);
@@ -3622,6 +3663,116 @@ function createConnectionRouteHandle(kind, point, parentId, childId) {
     handle.dataset.parentId = String(parentId);
     handle.dataset.childId = String(childId);
     svgOverlay.appendChild(handle);
+}
+
+function getCanvasPoint(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (clientX - rect.left) / currentScale,
+        y: (clientY - rect.top) / currentScale
+    };
+}
+
+function hasActiveConnectionRouteEdge() {
+    if (!activeConnectionRouteDrag || !currentChartRenderContext) return false;
+    const { childId, parentId } = activeConnectionRouteDrag;
+    return currentChartRenderContext.displayPositionIds.has(childId)
+        && currentChartRenderContext.effectiveManagerByDisplayId.get(childId) === parentId;
+}
+
+function clearActiveConnectionRouteDrag(restore) {
+    const drag = activeConnectionRouteDrag;
+    if (!drag) return;
+
+    window.removeEventListener("pointermove", handleConnectionRoutePointerMove);
+    window.removeEventListener("pointerup", handleConnectionRoutePointerUp);
+    window.removeEventListener("pointercancel", handleConnectionRoutePointerCancel);
+    try {
+        drag.handle.releasePointerCapture(drag.pointerId);
+    } catch (error) {}
+
+    if (restore) {
+        drag.storagePosition.connectionRoutes = structuredClone(drag.previousConnectionRoutes);
+    }
+    activeConnectionRouteDrag = null;
+}
+
+function handleConnectionRoutePointerDown(event) {
+    const handle = event.target.closest(".connection-route-handle");
+    if (!handle) return;
+    event.stopPropagation();
+    event.preventDefault();
+    if (!getConnectionRouteCapabilities().draggable) return;
+
+    const parentId = Number(handle.dataset.parentId);
+    const childId = Number(handle.dataset.childId);
+    const storagePosition = getConnectionRouteStoragePosition(childId);
+    if (!Number.isInteger(parentId) || !Number.isInteger(childId) || !storagePosition) return;
+
+    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const route = ConnectionRouting.getScopedRoute(storagePosition.connectionRoutes, scopeKey, parentId)
+        || { parentId, branchOffsetX: 0, laneOffsetY: 0 };
+    activeConnectionRouteDrag = {
+        parentId,
+        childId,
+        pointerId: event.pointerId,
+        scopeKey,
+        storagePosition,
+        previousConnectionRoutes: structuredClone(storagePosition.connectionRoutes),
+        handle,
+        model: ConnectionRouting.beginDrag({
+            kind: handle.classList.contains("is-lane") ? "lane" : "branch",
+            pointerId: event.pointerId,
+            startPoint: getCanvasPoint(event.clientX, event.clientY),
+            route
+        })
+    };
+
+    try {
+        handle.setPointerCapture(event.pointerId);
+    } catch (error) {}
+    window.addEventListener("pointermove", handleConnectionRoutePointerMove);
+    window.addEventListener("pointerup", handleConnectionRoutePointerUp);
+    window.addEventListener("pointercancel", handleConnectionRoutePointerCancel);
+}
+
+function handleConnectionRoutePointerMove(event) {
+    if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
+    if (!hasActiveConnectionRouteEdge()) {
+        handleConnectionRoutePointerCancel(event);
+        return;
+    }
+
+    const route = ConnectionRouting.updateDrag(
+        activeConnectionRouteDrag.model,
+        getCanvasPoint(event.clientX, event.clientY)
+    );
+    activeConnectionRouteDrag.storagePosition.connectionRoutes = ConnectionRouting.setScopedRoute(
+        activeConnectionRouteDrag.storagePosition.connectionRoutes,
+        activeConnectionRouteDrag.scopeKey,
+        route
+    );
+    requestConnectionDraw();
+}
+
+async function handleConnectionRoutePointerUp(event) {
+    if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
+    if (!hasActiveConnectionRouteEdge()) {
+        handleConnectionRoutePointerCancel(event);
+        return;
+    }
+
+    clearActiveConnectionRouteDrag(false);
+    latestPositionsSavePromise = savePositions();
+    const saved = await latestPositionsSavePromise;
+    if (!saved) renderTree();
+    else requestConnectionDraw();
+}
+
+function handleConnectionRoutePointerCancel(event) {
+    if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
+    clearActiveConnectionRouteDrag(true);
+    requestConnectionDraw();
 }
 
 function calculateInitialCoordinates(renderContext) {
