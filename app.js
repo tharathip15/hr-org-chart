@@ -509,6 +509,7 @@ let employees = [];
 let positions = [];
 let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
+let currentChartRenderContext = null;
 let highlightedConnections = new Set();
 let selectedDept = "All"; // "All" or department name
 let chartMode = "current";
@@ -2767,7 +2768,9 @@ function fitToScreen() {
 function focusAndHighlightEmployee(id) {
     renderAll(); // Full redraw to clear previous filters/highlights
     const assignedPosition = positions.find(position => position.employeeId === id);
-    const targetCardId = assignedPosition ? assignedPosition.id : id;
+    const targetCardId = assignedPosition
+        ? currentChartRenderContext?.realToDisplayId.get(assignedPosition.id) ?? assignedPosition.id
+        : id;
 
     const card = document.querySelector(`.node-card[data-id="${targetCardId}"]`);
     if (!card) {
@@ -2800,10 +2803,16 @@ function focusAndHighlightEmployee(id) {
 // Recursively expand all managers of an employee so they are visible
 function expandPathToEmployee(id) {
     if (selectedDept !== "All") return;
-    let position = positions.find(position => position.employeeId === id) || positions.find(position => position.id === id);
-    while (position && position.managerId) {
-        collapsedNodes.delete(position.managerId);
-        position = positions.find(candidate => candidate.id === position.managerId);
+    const position = positions.find(position => position.employeeId === id) || positions.find(position => position.id === id);
+    let displayPositionId = position
+        ? currentChartRenderContext?.realToDisplayId.get(position.id) ?? position.id
+        : id;
+
+    while (displayPositionId !== null && displayPositionId !== undefined) {
+        const managerId = currentChartRenderContext?.effectiveManagerByDisplayId.get(displayPositionId) ?? null;
+        if (managerId === null) break;
+        collapsedNodes.delete(managerId);
+        displayPositionId = managerId;
     }
 }
 
@@ -2811,11 +2820,24 @@ function isOverallView() {
     return selectedDept === "All";
 }
 
+function isDisplayPositionCollapsed(positionId, renderContext = currentChartRenderContext) {
+    return [...collapsedNodes].some(collapsedPositionId => {
+        const displayPositionId = renderContext?.realToDisplayId.get(collapsedPositionId)
+            ?? collapsedPositionId;
+        return displayPositionId === positionId;
+    });
+}
+
 // Expand / Collapse sub-tree toggle
 function toggleNode(id) {
     if (selectedDept !== "All") return;
-    if (collapsedNodes.has(id)) {
-        collapsedNodes.delete(id);
+    const collapsedMemberIds = [...collapsedNodes].filter(positionId => {
+        const displayPositionId = currentChartRenderContext?.realToDisplayId.get(positionId)
+            ?? positionId;
+        return displayPositionId === id;
+    });
+    if (collapsedMemberIds.length > 0) {
+        collapsedMemberIds.forEach(positionId => collapsedNodes.delete(positionId));
     } else {
         collapsedNodes.add(id);
     }
@@ -2853,18 +2875,54 @@ function getVisibleReportingManagerId(position, visiblePositionIds) {
     return PositionLifecycle.getNearestVisibleManagerId(position, positions, visiblePositionIds);
 }
 
-function getCollapsedHiddenPositionIds(modePositions) {
+function buildChartRenderContext() {
+    const modePositions = getChartModePositions();
+    const realVisiblePositions = selectedDept === "All"
+        ? modePositions
+        : modePositions.filter(position => position.department === selectedDept);
+    const realVisibleIds = new Set(realVisiblePositions.map(position => position.id));
+    const realPositionById = new Map(positions.map(position => [Number(position.id), position]));
+    const effectiveManagerByRealId = new Map(realVisiblePositions.map(position => [
+        position.id,
+        getVisibleReportingManagerId(position, realVisibleIds, realPositionById)
+    ]));
+
+    const model = selectedDept === "All"
+        ? OrgHierarchy.buildOverviewDisplayModel(positions, realVisiblePositions, effectiveManagerByRealId)
+        : {
+            displayPositions: realVisiblePositions,
+            realToDisplayId: new Map(realVisiblePositions.map(position => [position.id, position.id])),
+            membersByDisplayId: new Map(realVisiblePositions.map(position => [position.id, [position]])),
+            effectiveManagerByDisplayId: new Map(effectiveManagerByRealId)
+        };
+    const displayPositionIds = new Set(model.displayPositions.map(position => position.id));
+    const positionByDisplayId = new Map(model.displayPositions.map(position => [position.id, position]));
+    const hasReportsByPositionId = new Set();
+    model.effectiveManagerByDisplayId.forEach(managerId => {
+        if (managerId !== null && displayPositionIds.has(managerId)) {
+            hasReportsByPositionId.add(managerId);
+        }
+    });
+
+    return {
+        modePositions,
+        realVisiblePositions,
+        ...model,
+        displayPositionIds,
+        positionByDisplayId,
+        hasReportsByPositionId
+    };
+}
+
+function getCollapsedHiddenPositionIds(renderContext) {
     const hiddenIds = new Set();
     if (!isOverallView()) return hiddenIds;
 
-    const visibleIds = new Set(modePositions.map(position => position.id));
-    const positionById = new Map(positions.map(position => [Number(position.id), position]));
     const reportsMap = new Map();
-    modePositions.forEach(position => {
-        const managerId = getVisibleReportingManagerId(position, visibleIds, positionById);
+    renderContext.effectiveManagerByDisplayId.forEach((managerId, positionId) => {
         if (managerId === null) return;
         if (!reportsMap.has(managerId)) reportsMap.set(managerId, []);
-        reportsMap.get(managerId).push(position.id);
+        reportsMap.get(managerId).push(positionId);
     });
 
     function markHidden(managerId, visited = new Set()) {
@@ -2877,7 +2935,8 @@ function getCollapsedHiddenPositionIds(modePositions) {
     }
 
     collapsedNodes.forEach(positionId => {
-        if (visibleIds.has(positionId)) markHidden(positionId);
+        const displayPositionId = renderContext.realToDisplayId.get(positionId) ?? positionId;
+        if (renderContext.displayPositionIds.has(displayPositionId)) markHidden(displayPositionId);
     });
     return hiddenIds;
 }
@@ -3160,7 +3219,7 @@ function buildOverviewNodeHTML(employee, reportsMap) {
     return buildNodeHTML(employee, reportsMap, { overview: true });
 }
 
-function wireTreeInteractions() {
+function wireTreeInteractions(renderContext = currentChartRenderContext) {
     lucide.createIcons();
     
     document.querySelectorAll(".node-card").forEach(card => {
@@ -3170,12 +3229,15 @@ function wireTreeInteractions() {
                 suppressCardClickId = null;
                 return;
             }
-            const position = positions.find(position => position.id === id);
-            const employee = position ? getAssignedEmployee(position) : null;
+            const displayPosition = renderContext?.positionByDisplayId.get(id)
+                || positions.find(position => position.id === id);
+            const members = renderContext?.membersByDisplayId.get(id) || [displayPosition];
+            const representativePosition = members.find(position => position?.id === id) || displayPosition;
+            const employee = representativePosition ? getAssignedEmployee(representativePosition) : null;
 
             if (employee) {
                 showEmployeeDetails(employee.id);
-            } else if (position) {
+            } else if (representativePosition) {
                 openPositionLifecycleDrawer(id);
             }
 
@@ -3240,17 +3302,15 @@ function getRenderedPositionCoordinates(position) {
 }
 
 function getPositionCardHTML(position, renderContext = null) {
-    const employee = getAssignedEmployee(position);
+    renderContext = renderContext || currentChartRenderContext;
+    const members = renderContext?.membersByDisplayId.get(position.id) || [position];
+    const representativePosition = members.find(member => member.id === position.id) || position;
+    const employee = getAssignedEmployee(representativePosition);
     const title = getPositionTitle(position);
     const department = getPositionDepartment(position);
     const note = getPositionNote(position);
-    const displayPositions = renderContext?.displayPositions || getChartDisplayPositions();
-    const displayPositionIds = renderContext?.displayPositionIds
-        || new Set(displayPositions.map(candidate => candidate.id));
-    const hasReports = renderContext?.hasReportsByPositionId instanceof Set
-        ? renderContext.hasReportsByPositionId.has(position.id)
-        : displayPositions.some(child => getVisibleReportingManagerId(child, displayPositionIds) === position.id);
-    const isCollapsed = collapsedNodes.has(position.id);
+    const hasReports = renderContext?.hasReportsByPositionId.has(position.id) || false;
+    const isCollapsed = isDisplayPositionCollapsed(position.id, renderContext);
     const isVacant = !employee;
     const isFuturePlan = chartMode === "future" && PositionLifecycle.normalizeStatus(position.status) === "future";
     const displayName = employee ? employee.name : "VACANT";
@@ -3260,7 +3320,7 @@ function getPositionCardHTML(position, renderContext = null) {
     const { x, y } = getRenderedPositionCoordinates(position);
 
     let cardHtml = `
-        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"} ${isFuturePlan ? "position-card-future" : ""}" data-id="${position.id}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
+        <div class="node-card absolute-card ${isVacant ? "position-card-vacant" : "position-card-filled"} ${isFuturePlan ? "position-card-future" : ""}" data-id="${position.id}" data-position-member-count="${members.length}" style="position: absolute; left: ${x}px; top: ${y}px; touch-action: none;">
             ${isFuturePlan ? `<span class="position-future-marker" title="Future position${position.effectiveDate ? ` effective ${escapeHTML(position.effectiveDate)}` : ""}"><i data-lucide="calendar-days"></i></span>` : ""}
             <div class="card-header">
                 ${avatarHTML}
@@ -3296,44 +3356,35 @@ function renderTree() {
     clearAlignmentGuides();
     clearCombineDropZones();
 
-    // 1. Calculate hidden IDs using the hierarchy visible in this chart mode.
-    // A hidden Future/Closed manager does not hide its active descendants.
-    const modePositions = getChartModePositions();
-    const hiddenIds = getCollapsedHiddenPositionIds(modePositions);
+    // Build the lifecycle-aware display hierarchy once. Collapse, cards, layout,
+    // and connections all consume this same context.
+    const renderContext = buildChartRenderContext();
+    const hiddenIds = getCollapsedHiddenPositionIds(renderContext);
+    renderContext.displayPositions = renderContext.displayPositions.filter(
+        position => !hiddenIds.has(position.id)
+    );
+    renderContext.displayPositionIds = new Set(
+        renderContext.displayPositions.map(position => position.id)
+    );
+    currentChartRenderContext = renderContext;
 
-    // 2. Build the display and reporting indexes once for every card in this render.
-    const displayPositions = selectedDept === "All"
-        ? modePositions
-        : modePositions.filter(position => position.department === selectedDept);
-    const visiblePositions = displayPositions.filter(position => !hiddenIds.has(position.id));
-    const displayPositionIds = new Set(displayPositions.map(position => position.id));
-    const positionById = new Map(positions.map(position => [Number(position.id), position]));
-    const hasReportsByPositionId = new Set();
-    displayPositions.forEach(position => {
-        const managerId = getVisibleReportingManagerId(position, displayPositionIds, positionById);
-        if (managerId !== null) hasReportsByPositionId.add(managerId);
-    });
-    const renderContext = {
-        displayPositions,
-        displayPositionIds,
-        positionById,
-        hasReportsByPositionId
-    };
+    // Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes.
+    calculateInitialCoordinates(renderContext);
 
-    // 3. Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes
-    calculateInitialCoordinates();
-
-    // 4. Render cards flat with absolute positioning
-    const html = visiblePositions.map(position => getPositionCardHTML(position, renderContext)).join("");
+    // Render cards flat with absolute positioning.
+    const html = renderContext.displayPositions
+        .map(position => getPositionCardHTML(position, renderContext))
+        .join("");
     treeContainer.innerHTML = html;
-    wireTreeInteractions();
+    wireTreeInteractions(renderContext);
     scheduleConnectionDraw();
     renderAnnotations();
 }
 
-function drawConnections() {
+function drawConnections(renderContext = currentChartRenderContext) {
     svgOverlay.innerHTML = "";
     updateCanvasBounds();
+    if (!renderContext) return;
 
     const visibleCards = document.querySelectorAll(".node-card.absolute-card");
     const cardById = new Map();
@@ -3342,15 +3393,11 @@ function drawConnections() {
         if (Number.isInteger(positionId)) cardById.set(positionId, card);
     });
 
-    const visibleCardIds = new Set(cardById.keys());
-    const positionById = new Map(positions.map(position => [Number(position.id), position]));
-    const effectiveManagerById = new Map();
     const childrenByManager = new Map();
 
-    positions.forEach(position => {
-        if (!visibleCardIds.has(position.id)) return;
-        const visibleManagerId = getVisibleReportingManagerId(position, visibleCardIds, positionById);
-        effectiveManagerById.set(position.id, visibleManagerId);
+    renderContext.displayPositions.forEach(position => {
+        if (!cardById.has(position.id)) return;
+        const visibleManagerId = renderContext.effectiveManagerByDisplayId.get(position.id) ?? null;
         if (visibleManagerId === null) return;
         const childIds = childrenByManager.get(visibleManagerId) || [];
         childIds.push(position.id);
@@ -3368,7 +3415,9 @@ function drawConnections() {
         }
     });
 
-    effectiveManagerById.forEach((visibleManagerId, positionId) => {
+    renderContext.displayPositions.forEach(position => {
+        const positionId = position.id;
+        const visibleManagerId = renderContext.effectiveManagerByDisplayId.get(positionId) ?? null;
         if (visibleManagerId === null) return;
 
         const childCard = cardById.get(positionId);
@@ -3379,8 +3428,7 @@ function drawConnections() {
         const cLocal = getCanvasLocalRect(childCard);
         if (pLocal.width === 0 || pLocal.height === 0 || cLocal.width === 0 || cLocal.height === 0) return;
 
-        const position = positionById.get(positionId);
-        const parentPosition = positionById.get(visibleManagerId);
+        const parentPosition = renderContext.positionByDisplayId.get(visibleManagerId);
         const isVerticalLayout = parentPosition && parentPosition.layoutStyle === "vertical";
 
         let pathParts;
@@ -3418,21 +3466,15 @@ function drawConnections() {
         path.dataset.parentId = String(visibleManagerId);
         path.dataset.childId = String(positionId);
         
-        if (highlightedConnections.has(`${visibleManagerId}-${positionId}`) || highlightedConnections.has(`${position?.managerId}-${positionId}`)) {
+        if (highlightedConnections.has(`${visibleManagerId}-${positionId}`) || highlightedConnections.has(`${position.managerId}-${positionId}`)) {
             path.setAttribute("class", "connection-path highlighted");
         }
         svgOverlay.appendChild(path);
     });
 }
 
-function calculateInitialCoordinates() {
-    // 1. Determine which positions are currently visible (active)
-    const modePositions = getChartModePositions();
-    const hiddenIds = getCollapsedHiddenPositionIds(modePositions);
-    let activePositions = modePositions.filter(pos => !hiddenIds.has(pos.id));
-    if (false && selectedDept !== "All") {
-        activePositions = activePositions.filter(pos => pos.department === selectedDept);
-    }
+function calculateInitialCoordinates(renderContext) {
+    const activePositions = renderContext.displayPositions;
 
     if (activePositions.length === 0) return;
 
@@ -3441,15 +3483,17 @@ function calculateInitialCoordinates() {
         delete position.renderY;
     });
 
-    const activeIds = new Set(activePositions.map(p => p.id));
-    const positionById = new Map(positions.map(position => [Number(position.id), position]));
-    
-    // 2. Find roots within active positions
-    const effectiveManagerIds = new Map(activePositions.map(position => [
-        position.id,
-        getVisibleReportingManagerId(position, activeIds, positionById)
-    ]));
-    const roots = activePositions.filter(position => effectiveManagerIds.get(position.id) === null);
+    activePositions.forEach(position => {
+        delete position.renderX;
+        delete position.renderY;
+    });
+
+    const activeIds = renderContext.displayPositionIds;
+    const positionById = renderContext.positionByDisplayId;
+    const roots = activePositions.filter(position => {
+        const managerId = renderContext.effectiveManagerByDisplayId.get(position.id) ?? null;
+        return managerId === null || !activeIds.has(managerId);
+    });
     
     // Dynamic spacing based on active positions count
     const totalCount = activePositions.length;
@@ -3473,8 +3517,8 @@ function calculateInitialCoordinates() {
 
     const reportsMap = {};
     activePositions.forEach(position => {
-        const managerId = effectiveManagerIds.get(position.id);
-        if (managerId !== null) {
+        const managerId = renderContext.effectiveManagerByDisplayId.get(position.id) ?? null;
+        if (managerId !== null && activeIds.has(managerId)) {
             if (!reportsMap[managerId]) reportsMap[managerId] = [];
             reportsMap[managerId].push(position);
         }

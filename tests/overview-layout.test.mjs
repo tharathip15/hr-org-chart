@@ -5,7 +5,25 @@ import assert from "node:assert/strict";
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 
 test("app supports free-form canvas coordinates calculation", () => {
-    assert.match(appSource, /function calculateInitialCoordinates\(\)/);
+    assert.match(appSource, /function calculateInitialCoordinates\(renderContext\)/);
+});
+
+test("Overview cards, layout, and connections consume one grouped render context", () => {
+    assert.match(appSource, /function buildChartRenderContext\(\)/);
+    assert.match(appSource, /OrgHierarchy\.buildOverviewDisplayModel\(/);
+    assert.match(appSource, /calculateInitialCoordinates\(renderContext\)/);
+    assert.match(appSource, /drawConnections\(renderContext = currentChartRenderContext\)/);
+    assert.match(appSource, /effectiveManagerByDisplayId/);
+    assert.match(appSource, /membersByDisplayId/);
+});
+
+test("department views use every real department position", () => {
+    assert.match(appSource, /selectedDept === "All"[\s\S]*buildOverviewDisplayModel/);
+    assert.match(appSource, /position\.department === selectedDept/);
+});
+
+test("sidebar statistics continue to count real positions", () => {
+    assert.match(appSource, /EmployeeDirectory\.getStaffingSummary\(employees, positions\)/);
 });
 
 test("app renders visible positions with absolute CSS positioning", () => {
