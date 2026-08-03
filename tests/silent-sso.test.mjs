@@ -113,6 +113,7 @@ function createAuthHarness({
   const assignedUrls = [];
   const fetchCalls = [];
   const notifications = [];
+  const positionRouteSerializationCalls = [];
   const elements = new Map();
   let initCalls = 0;
 
@@ -199,7 +200,21 @@ function createAuthHarness({
     },
     PositionPersistence: {
       serializeConnectionRoutes(connectionRoutes, normalizeRoutes) {
-        return normalizeRoutes(connectionRoutes);
+        const normalized = normalizeRoutes(connectionRoutes);
+        const sentinelRoute = Object.values(normalized)[0] || {
+          parentId: 0,
+          branchOffsetX: 0,
+          laneOffsetY: 0,
+        };
+        const result = {
+          ...normalized,
+          __persistence_serializer__: sentinelRoute,
+        };
+        positionRouteSerializationCalls.push({
+          connectionRoutes: structuredClone(connectionRoutes),
+          result: structuredClone(result),
+        });
+        return result;
       },
     },
     setSyncStatus() {},
@@ -252,6 +267,7 @@ function createAuthHarness({
     elements,
     fetchCalls,
     notifications,
+    positionRouteSerializationCalls,
     sessionStorage,
     localStorage,
     context,
@@ -638,12 +654,23 @@ test("position saves serialize scoped routes and preserve an explicit reset", as
     .filter(({ input, options }) => input === "/api/positions" && options.method === "PUT")
     .map(({ options }) => JSON.parse(options.body));
   assert.equal(savedPayloads.length, 2);
-  assert.deepEqual(JSON.parse(savedPayloads[0][0].notes).connectionRoutes, {
-    Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 },
+  assert.deepEqual(JSON.parse(savedPayloads[0][0].notes).connectionRoutes.Sales, {
+    parentId: 12,
+    branchOffsetX: 110,
+    laneOffsetY: -30,
   });
   const resetRoutes = JSON.parse(savedPayloads[1][0].notes).connectionRoutes;
-  assert.deepEqual(resetRoutes, {});
   assert.equal(Object.hasOwn(resetRoutes, "Sales"), false);
+  assert.deepEqual(
+    harness.positionRouteSerializationCalls.map(({ connectionRoutes }) => connectionRoutes),
+    [{ Sales: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 } }, {}]
+  );
+  assert.deepEqual(
+    JSON.parse(savedPayloads[0][0].notes).connectionRoutes,
+    harness.positionRouteSerializationCalls[0].result
+  );
+  assert.deepEqual(resetRoutes, harness.positionRouteSerializationCalls[1].result);
+  assert.equal(Object.hasOwn(resetRoutes, "__persistence_serializer__"), true);
 });
 
 test("expired Admin card-drag save restores confirmed positions and local backup", async () => {
