@@ -1036,6 +1036,7 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     vector-effect: non-scaling-stroke;
     pointer-events: all;
     touch-action: none;
+    cursor: move;
 }
 
 .connection-route-handle.is-both { cursor: move; }
