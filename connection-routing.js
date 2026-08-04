@@ -128,7 +128,7 @@
 
     function beginDrag({ kind, pointerId, startPoint, route } = {}) {
         return Object.freeze({
-            kind: kind === "lane" ? "lane" : "branch",
+            kind: kind === "both" ? "both" : (kind === "lane" ? "lane" : "branch"),
             pointerId,
             startPoint: Object.freeze({ x: finite(startPoint?.x), y: finite(startPoint?.y) }),
             route: Object.freeze(normalizeRoute(route))
@@ -139,10 +139,20 @@
         const route = normalizeRoute(dragState?.route);
         if (!route) return null;
         const start = dragState.startPoint || {};
-        if (dragState.kind === "lane") {
-            return { ...route, laneOffsetY: clampOffset(route.laneOffsetY + finite(canvasPoint?.y) - finite(start.y)) };
+        const deltaX = finite(canvasPoint?.x) - finite(start.x);
+        const deltaY = finite(canvasPoint?.y) - finite(start.y);
+
+        if (dragState.kind === "both") {
+            return {
+                ...route,
+                branchOffsetX: clampOffset(route.branchOffsetX + deltaX),
+                laneOffsetY: clampOffset(route.laneOffsetY + deltaY)
+            };
         }
-        return { ...route, branchOffsetX: clampOffset(route.branchOffsetX + finite(canvasPoint?.x) - finite(start.x)) };
+        if (dragState.kind === "lane") {
+            return { ...route, laneOffsetY: clampOffset(route.laneOffsetY + deltaY) };
+        }
+        return { ...route, branchOffsetX: clampOffset(route.branchOffsetX + deltaX) };
     }
 
     root.ConnectionRouting = Object.freeze({

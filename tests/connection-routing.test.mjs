@@ -172,7 +172,7 @@ test("editing capabilities distinguish selection from mutation while locked", ()
   );
 });
 
-test("branch and lane handles update only their own offset", () => {
+test("branch, lane, and both handles update offset coordinates appropriately", () => {
   const baseRoute = { parentId: 10, branchOffsetX: 25, laneOffsetY: -15 };
   const branchDrag = globalThis.ConnectionRouting.beginDrag({
     kind: "branch", pointerId: 7, startPoint: { x: 100, y: 200 }, route: baseRoute
@@ -180,12 +180,18 @@ test("branch and lane handles update only their own offset", () => {
   const laneDrag = globalThis.ConnectionRouting.beginDrag({
     kind: "lane", pointerId: 8, startPoint: { x: 100, y: 200 }, route: baseRoute
   });
+  const bothDrag = globalThis.ConnectionRouting.beginDrag({
+    kind: "both", pointerId: 9, startPoint: { x: 100, y: 200 }, route: baseRoute
+  });
 
   assert.deepEqual(globalThis.ConnectionRouting.updateDrag(branchDrag, { x: 160, y: 260 }), {
     parentId: 10, branchOffsetX: 85, laneOffsetY: -15
   });
   assert.deepEqual(globalThis.ConnectionRouting.updateDrag(laneDrag, { x: 160, y: 260 }), {
     parentId: 10, branchOffsetX: 25, laneOffsetY: 45
+  });
+  assert.deepEqual(globalThis.ConnectionRouting.updateDrag(bothDrag, { x: 160, y: 260 }), {
+    parentId: 10, branchOffsetX: 85, laneOffsetY: 45
   });
 });
 

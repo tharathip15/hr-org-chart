@@ -3696,7 +3696,7 @@ function drawConnections(renderContext = currentChartRenderContext) {
     if (selectedRouteGeometry) {
         const { routeGeometry, parentId, childId } = selectedRouteGeometry;
         createConnectionRouteHandle("branch", routeGeometry.branchHandle, parentId, childId);
-        createConnectionRouteHandle("lane", routeGeometry.laneHandle, parentId, childId);
+        createConnectionRouteHandle("both", routeGeometry.laneHandle, parentId, childId);
     }
     updateConnectionRouteToolbar();
 }
