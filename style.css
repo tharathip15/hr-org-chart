@@ -895,7 +895,7 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 5;
+    z-index: 12;
 }
 
 /* Visible only while a card or a whole reporting branch is being moved. */
@@ -1004,12 +1004,24 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     stroke-width: 3.5px;
 }
 
+.connection-edge {
+    pointer-events: none;
+}
+
 .connection-hit-path {
     fill: none;
     stroke: transparent;
-    stroke-width: 18px;
+    stroke-width: 28px;
     pointer-events: stroke;
     cursor: pointer;
+}
+
+.connection-edge:hover .connection-path,
+.connection-hit-path:hover ~ .connection-path,
+.connection-hit-path:focus ~ .connection-path {
+    stroke: var(--accent-primary, #6366f1);
+    stroke-width: 3.5px;
+    filter: drop-shadow(0 0 3px rgba(99, 102, 241, 0.5));
 }
 
 .connection-path.is-selected {

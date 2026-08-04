@@ -3659,6 +3659,9 @@ function drawConnections(renderContext = currentChartRenderContext) {
             )
         });
 
+        const edgeGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        edgeGroup.setAttribute("class", "connection-edge");
+
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", routeGeometry.pathData);
         path.setAttribute("class", "connection-path");
@@ -3670,7 +3673,7 @@ function drawConnections(renderContext = currentChartRenderContext) {
         }
         const selected = capabilities.selectable && isSelectedConnection(visibleManagerId, positionId);
         if (selected) path.classList.add("is-selected");
-        svgOverlay.appendChild(path);
+        edgeGroup.appendChild(path);
 
         if (capabilities.selectable) {
             const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -3681,8 +3684,10 @@ function drawConnections(renderContext = currentChartRenderContext) {
             hitPath.setAttribute("tabindex", "0");
             hitPath.setAttribute("role", "button");
             hitPath.setAttribute("aria-label", `Select reporting line from position ${visibleManagerId} to position ${positionId}`);
-            svgOverlay.appendChild(hitPath);
+            edgeGroup.appendChild(hitPath);
         }
+
+        svgOverlay.appendChild(edgeGroup);
 
         if (selected) {
             selectedRouteGeometry = { routeGeometry, parentId: visibleManagerId, childId: positionId };
