@@ -3695,8 +3695,8 @@ function drawConnections(renderContext = currentChartRenderContext) {
     });
     if (selectedRouteGeometry) {
         const { routeGeometry, parentId, childId } = selectedRouteGeometry;
-        createConnectionRouteHandle("both", routeGeometry.branchHandle, parentId, childId);
-        createConnectionRouteHandle("both", routeGeometry.laneHandle, parentId, childId);
+        createConnectionRouteHandle("branch", routeGeometry.branchHandle, parentId, childId);
+        createConnectionRouteHandle("lane", routeGeometry.laneHandle, parentId, childId);
     }
     updateConnectionRouteToolbar();
 }
@@ -3797,7 +3797,7 @@ function handleConnectionRoutePointerDown(event) {
 
     const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
     const route = ConnectionRouting.getScopedRoute(storagePosition.connectionRoutes, scopeKey, parentId)
-        || { parentId, branchOffsetX: 0, laneOffsetY: 0 };
+        || { parentId, branchOffsetX: 0, branchOffsetY: 0, laneOffsetY: 0 };
     activeConnectionRouteDrag = {
         parentId,
         childId,

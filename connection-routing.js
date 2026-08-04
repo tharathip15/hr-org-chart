@@ -18,11 +18,14 @@
     function normalizeRoute(route) {
         const parentId = Number(route?.parentId);
         if (!Number.isInteger(parentId)) return null;
-        return {
-            parentId,
-            branchOffsetX: clampOffset(route?.branchOffsetX),
-            laneOffsetY: clampOffset(route?.laneOffsetY)
-        };
+        const branchOffsetX = clampOffset(route?.branchOffsetX);
+        const branchOffsetY = clampOffset(route?.branchOffsetY);
+        const laneOffsetY = clampOffset(route?.laneOffsetY);
+        const result = { parentId, branchOffsetX, laneOffsetY };
+        if (branchOffsetY !== 0) {
+            result.branchOffsetY = branchOffsetY;
+        }
+        return result;
     }
 
     function normalizeRoutes(value) {
@@ -51,7 +54,7 @@
         };
         const selectedRoute = normalizeRoute(route);
         const manualRoute = selectedRoute?.parentId === Number(parentId) ? selectedRoute : null;
-        const offsets = manualRoute || { branchOffsetX: 0, laneOffsetY: 0 };
+        const offsets = { branchOffsetX: 0, branchOffsetY: 0, laneOffsetY: 0, ...manualRoute };
         const automatic = !manualRoute;
 
         if (layoutStyle === "vertical") {
@@ -79,10 +82,17 @@
 
         const start = { x: parent.x + parent.width / 2, y: parent.y + parent.height };
         const end = { x: child.x + child.width / 2, y: child.y };
-        const branchY = start.y + 20;
         const automaticLaneY = start.y + Math.max(20, (finite(minChildY, end.y) - start.y) / 2);
-        const branchX = start.x + offsets.branchOffsetX;
-        const laneY = automaticLaneY + offsets.laneOffsetY;
+        const laneY = Math.max(start.y + 25, automaticLaneY + offsets.laneOffsetY);
+
+        let branchY = start.y + 20 + offsets.branchOffsetY;
+        branchY = Math.max(start.y + 10, Math.min(laneY - 5, branchY));
+
+        let branchX = start.x + offsets.branchOffsetX;
+        if (Math.abs(branchX - start.x) < 10) {
+            branchX = start.x;
+        }
+
         const points = [
             start,
             { x: start.x, y: branchY },
@@ -128,7 +138,7 @@
 
     function beginDrag({ kind, pointerId, startPoint, route } = {}) {
         return Object.freeze({
-            kind: kind === "both" ? "both" : (kind === "lane" ? "lane" : "branch"),
+            kind: kind === "lane" ? "lane" : "branch",
             pointerId,
             startPoint: Object.freeze({ x: finite(startPoint?.x), y: finite(startPoint?.y) }),
             route: Object.freeze(normalizeRoute(route))
@@ -139,20 +149,20 @@
         const route = normalizeRoute(dragState?.route);
         if (!route) return null;
         const start = dragState.startPoint || {};
-        const deltaX = finite(canvasPoint?.x) - finite(start.x);
-        const deltaY = finite(canvasPoint?.y) - finite(start.y);
-
-        if (dragState.kind === "both") {
-            return {
-                ...route,
-                branchOffsetX: clampOffset(route.branchOffsetX + deltaX),
-                laneOffsetY: clampOffset(route.laneOffsetY + deltaY)
-            };
-        }
         if (dragState.kind === "lane") {
-            return { ...route, laneOffsetY: clampOffset(route.laneOffsetY + deltaY) };
+            return normalizeRoute({
+                ...route,
+                laneOffsetY: clampOffset(route.laneOffsetY + finite(canvasPoint?.y) - finite(start.y))
+            });
         }
-        return { ...route, branchOffsetX: clampOffset(route.branchOffsetX + deltaX) };
+        const rawOffsetX = route.branchOffsetX + finite(canvasPoint?.x) - finite(start.x);
+        const rawOffsetY = (route.branchOffsetY || 0) + finite(canvasPoint?.y) - finite(start.y);
+        const snappedX = Math.abs(rawOffsetX) < 10 ? 0 : rawOffsetX;
+        return normalizeRoute({
+            ...route,
+            branchOffsetX: clampOffset(snappedX),
+            branchOffsetY: clampOffset(rawOffsetY)
+        });
     }
 
     root.ConnectionRouting = Object.freeze({

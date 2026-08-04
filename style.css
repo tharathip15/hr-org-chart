@@ -1036,11 +1036,9 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     vector-effect: non-scaling-stroke;
     pointer-events: all;
     touch-action: none;
-    cursor: move;
 }
 
-.connection-route-handle.is-both { cursor: move; }
-.connection-route-handle.is-branch { cursor: ew-resize; }
+.connection-route-handle.is-branch { cursor: move; }
 .connection-route-handle.is-lane { cursor: ns-resize; }
 body.layout-locked .connection-route-handle { cursor: not-allowed; opacity: 0.55; }
 

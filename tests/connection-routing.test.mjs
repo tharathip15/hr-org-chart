@@ -172,7 +172,7 @@ test("editing capabilities distinguish selection from mutation while locked", ()
   );
 });
 
-test("branch, lane, and both handles update offset coordinates appropriately", () => {
+test("branch and lane handles update their respective 2D and vertical offsets", () => {
   const baseRoute = { parentId: 10, branchOffsetX: 25, laneOffsetY: -15 };
   const branchDrag = globalThis.ConnectionRouting.beginDrag({
     kind: "branch", pointerId: 7, startPoint: { x: 100, y: 200 }, route: baseRoute
@@ -180,18 +180,12 @@ test("branch, lane, and both handles update offset coordinates appropriately", (
   const laneDrag = globalThis.ConnectionRouting.beginDrag({
     kind: "lane", pointerId: 8, startPoint: { x: 100, y: 200 }, route: baseRoute
   });
-  const bothDrag = globalThis.ConnectionRouting.beginDrag({
-    kind: "both", pointerId: 9, startPoint: { x: 100, y: 200 }, route: baseRoute
-  });
 
   assert.deepEqual(globalThis.ConnectionRouting.updateDrag(branchDrag, { x: 160, y: 260 }), {
-    parentId: 10, branchOffsetX: 85, laneOffsetY: -15
+    parentId: 10, branchOffsetX: 85, branchOffsetY: 60, laneOffsetY: -15
   });
   assert.deepEqual(globalThis.ConnectionRouting.updateDrag(laneDrag, { x: 160, y: 260 }), {
     parentId: 10, branchOffsetX: 25, laneOffsetY: 45
-  });
-  assert.deepEqual(globalThis.ConnectionRouting.updateDrag(bothDrag, { x: 160, y: 260 }), {
-    parentId: 10, branchOffsetX: 85, laneOffsetY: 45
   });
 });
 
@@ -207,7 +201,7 @@ test("beginDrag captures an immutable nested snapshot", () => {
   assert.throws(() => { dragState.startPoint.x = 900; }, TypeError);
   assert.throws(() => { dragState.route.branchOffsetX = 900; }, TypeError);
   assert.deepEqual(globalThis.ConnectionRouting.updateDrag(dragState, { x: 160, y: 260 }), {
-    parentId: 10, branchOffsetX: 85, laneOffsetY: -15
+    parentId: 10, branchOffsetX: 85, branchOffsetY: 60, laneOffsetY: -15
   });
 });
 
@@ -318,7 +312,7 @@ test("dragging a route handle converts viewport coordinates and saves only on po
     };`, context);
 
   const result = JSON.parse(JSON.stringify(await context.runDrag()));
-  assert.deepEqual(result.beforeUp.routes.Sales, { parentId: 1, branchOffsetX: 50, laneOffsetY: -10 });
+  assert.deepEqual(result.beforeUp.routes.Sales, { parentId: 1, branchOffsetX: 50, branchOffsetY: 20, laneOffsetY: -10 });
   assert.equal(result.beforeUp.events.some(([type]) => type === "save"), false);
   assert.deepEqual(result.routes.__overview__, { parentId: 1, branchOffsetX: 5, laneOffsetY: 6 });
   assert.deepEqual(result.events, [
