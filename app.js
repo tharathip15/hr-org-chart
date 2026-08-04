@@ -4775,7 +4775,8 @@ function resetPositionForm(editId = null) {
     const form = document.getElementById("position-form");
     form.reset();
     document.getElementById("form-position-id").value = "";
-    document.getElementById("form-position-status").value = "active";
+    const defaultStatus = (typeof chartMode !== "undefined" && chartMode === "future") ? "future" : "active";
+    document.getElementById("form-position-status").value = defaultStatus;
     document.getElementById("form-position-effective-date").value = "";
     document.getElementById("form-position-status-reason").value = "";
     document.getElementById("btn-delete-position").disabled = true;
@@ -5482,7 +5483,7 @@ function renderPositionsList() {
     const filterInput = document.getElementById("position-list-search-input");
     const query = filterInput ? filterInput.value.toLowerCase().trim() : "";
 
-    const vacantCount = positions.filter(position => PositionLifecycle.normalizeStatus(position.status) !== "closed" && !getAssignedEmployee(position)).length;
+    const vacantCount = positions.filter(position => PositionLifecycle.normalizeStatus(position.status) === "active" && !getAssignedEmployee(position)).length;
 
     if (positions.length === 0) {
         summary.innerText = `0 positions - 0 vacant`;

@@ -91,6 +91,8 @@
         );
         const vacantPositions = seats
             .filter(position => {
+                const status = String(position?.status || "").trim().toLowerCase();
+                if (status === "future" || status === "closed") return false;
                 if (position?.employeeId === null || position?.employeeId === undefined) return true;
                 return !resolvedEmployeeIds.has(position.employeeId);
             })
