@@ -18,7 +18,18 @@ function extractFunction(name) {
     ? functionStart - 6
     : functionStart;
 
-  const bodyStart = appSource.indexOf("{", functionStart);
+  const parametersStart = appSource.indexOf("(", functionStart);
+  let parametersDepth = 0;
+  let bodyStart = -1;
+  for (let index = parametersStart; index < appSource.length; index += 1) {
+    if (appSource[index] === "(") parametersDepth += 1;
+    if (appSource[index] === ")") parametersDepth -= 1;
+    if (parametersDepth === 0) {
+      bodyStart = appSource.indexOf("{", index + 1);
+      break;
+    }
+  }
+  assert.notEqual(bodyStart, -1, `${name} body must exist`);
   let depth = 0;
   for (let index = bodyStart; index < appSource.length; index += 1) {
     if (appSource[index] === "{") depth += 1;
@@ -31,8 +42,11 @@ function extractFunction(name) {
 function extractConnectionRouteDragFunctions() {
   return [
     "getCanvasPoint",
+    "isConnectionRouteEdgeVisible",
     "hasActiveConnectionRouteEdge",
+    "removeConnectionRoutePointerListeners",
     "clearActiveConnectionRouteDrag",
+    "clearConnectionRouteEditing",
     "handleConnectionRoutePointerDown",
     "handleConnectionRoutePointerMove",
     "handleConnectionRoutePointerUp",
@@ -140,6 +154,10 @@ test("clearing a scope from positions preserves unrelated routes", () => {
 });
 
 test("editing capabilities distinguish selection from mutation while locked", () => {
+  assert.deepEqual(
+    globalThis.ConnectionRouting.getCapabilities({ canEdit: true, locked: false, presentation: false }),
+    { selectable: true, draggable: true, resettable: true }
+  );
   assert.deepEqual(
     globalThis.ConnectionRouting.getCapabilities({ canEdit: true, locked: true, presentation: false }),
     { selectable: true, draggable: false, resettable: false }
@@ -421,11 +439,13 @@ test("pointer cancel and disappearing edges restore the pre-drag route without s
         selectedDept: "Sales",
         positions,
         activeConnectionRouteDrag: null,
+        selectedConnection: { parentId: 1, childId: 2 },
         latestPositionsSavePromise: Promise.resolve(true),
         currentChartRenderContext: renderContext,
         getConnectionRouteCapabilities: () => ({ draggable: true }),
         getConnectionRouteStoragePosition: () => positions[0],
         requestConnectionDraw: () => events.push("redraw"),
+        updateConnectionRouteToolbar: () => events.push("toolbar"),
         renderTree() {},
         savePositions: async () => { events.push("save"); return true; },
         structuredClone,
@@ -444,13 +464,207 @@ test("pointer cancel and disappearing edges restore the pre-drag route without s
         } else {
           handleConnectionRoutePointerCancel({ pointerId: 4 });
         }
-        globalThis.result = { routes: positions[0].connectionRoutes, events };`, context);
+        globalThis.result = { routes: positions[0].connectionRoutes, events, selectedConnection };`, context);
 
       const result = JSON.parse(JSON.stringify(context.result));
       assert.deepEqual(result.routes, { Sales: { parentId: 1, branchOffsetX: 30, laneOffsetY: -10 } });
       assert.equal(result.events.includes("save"), false);
+      assert.deepEqual(
+        result.selectedConnection,
+        cancelKind === "missing edge" ? null : { parentId: 1, childId: 2 }
+      );
+      assert.equal(result.events.includes("toolbar"), cancelKind === "missing edge");
     });
   }
+});
+
+test("central route cleanup restores the live child and can retain a locked selection", () => {
+  const listenerEvents = [];
+  const redrawEvents = [];
+  const selection = { parentId: 1, childId: 2 };
+  const beforeRoutes = {
+    Sales: { parentId: 1, branchOffsetX: 10, laneOffsetY: 20 },
+  };
+  const captureElement = {
+    removeEventListener: type => listenerEvents.push(["overlay-remove", type]),
+    releasePointerCapture: pointerId => listenerEvents.push(["release", pointerId]),
+  };
+  const context = vm.createContext({
+    positions: [{
+      id: 2,
+      connectionRoutes: { Sales: { parentId: 1, branchOffsetX: 75, laneOffsetY: 20 } },
+    }],
+    activeConnectionRouteDrag: {
+      parentId: 1,
+      childId: 2,
+      pointerId: 7,
+      beforeRoutes,
+      captureElement,
+    },
+    selectedConnection: selection,
+    getConnectionRouteStoragePosition: childId => context.positions.find(position => position.id === childId),
+    updateConnectionRouteToolbar: () => redrawEvents.push("toolbar"),
+    requestConnectionDraw: () => redrawEvents.push("redraw"),
+    handleConnectionRoutePointerMove() {},
+    handleConnectionRoutePointerUp() {},
+    handleConnectionRoutePointerCancel() {},
+    handleConnectionRouteLostPointerCapture() {},
+    structuredClone,
+    window: {
+      removeEventListener: type => listenerEvents.push(["window-remove", type]),
+    },
+  });
+
+  vm.runInContext(`${["removeConnectionRoutePointerListeners", "clearActiveConnectionRouteDrag", "clearConnectionRouteEditing"]
+    .map(extractFunction).join("\n")}
+    clearConnectionRouteEditing({ preserveSelection: true });
+    globalThis.result = { positions, activeConnectionRouteDrag, selectedConnection };`, context);
+
+  const result = JSON.parse(JSON.stringify(context.result));
+  assert.deepEqual(result.positions[0].connectionRoutes, beforeRoutes);
+  assert.equal(result.activeConnectionRouteDrag, null);
+  assert.deepEqual(result.selectedConnection, selection);
+  assert.deepEqual(redrawEvents, ["toolbar", "redraw"]);
+  assert.deepEqual(listenerEvents, [
+    ["window-remove", "pointermove"],
+    ["window-remove", "pointerup"],
+    ["window-remove", "pointercancel"],
+    ["overlay-remove", "lostpointercapture"],
+    ["release", 7],
+  ]);
+});
+
+test("department and chart mode changes clear route editing before rendering", () => {
+  const events = [];
+  const context = vm.createContext({
+    selectedDept: "Sales",
+    chartMode: "current",
+    selectedAnnotationId: 9,
+    clearConnectionRouteEditing: () => events.push(["clear", context.selectedDept, context.chartMode]),
+    updateChartModeControls: () => events.push(["controls", context.selectedDept]),
+    renderSidebarDeptList: () => events.push(["sidebar", context.selectedDept]),
+    updateCollapseControls: () => events.push(["collapse", context.selectedDept]),
+    renderTree: () => events.push(["tree", context.selectedDept]),
+    fitToScreen: () => events.push(["fit", context.selectedDept]),
+    closePositionLifecycleDrawer: () => events.push(["drawer", context.chartMode]),
+    renderAll: () => events.push(["all", context.chartMode]),
+    requestAnimationFrame: callback => callback(),
+  });
+
+  vm.runInContext(`${extractFunction("setSelectedDepartment")}\n${extractFunction("selectDepartment")}\n${extractFunction("setChartMode")}
+    selectDepartment("Engineering");
+    setChartMode("future");`, context);
+
+  assert.deepEqual(events, [
+    ["clear", "Sales", "current"],
+    ["controls", "Engineering"],
+    ["sidebar", "Engineering"],
+    ["collapse", "Engineering"],
+    ["tree", "Engineering"],
+    ["fit", "Engineering"],
+    ["clear", "Engineering", "current"],
+    ["drawer", "future"],
+    ["all", "future"],
+    ["fit", "Engineering"],
+  ]);
+});
+
+test("entering Presentation clears and redraws route editing synchronously", () => {
+  const events = [];
+  const deferred = [];
+  const context = vm.createContext({
+    isPresentationMode: false,
+    arePresentationControlsCollapsed: false,
+    clearConnectionRouteEditing: options => events.push(["clear", options]),
+    updatePresentationControl: () => events.push(["control"]),
+    drawConnections: () => events.push(["draw"]),
+    fitToScreen: () => events.push(["fit"]),
+    setTimeout: callback => deferred.push(callback),
+    document: {
+      fullscreenElement: null,
+      documentElement: { requestFullscreen: () => Promise.resolve() },
+      exitFullscreen: () => Promise.resolve(),
+    },
+  });
+
+  vm.runInContext(`${extractFunction("setPresentationMode")}\nsetPresentationMode(true, { syncFullscreen: false });`, context);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(events)), [["clear", { redraw: false }], ["control"], ["draw"]]);
+  assert.equal(deferred.length, 1);
+  deferred[0]();
+  assert.deepEqual(events.at(-1), ["fit"]);
+});
+
+test("auth downgrade and lock activation share route cleanup semantics", () => {
+  const authEvents = [];
+  const authContext = vm.createContext({
+    authSession: { identity: { canEdit: true }, csrfToken: "csrf", canEdit: true },
+    appStarted: true,
+    canEditHr: () => authContext.authSession?.canEdit === true,
+    clearConnectionRouteEditing: options => authEvents.push(["clear", options]),
+    updateAuthControls: () => authEvents.push(["auth-controls"]),
+    renderAnnotations: () => authEvents.push(["annotations"]),
+    setupAnnotationListeners: () => authEvents.push(["annotation-listeners"]),
+    requestConnectionDraw: () => authEvents.push(["redraw"]),
+    updateConnectionRouteToolbar: () => authEvents.push(["toolbar"]),
+    document: { body: { classList: { toggle: (...args) => authEvents.push(["class", ...args]) } } },
+  });
+  vm.runInContext(`${extractFunction("applyAuthSession")}\napplyAuthSession(null);`, authContext);
+  assert.deepEqual(authEvents.slice(0, 3), [
+    ["class", "role-viewer", true],
+    ["clear", undefined],
+    ["auth-controls"],
+  ]);
+
+  const lockEvents = [];
+  const lockContext = vm.createContext({
+    isLayoutLocked: true,
+    activeConnectionRouteDrag: { childId: 2 },
+    clearConnectionRouteEditing: options => lockEvents.push(["clear", options]),
+    isViewerMode: () => false,
+    isLayoutEditingBlocked: () => true,
+    updateConnectionRouteToolbar: () => lockEvents.push(["toolbar"]),
+    refreshDisplayModeIcons: () => lockEvents.push(["icons"]),
+    document: {
+      body: { classList: { toggle: (...args) => lockEvents.push(["class", ...args]) } },
+      getElementById: () => null,
+    },
+  });
+  vm.runInContext(`${extractFunction("updateLayoutLockUI")}\nupdateLayoutLockUI();`, lockContext);
+  assert.deepEqual(JSON.parse(JSON.stringify(lockEvents[0])), ["clear", { preserveSelection: true }]);
+});
+
+test("drawing removes a selected edge that is no longer visible", () => {
+  const events = [];
+  const renderContext = {
+    displayPositions: [],
+    displayPositionIds: new Set(),
+    effectiveManagerByDisplayId: new Map(),
+  };
+  const context = vm.createContext({
+    selectedConnection: { parentId: 1, childId: 2 },
+    currentChartRenderContext: renderContext,
+    svgOverlay: { innerHTML: "selected visuals" },
+    updateCanvasBounds: () => events.push("bounds"),
+    getConnectionRouteStoragePosition: () => null,
+    clearConnectionRouteEditing: options => {
+      events.push(["clear", options]);
+      context.selectedConnection = null;
+    },
+    document: { querySelectorAll: () => [] },
+    getConnectionRouteCapabilities: () => ({ selectable: true }),
+    ConnectionRouting: globalThis.ConnectionRouting,
+    selectedDept: "Sales",
+    highlightedConnections: new Set(),
+    updateConnectionRouteToolbar: () => events.push("toolbar"),
+  });
+  const functions = ["isConnectionRouteEdgeVisible", "clearMissingConnectionRouteEditing", "drawConnections"]
+    .map(extractFunction).join("\n");
+  vm.runInContext(`${functions}\ndrawConnections(currentChartRenderContext);`, context);
+
+  assert.equal(context.selectedConnection, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(events)), [["clear", { redraw: false }], "bounds", "toolbar"]);
+  assert.equal(context.svgOverlay.innerHTML, "");
 });
 
 test("lost stable-overlay pointer capture cancels and restores the route", () => {

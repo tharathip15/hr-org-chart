@@ -615,9 +615,14 @@ function updatePresentationControl() {
 }
 
 function setPresentationMode(enabled, { syncFullscreen = true } = {}) {
+    const wasPresentationMode = isPresentationMode;
     isPresentationMode = Boolean(enabled);
     if (!isPresentationMode) arePresentationControlsCollapsed = false;
+    if (isPresentationMode && !wasPresentationMode) {
+        clearConnectionRouteEditing({ redraw: false });
+    }
     updatePresentationControl();
+    drawConnections();
 
     if (syncFullscreen) {
         if (isPresentationMode && !document.fullscreenElement && document.documentElement.requestFullscreen) {
@@ -629,10 +634,7 @@ function setPresentationMode(enabled, { syncFullscreen = true } = {}) {
         }
     }
 
-    setTimeout(() => {
-        drawConnections();
-        fitToScreen();
-    }, 220);
+    setTimeout(fitToScreen, 220);
 }
 
 function isViewerMode() {
@@ -648,6 +650,10 @@ function updateLayoutLockUI() {
     const banner = document.getElementById("canvas-lock-banner");
     const autoLayoutButton = document.getElementById("btn-auto-layout");
     const viewer = isViewerMode();
+
+    if (isLayoutLocked && activeConnectionRouteDrag) {
+        clearConnectionRouteEditing({ preserveSelection: true });
+    }
 
     document.body.classList.toggle("layout-locked", isLayoutLocked);
     if (banner) banner.setAttribute("aria-hidden", String(!isLayoutLocked));
@@ -890,7 +896,7 @@ function restoreMutationSnapshot(snapshot) {
         recordConfirmedMutationState(collection);
         writeMutationBackup(collection);
     }
-    selectedDept = snapshot.selectedDept;
+    setSelectedDepartment(snapshot.selectedDept);
     renderAll();
     renderAnnotations();
 }
@@ -906,6 +912,7 @@ function restoreRejectedMutation(collection, response) {
 }
 
 function applyAuthSession(session) {
+    const hadEditAccess = canEditHr();
     authSession = session?.identity
         ? {
             identity: session.identity,
@@ -914,6 +921,9 @@ function applyAuthSession(session) {
         }
         : null;
     document.body.classList.toggle("role-viewer", !authSession?.canEdit);
+    if (hadEditAccess && !canEditHr()) {
+        clearConnectionRouteEditing();
+    }
     updateAuthControls();
     if (appStarted) {
         renderAnnotations();
@@ -2252,7 +2262,7 @@ async function handleImportFileChange(e) {
                 collapsedNodes = new Set(
                     sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || [])
                 );
-                selectedDept = "All";
+                setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
                 shouldSaveAnnotations = true;
                 unifiedImport = true;
@@ -2269,7 +2279,7 @@ async function handleImportFileChange(e) {
                 normalizeEmployeeProfiles();
                 positions = derivePositionsFromEmployees();
                 collapsedNodes.clear();
-                selectedDept = "All";
+                setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
             } else {
                 showNotification("Invalid backup file format", "error");
@@ -3155,6 +3165,7 @@ function setChartMode(mode) {
     const nextMode = mode === "future" ? "future" : "current";
     if (chartMode === nextMode) return;
 
+    clearConnectionRouteEditing();
     chartMode = nextMode;
     selectedAnnotationId = null;
     closePositionLifecycleDrawer();
@@ -3251,8 +3262,15 @@ function renderSidebarDeptList() {
 }
 
 // Filter or focus by department
-function selectDepartment(dept) {
+function setSelectedDepartment(dept) {
+    if (selectedDept === dept) return false;
+    clearConnectionRouteEditing();
     selectedDept = dept;
+    return true;
+}
+
+function selectDepartment(dept) {
+    setSelectedDepartment(dept);
 
     updateChartModeControls();
     renderSidebarDeptList();
@@ -3572,6 +3590,7 @@ function renderTree() {
 
 function drawConnections(renderContext = currentChartRenderContext) {
     svgOverlay.innerHTML = "";
+    clearMissingConnectionRouteEditing(renderContext);
     updateCanvasBounds();
     if (!renderContext) {
         updateConnectionRouteToolbar();
@@ -3696,16 +3715,28 @@ function getCanvasPoint(clientX, clientY) {
     };
 }
 
-function hasActiveConnectionRouteEdge() {
-    if (!activeConnectionRouteDrag || !currentChartRenderContext) return false;
-    const { childId, parentId } = activeConnectionRouteDrag;
-    return currentChartRenderContext.displayPositionIds.has(childId)
-        && currentChartRenderContext.effectiveManagerByDisplayId.get(childId) === parentId
+function isConnectionRouteEdgeVisible(connection, renderContext = currentChartRenderContext) {
+    if (!connection || !renderContext) return false;
+    const childId = Number(connection.childId);
+    const parentId = Number(connection.parentId);
+    return Number.isInteger(childId)
+        && Number.isInteger(parentId)
+        && renderContext.displayPositionIds.has(childId)
+        && renderContext.effectiveManagerByDisplayId.get(childId) === parentId
         && Boolean(getConnectionRouteStoragePosition(childId));
 }
 
-function clearActiveConnectionRouteDrag(restore) {
-    const drag = activeConnectionRouteDrag;
+function clearMissingConnectionRouteEditing(renderContext = currentChartRenderContext) {
+    if (!selectedConnection || isConnectionRouteEdgeVisible(selectedConnection, renderContext)) return false;
+    clearConnectionRouteEditing({ redraw: false });
+    return true;
+}
+
+function hasActiveConnectionRouteEdge() {
+    return isConnectionRouteEdgeVisible(activeConnectionRouteDrag);
+}
+
+function removeConnectionRoutePointerListeners(drag = activeConnectionRouteDrag) {
     if (!drag) return;
 
     window.removeEventListener("pointermove", handleConnectionRoutePointerMove);
@@ -3715,6 +3746,13 @@ function clearActiveConnectionRouteDrag(restore) {
     try {
         drag.captureElement.releasePointerCapture(drag.pointerId);
     } catch (error) {}
+}
+
+function clearActiveConnectionRouteDrag(restore) {
+    const drag = activeConnectionRouteDrag;
+    if (!drag) return;
+
+    removeConnectionRoutePointerListeners(drag);
 
     if (restore) {
         const storagePosition = getConnectionRouteStoragePosition(drag.childId);
@@ -3723,6 +3761,18 @@ function clearActiveConnectionRouteDrag(restore) {
         }
     }
     activeConnectionRouteDrag = null;
+}
+
+function clearConnectionRouteEditing({
+    restoreDrag = true,
+    preserveSelection = false,
+    redraw = true
+} = {}) {
+    const connection = selectedConnection;
+    clearActiveConnectionRouteDrag(restoreDrag);
+    selectedConnection = preserveSelection ? connection : null;
+    updateConnectionRouteToolbar();
+    if (redraw) requestConnectionDraw();
 }
 
 function handleConnectionRoutePointerDown(event) {
@@ -3771,7 +3821,7 @@ function handleConnectionRoutePointerDown(event) {
 function handleConnectionRoutePointerMove(event) {
     if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
     if (!hasActiveConnectionRouteEdge()) {
-        handleConnectionRoutePointerCancel(event);
+        clearConnectionRouteEditing();
         return;
     }
 
@@ -3791,7 +3841,7 @@ function handleConnectionRoutePointerMove(event) {
 async function handleConnectionRoutePointerUp(event) {
     if (!activeConnectionRouteDrag || event.pointerId !== activeConnectionRouteDrag.pointerId) return;
     if (!hasActiveConnectionRouteEdge()) {
-        handleConnectionRoutePointerCancel(event);
+        clearConnectionRouteEditing();
         return;
     }
 
