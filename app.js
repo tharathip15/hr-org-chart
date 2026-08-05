@@ -5579,7 +5579,7 @@ async function handlePositionFormSubmit(e) {
     const managerInputVal = document.getElementById("form-position-manager").value.trim();
     const employeeInputVal = document.getElementById("form-position-employee").value.trim();
     const layoutStyle = document.getElementById("form-position-layout").value;
-    const status = PositionLifecycle.normalizeStatus(document.getElementById("form-position-status").value);
+    let status = PositionLifecycle.normalizeStatus(document.getElementById("form-position-status").value);
     const effectiveDate = PositionLifecycle.normalizeDate(document.getElementById("form-position-effective-date").value);
     const statusReason = document.getElementById("form-position-status-reason").value.trim();
     const notes = document.getElementById("form-position-notes").value.trim();
@@ -5624,7 +5624,11 @@ async function handlePositionFormSubmit(e) {
     }
 
     if (status === "closed") {
-        employeeId = null;
+        if (employeeId !== null) {
+            status = "active";
+        } else {
+            employeeId = null;
+        }
     }
     if (status !== "active" && !effectiveDate) {
         showNotification("Choose an effective date for this lifecycle change", "error");
