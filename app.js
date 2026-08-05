@@ -3470,7 +3470,26 @@ function wireTreeInteractions(renderContext = currentChartRenderContext) {
 
 function getAssignedEmployee(position) {
     if (!position || position.employeeId === null || position.employeeId === undefined) return null;
-    return employees.find(employee => employee.id === position.employeeId) || null;
+    const employee = employees.find(candidate => candidate.id === position.employeeId) || null;
+    if (!employee) return null;
+
+    const mode = (typeof chartMode !== "undefined" ? chartMode : "current");
+    if (mode === "future" && typeof positions !== "undefined" && Array.isArray(positions)) {
+        const status = PositionLifecycle.normalizeStatus(position.status);
+        if (status === "active" && !isActingPosition(position)) {
+            const hasFuturePosition = positions.some(candidate =>
+                candidate.id !== position.id
+                && candidate.employeeId === employee.id
+                && PositionLifecycle.normalizeStatus(candidate.status) === "future"
+                && !isActingPosition(candidate)
+            );
+            if (hasFuturePosition) {
+                return null;
+            }
+        }
+    }
+
+    return employee;
 }
 
 function isActingPosition(position) {
@@ -5614,17 +5633,6 @@ async function handlePositionFormSubmit(e) {
     }
 
     const savedPositionId = currentId || getNextPositionId();
-
-    if (status === "future" && employeeId !== null && effectiveDate) {
-        positions.forEach(otherPos => {
-            if (otherPos.id !== savedPositionId && otherPos.employeeId === employeeId && PositionLifecycle.normalizeStatus(otherPos.status) === "active") {
-                otherPos.status = "closed";
-                otherPos.effectiveDate = effectiveDate;
-                otherPos.employeeId = null;
-                otherPos.statusReason = `Promoted to ${title}`;
-            }
-        });
-    }
 
     if (currentId) {
         const index = positions.findIndex(position => position.id === currentId);
