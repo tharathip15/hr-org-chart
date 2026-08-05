@@ -4511,9 +4511,8 @@ async function savePositionLifecycle() {
     const effectiveDate = PositionLifecycle.normalizeDate(document.getElementById("position-lifecycle-date").value);
     const statusReason = document.getElementById("position-lifecycle-reason").value.trim();
 
-    if (status === "closed" && getAssignedEmployee(position)) {
-        showNotification("Unassign the employee before closing this position", "error");
-        return;
+    if (status === "closed") {
+        position.employeeId = null;
     }
     if (status !== "active" && !effectiveDate) {
         showNotification("Choose an effective date for this lifecycle change", "error");
@@ -5605,14 +5604,26 @@ async function handlePositionFormSubmit(e) {
         employeeId = employee.id;
     }
 
-    if (status === "closed" && employeeId !== null) {
-        showNotification("Unassign the employee before closing this position", "error");
-        return;
+    if (status === "closed") {
+        employeeId = null;
     }
     if (status !== "active" && !effectiveDate) {
         showNotification("Choose an effective date for this lifecycle change", "error");
         document.getElementById("form-position-effective-date").focus();
         return;
+    }
+
+    const savedPositionId = currentId || getNextPositionId();
+
+    if (status === "future" && employeeId !== null && effectiveDate) {
+        positions.forEach(otherPos => {
+            if (otherPos.id !== savedPositionId && otherPos.employeeId === employeeId && PositionLifecycle.normalizeStatus(otherPos.status) === "active") {
+                otherPos.status = "closed";
+                otherPos.effectiveDate = effectiveDate;
+                otherPos.employeeId = null;
+                otherPos.statusReason = `Promoted to ${title}`;
+            }
+        });
     }
 
     if (currentId) {
@@ -5652,10 +5663,9 @@ async function handlePositionFormSubmit(e) {
 
         showNotification(`Updated position: ${title}`, "success");
     } else {
-        const newId = getNextPositionId();
         const autoPos = getAutoPositionForPosition(managerId);
         positions.push({
-            id: newId,
+            id: savedPositionId,
             title,
             department,
             managerId,
