@@ -37,7 +37,25 @@
             while (managerId !== null && !visited.has(managerId)) {
                 if (visibleIds.has(managerId)) break;
                 visited.add(managerId);
-                managerId = toInteger(positionById.get(managerId)?.managerId);
+                const manager = positionById.get(managerId);
+                if (!manager) {
+                    managerId = null;
+                    break;
+                }
+
+                if (manager.employeeId !== null && manager.employeeId !== undefined) {
+                    const replacement = positions.find(candidate =>
+                        toInteger(candidate.id) !== managerId
+                        && toInteger(candidate.employeeId) === toInteger(manager.employeeId)
+                        && visibleIds.has(toInteger(candidate.id))
+                    );
+                    if (replacement) {
+                        managerId = toInteger(replacement.id);
+                        break;
+                    }
+                }
+
+                managerId = toInteger(manager.managerId);
             }
 
             effectiveManagerByRealId.set(

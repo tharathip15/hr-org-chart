@@ -895,7 +895,7 @@ body.presentation-mode.presentation-controls-collapsed .canvas-lock-banner {
     left: 0;
     overflow: visible;
     pointer-events: none;
-    z-index: 5;
+    z-index: 12;
 }
 
 /* Visible only while a card or a whole reporting branch is being moved. */
