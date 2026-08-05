@@ -330,17 +330,20 @@
                     </div>
                     <div class="form-row two-cols">
                         <div class="form-group">
-                            <label for="form-position-status">Status (สถานะตำแหน่ง)</label>
+                            <label for="form-position-status">Status (สถานะและแผนงานตำแหน่ง)</label>
                             <select id="form-position-status">
-                                <option value="active">Active / Vacant Now (ตำแหน่งมีผลแล้ว / ว่างอยู่)</option>
-                                <option value="future">Future Plan (ตำแหน่งแผนงานในอนาคต)</option>
-                                <option value="closed">Closed (ปิดตำแหน่ง)</option>
+                                <option value="active">Active (ตำแหน่งปกติปัจจุบัน)</option>
+                                <option value="future">Future Plan (ตำแหน่งใหม่ในอนาคต)</option>
+                                <option value="closed">Scheduled Close / Closed (ปิด/ยุบตำแหน่งในอนาคต)</option>
                             </select>
                         </div>
                         <div class="form-group">
-                            <label for="form-position-effective-date">Effective date</label>
+                            <label for="form-position-effective-date" id="form-position-effective-date-label">Effective date (วันที่มีผล)</label>
                             <input type="date" id="form-position-effective-date">
                         </div>
+                    </div>
+                    <div class="position-form-guidance" id="form-position-lifecycle-guidance-box" style="margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background-color: rgba(99, 102, 241, 0.08); border-left: 4px solid #6366f1; font-size: 12px; color: var(--text-secondary); display: none;">
+                        <span id="form-position-lifecycle-guidance-text"></span>
                     </div>
                     <div class="form-row">
                         <div class="form-group">

@@ -2668,6 +2668,7 @@ function setupEventListeners() {
     // Form submission
     document.getElementById("employee-form").addEventListener("submit", handleFormSubmit);
     document.getElementById("position-form").addEventListener("submit", handlePositionFormSubmit);
+    document.getElementById("form-position-status").addEventListener("change", updatePositionFormLifecycleGuidance);
     document.getElementById("btn-photo-trigger").addEventListener("click", () => {
         document.getElementById("form-photo-input").click();
     });
@@ -4397,24 +4398,39 @@ function updatePositionLifecycleReasonCount() {
 
 function updatePositionLifecycleGuidance(status) {
     const guidance = document.getElementById("position-lifecycle-guidance-text");
+    if (!guidance) return;
     const messages = {
         active: "Active positions appear in both Current Chart and Future Chart.",
         future: "Future positions appear in Future Chart now and move into Current Chart on the effective date.",
-        closed: "Closed positions remain in history for audit and reporting. They disappear from Current Chart after the effective date."
+        closed: "Closed positions remain active on the Current Chart until the effective closure date, but are hidden from the Future Chart immediately."
     };
     guidance.innerText = messages[PositionLifecycle.normalizeStatus(status)];
 }
 
+function updatePositionFormLifecycleGuidance() {
+    const statusSelect = document.getElementById("form-position-status");
+    const dateLabel = document.getElementById("form-position-effective-date-label");
+    const guidanceBox = document.getElementById("form-position-lifecycle-guidance-box");
+    const guidanceText = document.getElementById("form-position-lifecycle-guidance-text");
+    if (!statusSelect || !guidanceBox || !guidanceText) return;
+
+    const val = PositionLifecycle.normalizeStatus(statusSelect.value);
+    if (val === "closed") {
+        if (dateLabel) dateLabel.innerText = "Closure date (วันที่มีผลปิด/ยุบตำแหน่ง)";
+        guidanceText.innerHTML = "🗓️ <strong>ปิด/ยุบตำแหน่งในอนาคต (Scheduled Close)</strong>: ตำแหน่งนี้จะยังคงแสดงผลและมีพนักงานในผังปัจจุบันตามปกติ จนกว่าจะถึงวันที่เลือก แต่จะถูกซ่อนหายไปในผังอนาคตทันที (ไม่กระทบกับผังปัจจุบัน)";
+        guidanceBox.style.display = "block";
+    } else if (val === "future") {
+        if (dateLabel) dateLabel.innerText = "Effective date (วันที่มีผลเริ่มตำแหน่ง)";
+        guidanceText.innerHTML = "✨ <strong>ตำแหน่งใหม่ในอนาคต (Future Plan)</strong>: แสดงในผังอนาคตทันที และจะย้ายเข้าสู่ผังปัจจุบันอัตโนมัติเมื่อถึงวันที่มีผล";
+        guidanceBox.style.display = "block";
+    } else {
+        if (dateLabel) dateLabel.innerText = "Effective date (วันที่มีผล)";
+        guidanceBox.style.display = "none";
+    }
+}
+
 function setPositionLifecycleStatus(status, force = false) {
     const normalizedStatus = PositionLifecycle.normalizeStatus(status);
-    const positionId = parseInt(document.getElementById("position-lifecycle-id").value, 10);
-    const position = positions.find(candidate => candidate.id === positionId);
-
-    if (!force && normalizedStatus === "closed" && getAssignedEmployee(position)) {
-        showNotification("Unassign the employee before closing this position", "error");
-        return false;
-    }
-
     document.querySelectorAll("[data-position-status]").forEach(button => {
         const isActive = button.dataset.positionStatus === normalizedStatus;
         button.classList.toggle("active", isActive);
@@ -4825,6 +4841,7 @@ function resetPositionForm(editId = null) {
 
     const employee = getAssignedEmployee(position);
     document.getElementById("form-position-employee").value = employee ? getEmployeeOptionLabel(employee) : "";
+    updatePositionFormLifecycleGuidance();
 }
 
 function openPositionsModal() {
