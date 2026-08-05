@@ -90,3 +90,17 @@ test("nearest visible manager can reuse a prebuilt position map", () => {
         1
     );
 });
+
+test("reconnects children to manager's visible replacement position when direct manager position is closed", () => {
+    const positions = [
+        { id: 1, managerId: null, status: "active", employeeId: 1 },
+        { id: 2, managerId: 1, status: "closed", effectiveDate: "2026-10-01", employeeId: 5 },
+        { id: 3, managerId: 1, status: "future", effectiveDate: "2026-10-01", employeeId: 5 },
+        { id: 4, managerId: 2, status: "active", employeeId: 10 }
+    ];
+    const visiblePositions = lifecycle.filterVisiblePositions(positions, "future", "2026-07-21");
+    const visibleIds = new Set(visiblePositions.map(position => position.id));
+
+    assert.deepEqual(visiblePositions.map(position => position.id), [1, 3, 4]);
+    assert.equal(lifecycle.getNearestVisibleManagerId(positions[3], positions, visibleIds), 3);
+});

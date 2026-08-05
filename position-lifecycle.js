@@ -65,7 +65,20 @@
             if (visibleIds.has(managerId)) return managerId;
             visited.add(managerId);
             const manager = byId.get(managerId);
-            if (!manager || manager.managerId === null || manager.managerId === undefined) return null;
+            if (!manager) return null;
+
+            if (manager.employeeId !== null && manager.employeeId !== undefined) {
+                const replacement = positionList.find(candidate =>
+                    Number(candidate.id) !== managerId
+                    && Number(candidate.employeeId) === Number(manager.employeeId)
+                    && visibleIds.has(Number(candidate.id))
+                );
+                if (replacement) {
+                    return Number(replacement.id);
+                }
+            }
+
+            if (manager.managerId === null || manager.managerId === undefined) return null;
             managerId = Number(manager.managerId);
         }
 
