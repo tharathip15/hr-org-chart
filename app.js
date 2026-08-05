@@ -4531,7 +4531,10 @@ async function savePositionLifecycle() {
     const statusReason = document.getElementById("position-lifecycle-reason").value.trim();
 
     if (status === "closed") {
-        position.employeeId = null;
+        const todayKey = PositionLifecycle.getTodayKey();
+        if (!effectiveDate || effectiveDate <= todayKey) {
+            position.employeeId = null;
+        }
     }
     if (status !== "active" && !effectiveDate) {
         showNotification("Choose an effective date for this lifecycle change", "error");
@@ -5624,9 +5627,8 @@ async function handlePositionFormSubmit(e) {
     }
 
     if (status === "closed") {
-        if (employeeId !== null) {
-            status = "active";
-        } else {
+        const todayKey = PositionLifecycle.getTodayKey();
+        if (!effectiveDate || effectiveDate <= todayKey) {
             employeeId = null;
         }
     }
