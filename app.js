@@ -971,6 +971,9 @@ function confirmMutationState(collection, state = getCurrentMutationState(collec
 }
 
 function restoreRejectedMutation(collection, response) {
+    if (collection === "preferences") {
+        return restoreConfirmedMutationState(collection);
+    }
     if (response?.status !== 401 && response?.status !== 403) return false;
     return restoreConfirmedMutationState(collection);
 }
