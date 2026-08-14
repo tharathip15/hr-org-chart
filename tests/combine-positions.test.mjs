@@ -210,8 +210,8 @@ test("Employee Profile exposes Split as a persistent footer action outside the s
 
     assert.match(detailDrawerSource, /class="drawer-footer detail-drawer-footer"/);
     assert.match(detailDrawerSource, /id="btn-split-employee-position"/);
-    assert.match(htmlSource, /href="style\.css\?v=3"/);
-    assert.match(htmlSource, /src="app\.js\?v=3\.18"/);
+    assert.match(htmlSource, /href="style\.css\?v=4"/);
+    assert.match(htmlSource, /src="app\.js\?v=3\.19"/);
     assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(selectedPosition\.id\)/);
     assert.match(appSource, /btnSplitEmployeePosition\.addEventListener\("click"/);
     assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);

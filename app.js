@@ -2176,9 +2176,11 @@ function syncPersonProfile(personId, profileFields) {
 
 function getAvatarHTML(emp, className = "avatar", extraStyle = "") {
     if (emp?.photoUrl) {
+        const color = emp.avatarColor || getDeptColor(emp.department);
         return `
-            <div class="${className} avatar-photo" style="${extraStyle}">
-                <img src="${escapeHTML(emp.photoUrl)}" alt="${escapeHTML(emp.name || "Employee")}">
+            <div class="${className} avatar-photo" style="background-color: ${color}; ${extraStyle}">
+                <span class="avatar-fallback" aria-hidden="true">${getInitials(emp.name || "")}</span>
+                <img src="${escapeHTML(emp.photoUrl)}" alt="${escapeHTML(emp.name || "Employee")}" onerror="this.remove()">
             </div>
         `;
     }
@@ -2944,7 +2946,7 @@ function fitToScreen() {
     const scaleX = (viewportRect.width - padding * 2) / bounds.width;
     const scaleY = (viewportRect.height - padding * 2) / bounds.height;
     
-    const nextScale = Math.max(0.15, Math.min(1.2, Math.min(scaleX, scaleY)));
+    const nextScale = Math.max(0.3, Math.min(1.2, Math.min(scaleX, scaleY)));
     
     // Center compact trees, but keep oversized trees anchored inside the chart viewport.
     const scaledContentWidth = bounds.width * nextScale;
@@ -6693,11 +6695,12 @@ function applySelectedAnnotationStyle(changes) {
 async function loadAnnotations() {
     try {
         const response = await authenticatedFetch(ANNOTATIONS_API_URL);
-        if (response.ok) {
-            annotations = await response.json();
-            annotations = normalizeAnnotationsList(annotations);
-            recordConfirmedMutationState("annotations");
+        if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
         }
+        annotations = await response.json();
+        annotations = normalizeAnnotationsList(annotations);
+        recordConfirmedMutationState("annotations");
     } catch (err) {
         console.warn("Failed to load annotations from database, falling back to local storage", err);
         const local = localStorage.getItem("hr_org_annotations");

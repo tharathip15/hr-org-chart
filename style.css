@@ -2126,6 +2126,23 @@ body.layout-locked .connection-route-handle { cursor: not-allowed; opacity: 0.55
     display: block;
 }
 
+.avatar-photo {
+    position: relative;
+}
+
+.avatar-photo .avatar-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.avatar-photo img {
+    position: absolute;
+    inset: 0;
+}
+
 .photo-picker-copy {
     display: flex;
     flex-direction: column;
