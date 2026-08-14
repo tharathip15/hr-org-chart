@@ -5050,9 +5050,10 @@ function resetPositionForm(editId = null) {
     document.getElementById("btn-delete-position").disabled = true;
     document.getElementById("btn-open-position-actions").disabled = true;
     const btnSetOperationRoot = document.getElementById("btn-set-operation-root");
+    const operationRootButtonLabel = document.getElementById("operation-root-button-label");
     if (btnSetOperationRoot) {
         btnSetOperationRoot.disabled = true;
-        btnSetOperationRoot.textContent = "Set as Operation Root";
+        if (operationRootButtonLabel) operationRootButtonLabel.textContent = "Set as Operation Root";
     }
     populatePositionFormLookups(editId);
 
@@ -5073,7 +5074,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("btn-open-position-actions").disabled = false;
     if (btnSetOperationRoot) {
         btnSetOperationRoot.disabled = false;
-        btnSetOperationRoot.textContent = position.id === operationRootPositionId
+        if (operationRootButtonLabel) operationRootButtonLabel.textContent = position.id === operationRootPositionId
             ? "Current Operation Root"
             : "Set as Operation Root";
     }
@@ -5850,6 +5851,7 @@ async function setOperationRootPosition(positionId) {
     const saved = await savePreferences();
     if (!saved) {
         operationRootPositionId = previousRootId;
+        writeMutationBackup("preferences");
         showNotification("Could not change the OPERATION root; the previous root was restored.", "error");
         renderAll();
         renderPositionsList();

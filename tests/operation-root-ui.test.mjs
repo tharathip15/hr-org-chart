@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
+const htmlSource = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
 function extractFunction(name) {
   const marker = `${name.startsWith("async ") ? "async function" : "function"} ${name.replace("async ", "")}(`;
@@ -31,6 +32,7 @@ function createElements() {
     "btn-delete-position",
     "btn-open-position-actions",
     "btn-set-operation-root",
+    "operation-root-button-label",
     "form-position-title",
     "form-position-department",
     "form-position-layout",
@@ -97,7 +99,8 @@ function createContext({ editor = true, saveResult = true, rootId = 1 } = {}) {
     populatePositionFormLookups() {},
     updatePositionFormLifecycleGuidance() {},
     removeCollapsedPositionId() {},
-    savePositions: async () => true
+    savePositions: async () => true,
+    writeMutationBackup() {}
   });
 
   return { context, elements, calls, notifications };
@@ -109,9 +112,22 @@ test("Operation root form action is disabled for a new position and enabled for 
 
   context.resetPositionForm();
   assert.equal(elements.get("btn-set-operation-root").disabled, true);
+  assert.equal(elements.get("operation-root-button-label").textContent, "Set as Operation Root");
 
   context.resetPositionForm(2);
   assert.equal(elements.get("btn-set-operation-root").disabled, false);
+  assert.equal(elements.get("operation-root-button-label").textContent, "Set as Operation Root");
+});
+
+test("Operation root button preserves its network icon while its label changes", () => {
+  assert.match(
+    htmlSource,
+    /id="btn-set-operation-root"[^>]*>[\s\S]*?<i data-lucide="network"><\/i>[\s\S]*?<span id="operation-root-button-label">Set as Operation Root<\/span>/
+  );
+  const resetFormSource = extractFunction("resetPositionForm");
+  assert.match(resetFormSource, /const operationRootButtonLabel = document\.getElementById\("operation-root-button-label"\)/);
+  assert.match(resetFormSource, /operationRootButtonLabel\.textContent/);
+  assert.doesNotMatch(resetFormSource, /btnSetOperationRoot\.textContent/);
 });
 
 test("Operation root form action is inert for a Viewer", async () => {
@@ -157,6 +173,60 @@ test("a failed Operation root save restores the prior root", async () => {
     returned: false,
     rootAfterSave: 2,
     notifications: ["Could not change the OPERATION root; the previous root was restored."]
+  });
+});
+
+test("a failed Operation root save restores the local preference fallback with unknown fields", async () => {
+  const storage = new Map();
+  const context = vm.createContext({
+    positions: [
+      { id: 2, title: "Operations Director" },
+      { id: 3, title: "Operations Analyst" }
+    ],
+    operationRootPositionId: 2,
+    requireEditorAction: () => true,
+    window: { confirm: () => true },
+    getPositionTitle: position => position.title,
+    renderAll() {},
+    renderPositionsList() {},
+    resetPositionForm() {},
+    showNotification() {},
+    localStorage: {
+      setItem(key, value) { storage.set(key, value); },
+      getItem(key) { return storage.get(key) || null; }
+    },
+    setSyncStatus() {},
+    authenticatedFetch: async () => ({ ok: false, status: 503 }),
+    confirmMutationState() {},
+    restoreRejectedMutation: () => false,
+    console: { warn() {}, error() {} }
+  });
+  context.getPreferencesPayload = () => ({
+    dashboardDensity: "compact",
+    featureFlags: { showVacancies: true },
+    collapsedNodeIds: [7],
+    collapsedNodeIdsByScope: { __operation_current__: [8] },
+    layoutLocked: false,
+    operationRootPositionId: context.operationRootPositionId
+  });
+
+  vm.runInContext([
+    "const MUTATION_STORAGE_KEYS = { preferences: 'hr_org_preferences' };",
+    extractFunction("getCurrentMutationState"),
+    extractFunction("writeMutationBackup"),
+    extractFunction("async savePreferences"),
+    extractFunction("async setOperationRootPosition")
+  ].join("\n"), context);
+
+  assert.equal(await context.setOperationRootPosition(3), false);
+  const fallbackPreferences = JSON.parse(context.localStorage.getItem("hr_org_preferences"));
+  assert.deepEqual(fallbackPreferences, {
+    dashboardDensity: "compact",
+    featureFlags: { showVacancies: true },
+    collapsedNodeIds: [7],
+    collapsedNodeIdsByScope: { __operation_current__: [8] },
+    layoutLocked: false,
+    operationRootPositionId: 2
   });
 });
 
