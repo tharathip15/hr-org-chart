@@ -511,6 +511,7 @@ let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
 let operationRootPositionId = null;
 let operationCollapsedNodesByScope = new Map();
+let operationCycleWarningKey = null;
 let additionalPreferences = {};
 let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
@@ -831,7 +832,10 @@ async function resetSelectedConnectionRoute() {
     if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
     if (!selectedConnection) return false;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const childId = Number(selectedConnection.childId);
     const candidatePositions = positions.map(position => position.id === childId
         ? {
@@ -853,7 +857,10 @@ async function resetAllConnectionRoutes() {
     if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
     if (!window.confirm("Reset all customized connector lines in this view?")) return false;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const candidatePositions = ConnectionRouting.clearScopeFromPositions(positions, scopeKey);
     latestPositionsSavePromise = savePositions(candidatePositions);
     const saved = await latestPositionsSavePromise;
@@ -2463,9 +2470,14 @@ function setupEventListeners() {
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (btnExpandAll) {
         btnExpandAll.addEventListener("click", async () => {
-            if (selectedDept !== "All") return;
-            if (collapsedNodes.size === 0) return;
-            collapsedNodes.clear();
+            if (!ChartViewScope.supportsCollapse(selectedDept)) return;
+            const activeCollapsedNodes = getActiveCollapsedNodes();
+            if (activeCollapsedNodes.size === 0) return;
+            if (activeCollapsedNodes === collapsedNodes) {
+                collapsedNodes.clear();
+            } else {
+                activeCollapsedNodes.clear();
+            }
             renderAll();
             fitToScreen();
             await savePreferences();
@@ -3078,7 +3090,11 @@ function expandPathToEmployee(id) {
 }
 
 function isOverallView() {
-    return selectedDept === "All";
+    return ChartViewScope.isOverview(selectedDept);
+}
+
+function isOperationView() {
+    return ChartViewScope.isOperation(selectedDept);
 }
 
 function getCollapsedRealPositionIdsForDisplayId(positionId, renderContext = currentChartRenderContext) {
@@ -3124,14 +3140,59 @@ function getChartModePositions() {
 
 function getChartDisplayPositions() {
     const modePositions = getChartModePositions();
-    return selectedDept === "All"
-        ? modePositions
-        : modePositions.filter(position => position.department === selectedDept);
+    if (isOverallView()) return modePositions;
+    if (isOperationView()) return getOperationRenderState(modePositions).visiblePositions;
+    return modePositions.filter(position => position.department === selectedDept);
+}
+
+function getOperationRenderState(modePositions) {
+    return OperationView.buildSubtree(positions, modePositions, operationRootPositionId);
 }
 
 function buildChartRenderContext() {
     const modePositions = getChartModePositions();
-    const realVisiblePositions = selectedDept === "All"
+    if (isOperationView()) {
+        const operationState = getOperationRenderState(modePositions);
+        const operationVisiblePositions = operationState.status === "ready"
+            ? operationState.visiblePositions
+            : [];
+        const operationVisibleIds = new Set(operationVisiblePositions.map(position => position.id));
+        const effectiveManagers = OrgHierarchy.buildEffectiveManagerByRealId(positions, operationVisibleIds);
+        const identityModel = {
+            displayPositions: operationVisiblePositions,
+            realToDisplayId: new Map(operationVisiblePositions.map(position => [position.id, position.id])),
+            membersByDisplayId: new Map(operationVisiblePositions.map(position => [position.id, [position]])),
+            allMembersByDisplayId: new Map(operationVisiblePositions.map(position => [position.id, [position]])),
+            effectiveManagerByDisplayId: new Map(operationVisiblePositions.map(position => [
+                position.id,
+                effectiveManagers.get(position.id) ?? null
+            ]))
+        };
+        const displayPositionIds = new Set(identityModel.displayPositions.map(position => position.id));
+        const positionByDisplayId = new Map(identityModel.displayPositions.map(position => [position.id, position]));
+        const hasReportsByPositionId = new Set();
+        identityModel.effectiveManagerByDisplayId.forEach(managerId => {
+            if (managerId !== null && displayPositionIds.has(managerId)) {
+                hasReportsByPositionId.add(managerId);
+            }
+        });
+
+        return {
+            viewKind: "operation",
+            operationStatus: operationState.status,
+            operationRootPosition: operationState.rootPosition,
+            operationCyclePositionIds: new Set(operationState.cyclePositionIds),
+            modePositions,
+            realVisiblePositions: operationVisiblePositions,
+            overviewEffectiveManagerByRealId: new Map(),
+            ...identityModel,
+            displayPositionIds,
+            positionByDisplayId,
+            hasReportsByPositionId
+        };
+    }
+
+    const realVisiblePositions = isOverallView()
         ? modePositions
         : modePositions.filter(position => position.department === selectedDept);
     const realVisibleIds = new Set(realVisiblePositions.map(position => position.id));
@@ -3140,7 +3201,7 @@ function buildChartRenderContext() {
         modePositions
     );
     const overviewEffectiveManagerByRealId = overviewRenderModel.overviewEffectiveManagerByRealId;
-    const viewEffectiveManagerByRealId = selectedDept === "All"
+    const viewEffectiveManagerByRealId = isOverallView()
         ? overviewEffectiveManagerByRealId
         : OrgHierarchy.buildEffectiveManagerByRealId(positions, realVisibleIds);
     const effectiveManagerByRealId = new Map(realVisiblePositions.map(position => [
@@ -3148,7 +3209,7 @@ function buildChartRenderContext() {
         viewEffectiveManagerByRealId.get(position.id) ?? null
     ]));
 
-    const model = selectedDept === "All"
+    const model = isOverallView()
         ? overviewRenderModel
         : {
             displayPositions: realVisiblePositions,
@@ -3167,6 +3228,10 @@ function buildChartRenderContext() {
     });
 
     return {
+        viewKind: isOverallView() ? "overview" : "department",
+        operationStatus: null,
+        operationRootPosition: null,
+        operationCyclePositionIds: new Set(),
         modePositions,
         realVisiblePositions,
         overviewEffectiveManagerByRealId,
@@ -3213,8 +3278,23 @@ function updateChartModeControls() {
 
     const title = document.getElementById("current-view-title");
     const desc = document.getElementById("current-view-desc");
-    title.innerText = selectedDept === "All" ? "Overall Organization" : `${selectedDept} Department`;
-    if (selectedDept === "All") {
+    if (isOperationView()) {
+        const operationState = getOperationRenderState(getChartModePositions());
+        title.innerText = "Operation Organization";
+        if (operationState.status === "ready") {
+            desc.innerText = `Root: ${getPositionTitle(operationState.rootPosition)}`;
+        } else if (operationState.status === "hidden") {
+            desc.innerText = `${getPositionTitle(operationState.rootPosition)} is not visible in the ${chartMode === "future" ? "Future" : "Current"} Chart`;
+        } else if (operationState.status === "missing") {
+            desc.innerText = "The configured Operation root could not be found";
+        } else {
+            desc.innerText = "Select an Operation root in Position Management";
+        }
+        return;
+    }
+
+    title.innerText = isOverallView() ? "Overall Organization" : `${selectedDept} Department`;
+    if (isOverallView()) {
         desc.innerText = chartMode === "future"
             ? "Showing approved active and future positions"
             : "Showing the organization as of today";
@@ -3266,10 +3346,10 @@ function updateCollapseControls() {
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (!btnExpandAll) return;
 
-    btnExpandAll.disabled = !isOverallView();
-    btnExpandAll.title = isOverallView()
+    btnExpandAll.disabled = !ChartViewScope.supportsCollapse(selectedDept);
+    btnExpandAll.title = ChartViewScope.supportsCollapse(selectedDept)
         ? "Expand All Positions"
-        : "Available in Overall View only";
+        : "Available in Overall and OPERATION views only";
 }
 
 // Compute counts and populate sidebar
@@ -3296,14 +3376,20 @@ function renderSidebarDeptList() {
     // Department navigation filters planned seats, so its badges count positions too.
     const visibleChartPositions = getChartModePositions();
     const deptCounts = EmployeeDirectory.getDepartmentCounts(visibleChartPositions);
+    const operationCount = getOperationRenderState(visibleChartPositions).visiblePositions.length;
     
     // Sort departments alphabetically
     const sortedDepts = Object.keys(deptCounts).sort();
     
     let html = `
-        <li class="department-item ${selectedDept === "All" ? "active" : ""}" data-dept="All">
+        <li class="department-item ${isOverallView() ? "active" : ""}" data-dept="All">
             <span>Overall View</span>
             <span class="department-count">${visibleChartPositions.length}</span>
+        </li>
+        <li class="department-item operation-item ${isOperationView() ? "active" : ""}"
+            data-dept="${ChartViewScope.OPERATION_VIEW_ID}">
+            <span>OPERATION</span>
+            <span class="department-count">${operationCount}</span>
         </li>
     `;
     
@@ -3628,7 +3714,7 @@ function getPositionCardHTML(position, renderContext = null) {
             ` : ""}
     `;
 
-    if (hasReports && isOverallView()) {
+    if (hasReports && ChartViewScope.supportsCollapse(selectedDept)) {
         cardHtml += `
             <button class="node-toggle-btn ${isCollapsed ? "collapsed" : ""}" data-id="${position.id}">
                 <i data-lucide="${isCollapsed ? "chevron-down" : "chevron-up"}"></i>
@@ -3640,6 +3726,59 @@ function getPositionCardHTML(position, renderContext = null) {
     return cardHtml;
 }
 
+function renderOperationEmptyState(status, rootPosition) {
+    const modeLabel = chartMode === "future" ? "Future Chart" : "Current Chart";
+    const rootTitle = rootPosition ? getPositionTitle(rootPosition) : "";
+    const messages = {
+        unconfigured: {
+            title: "Operation root has not been configured",
+            detail: "Choose the position that should anchor the dedicated Operation organization."
+        },
+        missing: {
+            title: "The configured Operation root could not be found",
+            detail: "The saved root may have been removed. Select another position to restore this view."
+        },
+        hidden: {
+            title: `${rootTitle} is not visible in the ${modeLabel}`,
+            detail: "Switch chart timeframe or update the position lifecycle to make this hierarchy visible."
+        }
+    };
+    const message = messages[status] || messages.unconfigured;
+    const editorAction = canEditHr()
+        ? `<button type="button" class="btn btn-primary operation-empty-state-action" onclick="openPositionsModal()">Select Operation Root</button>`
+        : "";
+
+    treeContainer.innerHTML = `
+        <section class="operation-empty-state" role="status">
+            <div class="operation-empty-state-icon" aria-hidden="true"><i data-lucide="network"></i></div>
+            <h3>${escapeHTML(message.title)}</h3>
+            <p>${escapeHTML(message.detail)}</p>
+            ${editorAction}
+        </section>
+    `;
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function notifyOperationCycleWarning(renderContext) {
+    if (!isOperationView()) {
+        operationCycleWarningKey = null;
+        return;
+    }
+
+    const cyclePositionIds = [...(renderContext?.operationCyclePositionIds || [])]
+        .filter(Number.isInteger)
+        .sort((left, right) => left - right);
+    if (cyclePositionIds.length === 0 || !canEditHr()) return;
+
+    const warningKey = `${operationRootPositionId}:${chartMode}:${cyclePositionIds.join(",")}`;
+    if (warningKey === operationCycleWarningKey) return;
+    operationCycleWarningKey = warningKey;
+    showNotification(
+        `Operation hierarchy contains a reporting cycle involving ${cyclePositionIds.map(id => `#${id}`).join(", ")}. Valid positions are shown once; update the reporting lines to resolve it.`,
+        "error"
+    );
+}
+
 function renderTree() {
     treeContainer.innerHTML = "";
     svgOverlay.innerHTML = "";
@@ -3649,6 +3788,14 @@ function renderTree() {
     // Build the lifecycle-aware display hierarchy once. Collapse, cards, layout,
     // and connections all consume this same context.
     const renderContext = buildChartRenderContext();
+    currentChartRenderContext = renderContext;
+    notifyOperationCycleWarning(renderContext);
+    if (renderContext.viewKind === "operation" && renderContext.operationStatus !== "ready") {
+        renderOperationEmptyState(renderContext.operationStatus, renderContext.operationRootPosition);
+        scheduleConnectionDraw();
+        renderAnnotations();
+        return;
+    }
     const hiddenIds = getCollapsedHiddenPositionIds(renderContext);
     renderContext.displayPositions = renderContext.displayPositions.filter(
         position => !hiddenIds.has(position.id)
@@ -3656,8 +3803,6 @@ function renderTree() {
     renderContext.displayPositionIds = new Set(
         renderContext.displayPositions.map(position => position.id)
     );
-    currentChartRenderContext = renderContext;
-
     // Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes.
     calculateInitialCoordinates(renderContext);
 
@@ -3700,7 +3845,10 @@ function drawConnections(renderContext = currentChartRenderContext) {
 
     const minChildYByManager = new Map();
     const capabilities = getConnectionRouteCapabilities();
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     let selectedRouteGeometry = null;
     childrenByManager.forEach((childIds, managerId) => {
         const childYs = childIds
@@ -3878,7 +4026,10 @@ function handleConnectionRoutePointerDown(event) {
     const storagePosition = getConnectionRouteStoragePosition(childId);
     if (!Number.isInteger(parentId) || !Number.isInteger(childId) || !storagePosition) return;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const route = ConnectionRouting.getScopedRoute(storagePosition.connectionRoutes, scopeKey, parentId)
         || { parentId, branchOffsetX: 0, branchOffsetY: 0, laneOffsetY: 0 };
     activeConnectionRouteDrag = {
@@ -4214,7 +4365,9 @@ function showEmployeeDetails(id, selectedPositionId = null) {
         ? OverviewGroupConsumer.getProfileMembers(currentChartRenderContext, displayPositionId, selectedPosition)
         : [];
     const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
-    const chartStructuralActionsAllowed = selectedDept !== "All" && canEditHr();
+    const chartStructuralActionsAllowed = selectedDept !== "All"
+        && !ChartViewScope.blocksStructuralActions(selectedDept)
+        && canEditHr();
     
     // Add active classes
     document.getElementById("detail-drawer-overlay").classList.add("active");
@@ -4515,7 +4668,8 @@ function openPositionLifecycleDrawer(positionId, options = {}) {
         ? positions.find(candidate => candidate.id === position.managerId)
         : null;
     const isViewer = document.body.classList.contains("role-viewer");
-    const structuralActionsAllowed = source === "position-management" || selectedDept !== "All";
+    const structuralActionsAllowed = source === "position-management"
+        || !ChartViewScope.blocksStructuralActions(selectedDept);
 
     document.getElementById("position-lifecycle-id").value = position.id;
     document.getElementById("position-lifecycle-title").innerText = getPositionTitle(position);
@@ -4960,7 +5114,7 @@ function updateOverviewGroupPrimaryOptions(preferredPositionId = null) {
 function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
 
     const employee = employees.find(candidate => candidate.id === employeeId);
     if (!employee) return false;
@@ -5047,7 +5201,7 @@ function getOverviewGroupErrorMessage(error) {
 async function handleOverviewGroupSubmit() {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
 
     const memberIds = Array.from(document.querySelectorAll(".overview-group-position-checkbox:checked"))
         .map(checkbox => parseInt(checkbox.dataset.positionId, 10))
@@ -5094,7 +5248,7 @@ async function handleOverviewGroupSubmit() {
 async function handleOverviewUngroup(positionId) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
 
     const selectedPosition = positions.find(position => position.id === Number(positionId));
     const groupId = selectedPosition?.overviewGroupId;
@@ -5125,7 +5279,8 @@ function openCombinePositionsModal(employeeId, selectedPosIds = null, options = 
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
     const source = options.source === "position-management" ? "position-management" : "chart";
-    const sourceAllowsStructuralAction = source === "position-management" || selectedDept !== "All";
+    const sourceAllowsStructuralAction = source === "position-management"
+        || !ChartViewScope.blocksStructuralActions(selectedDept);
     if (!sourceAllowsStructuralAction) return false;
 
     const emp = employees.find(e => e.id === employeeId);
@@ -5230,7 +5385,7 @@ async function handleCombinePositionsSubmit() {
 
     const modal = document.getElementById("combine-positions-modal");
     const source = modal?.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
     const employeeId = parseInt(modal?.dataset.employeeId, 10);
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
@@ -5294,7 +5449,7 @@ function openSplitPositionModal(positionId, options = {}) {
         return false;
     }
     const source = options.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
 
     const pos = positions.find(p => p.id === positionId);
     if (!pos) return false;
@@ -5400,7 +5555,7 @@ async function handleSplitPositionSubmit() {
     const modal = document.getElementById("split-positions-modal");
     if (!modal) return;
     const source = modal.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
 
     const positionId = parseInt(modal.dataset.positionId, 10);
     if (!positionId) return;
@@ -6191,6 +6346,7 @@ function clearCombineDropZones() {
 function renderCombineDropZones(draggedPosition) {
     clearCombineDropZones();
     if (isOverallView()) return;
+    if (ChartViewScope.blocksStructuralActions(selectedDept)) return;
     if (!combineDropZonesOverlay || !draggedPosition) return;
 
     const draggedEmployee = getAssignedEmployee(draggedPosition);
@@ -6507,7 +6663,11 @@ function handleCardDragEnd(e) {
     dragDropCombineTargetId = null;
     clearCombineDropZones();
 
-    if (combineTargetId !== null && !isOverallView() && draggedId !== null && combineTargetId !== draggedId) {
+    if (combineTargetId !== null
+        && !isOverallView()
+        && !ChartViewScope.blocksStructuralActions(selectedDept)
+        && draggedId !== null
+        && combineTargetId !== draggedId) {
         const targetPos = positions.find(p => p.id === combineTargetId);
         const draggedPos = positions.find(p => p.id === draggedId);
         const emp = draggedPos ? getAssignedEmployee(draggedPos) : null;

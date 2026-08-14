@@ -6,15 +6,19 @@ const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 await import("../hierarchy-utils.js");
 await import("../position-lifecycle.js");
 
-test("collapse controls are restricted to the Overall view", () => {
-    assert.match(appSource, /function isOverallView\(\)\s*\{\s*return selectedDept === "All";/);
-    assert.match(appSource, /if \(hasReports && isOverallView\(\)\) \{/);
-    assert.match(appSource, /if \(selectedDept !== "All"\) return;/);
+test("collapse controls are available in Overview and OPERATION only", () => {
+    const cardImplementation = appSource.match(
+        /function getPositionCardHTML\(position, renderContext = null\)\s*\{[\s\S]*?\n\}/
+    )?.[0] || "";
+
+    assert.match(appSource, /function isOverallView\(\)\s*\{\s*return ChartViewScope\.isOverview\(selectedDept\);/);
+    assert.match(cardImplementation, /if \(hasReports && ChartViewScope\.supportsCollapse\(selectedDept\)\) \{/);
+    assert.match(appSource, /if \(!ChartViewScope\.supportsCollapse\(selectedDept\)\) return;/);
 });
 
 test("department views ignore saved collapsed nodes", () => {
-    assert.match(appSource, /function getCollapsedHiddenPositionIds\(renderContext\)[\s\S]+if \(!isOverallView\(\)\) return hiddenIds;/);
-    assert.match(appSource, /btnExpandAll\.disabled = !isOverallView\(\);/);
+    assert.match(appSource, /function getCollapsedHiddenPositionIds\(renderContext\)[\s\S]+if \(!ChartViewScope\.supportsCollapse\(selectedDept\)\) return hiddenIds;/);
+    assert.match(appSource, /btnExpandAll\.disabled = !ChartViewScope\.supportsCollapse\(selectedDept\);/);
     assert.match(appSource, /function selectDepartment\(dept\)[\s\S]+updateCollapseControls\(\);/);
 });
 
@@ -39,7 +43,7 @@ test("grouped collapse state resolves real member IDs to the display card", () =
     );
     assert.match(
         appSource,
-        /function toggleNode\(id\)[\s\S]*getCollapsedRealPositionIdsForDisplayId\(id\)[\s\S]*collapsedNodes\.delete/
+        /function toggleNode\(id\)[\s\S]*getCollapsedRealPositionIdsForDisplayId\(id\)[\s\S]*activeCollapsedNodes\.delete/
     );
 });
 
@@ -73,6 +77,6 @@ test("employee focus clears every stored member ID for a collapsed display group
     assert.match(appSource, /function getCollapsedRealPositionIdsForDisplayId\(/);
     assert.match(
         expandPathImplementation,
-        /getCollapsedRealPositionIdsForDisplayId\(managerId[\s\S]*collapsedNodes\.delete/
+        /getCollapsedRealPositionIdsForDisplayId\(managerId[\s\S]*getActiveCollapsedNodes\(\)\.delete/
     );
 });
