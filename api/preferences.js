@@ -6,6 +6,12 @@ const OPERATION_COLLAPSE_SCOPES = new Set([
   "__operation_current__",
   "__operation_future__"
 ]);
+const KNOWN_PREFERENCE_KEYS = new Set([
+  "collapsedNodeIds",
+  "collapsedNodeIdsByScope",
+  "layoutLocked",
+  "operationRootPositionId"
+]);
 
 export default async function handler(request, response) {
   if (request.method === "GET") {
@@ -25,22 +31,9 @@ export default async function handler(request, response) {
 
 async function handleGet(response) {
   try {
-    const { data, error } = await supabase
-      .from("preferences")
-      .select("value")
-      .eq("key", "collapsed_nodes")
-      .single();
-
-    if (error) {
-      if (error.code === "PGRST116") { // PostgREST code for "no rows returned"
-        response.status(200).json(normalizePreferences());
-        return;
-      }
-      throw error;
-    }
-
+    const value = await readStoredPreferences();
     response.setHeader("Cache-Control", "no-store");
-    response.status(200).json(normalizePreferences(data?.value));
+    response.status(200).json(normalizePreferences(value));
   } catch (error) {
     console.error("Failed to load preferences from Supabase:", error);
     response.status(500).json({
@@ -52,7 +45,14 @@ async function handleGet(response) {
 
 async function handlePut(request, response) {
   try {
-    const body = normalizePreferences(await readJsonBody(request));
+    const [storedValue, requestValue] = await Promise.all([
+      readStoredPreferences(),
+      readJsonBody(request)
+    ]);
+    const body = normalizePreferences({
+      ...getUnknownPreferenceFields(storedValue),
+      ...getPreferenceRecord(requestValue)
+    });
     
     const { error } = await supabase
       .from("preferences")
@@ -74,13 +74,37 @@ async function handlePut(request, response) {
   }
 }
 
+async function readStoredPreferences() {
+  const { data, error } = await supabase
+    .from("preferences")
+    .select("value")
+    .eq("key", "collapsed_nodes")
+    .single();
+
+  if (error) {
+    if (error.code === "PGRST116") return null; // PostgREST code for "no rows returned"
+    throw error;
+  }
+  return data?.value;
+}
+
 function normalizePreferences(value) {
   return {
+    ...getUnknownPreferenceFields(value),
     collapsedNodeIds: normalizeIdList(value?.collapsedNodeIds),
     collapsedNodeIdsByScope: normalizeCollapsedNodeIdsByScope(value?.collapsedNodeIdsByScope),
     layoutLocked: value?.layoutLocked === true,
     operationRootPositionId: normalizePositionId(value?.operationRootPositionId)
   };
+}
+
+function getPreferenceRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function getUnknownPreferenceFields(value) {
+  return Object.fromEntries(Object.entries(getPreferenceRecord(value))
+    .filter(([key]) => !KNOWN_PREFERENCE_KEYS.has(key)));
 }
 
 function normalizeIdList(value) {

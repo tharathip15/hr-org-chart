@@ -511,6 +511,7 @@ let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
 let operationRootPositionId = null;
 let operationCollapsedNodesByScope = new Map();
+let additionalPreferences = {};
 let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
 let overviewGroupDialogController = null;
@@ -549,6 +550,12 @@ const OPERATION_COLLAPSE_SCOPE_KEYS = [
     "__operation_current__",
     "__operation_future__"
 ];
+const KNOWN_PREFERENCE_KEYS = new Set([
+    "collapsedNodeIds",
+    "collapsedNodeIdsByScope",
+    "layoutLocked",
+    "operationRootPositionId"
+]);
 
 function getOperationCollapseScopeKey() {
     return ChartViewScope.getStorageScopeKey(selectedDept, chartMode);
@@ -576,6 +583,12 @@ function sanitizeOperationRootPositionId(value) {
     if (value === null || value === undefined || value === "") return null;
     const id = Number(value);
     return Number.isInteger(id) ? id : null;
+}
+
+function getAdditionalPreferences(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => !KNOWN_PREFERENCE_KEYS.has(key)));
 }
 
 function removeCollapsedPositionId(id) {
@@ -2015,6 +2028,7 @@ function sanitizeCollapsedNodeIds(value) {
 }
 
 function applyPreferences(preferences) {
+    additionalPreferences = getAdditionalPreferences(preferences);
     collapsedNodes = new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIds));
     operationCollapsedNodesByScope = new Map(OPERATION_COLLAPSE_SCOPE_KEYS.map(scope => [
         scope,
@@ -2027,6 +2041,7 @@ function applyPreferences(preferences) {
 
 function getPreferencesPayload() {
     return {
+        ...additionalPreferences,
         collapsedNodeIds: [...collapsedNodes]
             .filter(id => Number.isInteger(id))
             .sort((a, b) => a - b),
