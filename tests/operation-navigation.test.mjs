@@ -487,3 +487,32 @@ test("anonymous startup renders a configured cross-department Operation subtree 
     { url: "/api/annotations", method: "GET" }
   ]);
 });
+
+test("anonymous Viewer collapse remains local and never attempts a protected preference write", () => {
+  const collapsedNodes = new Set();
+  const context = vm.createContext({
+    selectedDept: "__operation__",
+    authSession: null,
+    ChartViewScope: { supportsCollapse: () => true },
+    getActiveCollapsedNodes: () => collapsedNodes,
+    getCollapsedRealPositionIdsForDisplayId: id => collapsedNodes.has(id) ? [id] : [],
+    canEditHr: () => false,
+    savePreferences() {
+      throw new Error("anonymous Viewer must not attempt a protected preference write");
+    },
+    renderCount: 0,
+    fitCount: 0,
+    renderAll() { context.renderCount += 1; },
+    fitToScreen() { context.fitCount += 1; }
+  });
+
+  vm.runInContext(extractFunction("toggleNode"), context);
+
+  context.toggleNode(2);
+  assert.deepEqual([...collapsedNodes], [2]);
+
+  context.toggleNode(2);
+  assert.deepEqual([...collapsedNodes], []);
+  assert.equal(context.renderCount, 2);
+  assert.equal(context.fitCount, 2);
+});

@@ -159,6 +159,7 @@ test("expanding OPERATION Current leaves Future and Overview collapse state unch
       ["__operation_future__", new Set([3])]
     ]);
     let currentChartRenderContext = { realToDisplayId: new Map() };
+    const canEditHr = () => true;
     const savePreferences = () => Promise.resolve(true);
     const renderAll = () => {};
     const fitToScreen = () => {};

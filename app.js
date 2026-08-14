@@ -3140,7 +3140,7 @@ function toggleNode(id) {
         activeCollapsedNodes.add(id);
     }
     
-    savePreferences();
+    if (canEditHr()) savePreferences();
     renderAll();
     fitToScreen();
 }
