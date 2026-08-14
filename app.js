@@ -509,6 +509,8 @@ let employees = [];
 let positions = [];
 let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
+let operationRootPositionId = null;
+let operationCollapsedNodesByScope = new Map();
 let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
 let overviewGroupDialogController = null;
@@ -543,6 +545,44 @@ const treeContainer = document.getElementById("tree-container");
 const EMPLOYEES_API_URL = "/api/employees";
 const POSITIONS_API_URL = "/api/positions";
 const PREFERENCES_API_URL = "/api/preferences";
+const OPERATION_COLLAPSE_SCOPE_KEYS = [
+    "__operation_current__",
+    "__operation_future__"
+];
+
+function getOperationCollapseScopeKey() {
+    return ChartViewScope.getStorageScopeKey(selectedDept, chartMode);
+}
+
+function getActiveCollapsedNodes() {
+    if (!ChartViewScope.isOperation(selectedDept)) return collapsedNodes;
+    const scope = getOperationCollapseScopeKey();
+    if (!operationCollapsedNodesByScope.has(scope)) {
+        operationCollapsedNodesByScope.set(scope, new Set());
+    }
+    return operationCollapsedNodesByScope.get(scope);
+}
+
+function getOperationCollapsedNodeIdsByScope() {
+    return Object.fromEntries(OPERATION_COLLAPSE_SCOPE_KEYS.map(scope => [
+        scope,
+        [...(operationCollapsedNodesByScope.get(scope) || [])]
+            .filter(Number.isInteger)
+            .sort((a, b) => a - b)
+    ]));
+}
+
+function sanitizeOperationRootPositionId(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const id = Number(value);
+    return Number.isInteger(id) ? id : null;
+}
+
+function removeCollapsedPositionId(id) {
+    collapsedNodes.delete(id);
+    operationCollapsedNodesByScope.forEach(ids => ids.delete(id));
+}
+
 function refreshDisplayModeIcons() {
     if (window.lucide) window.lucide.createIcons();
 }
@@ -826,7 +866,7 @@ function getCurrentMutationState(collection) {
     if (collection === "positions") return positions;
     if (collection === "annotations") return annotations;
     if (collection === "preferences") {
-        return { collapsedNodeIds: [...collapsedNodes] };
+        return getPreferencesPayload();
     }
     throw new Error(`Unknown mutation collection: ${collection}`);
 }
@@ -837,7 +877,7 @@ function applyMutationState(collection, value) {
     else if (collection === "positions") positions = restored;
     else if (collection === "annotations") annotations = restored;
     else if (collection === "preferences") {
-        collapsedNodes = new Set(restored.collapsedNodeIds || []);
+        applyPreferences(restored);
     } else {
         throw new Error(`Unknown mutation collection: ${collection}`);
     }
@@ -885,7 +925,7 @@ function captureMutationSnapshot() {
         employees: cloneMutationState(employees),
         positions: cloneMutationState(positions),
         annotations: cloneMutationState(annotations),
-        preferences: { collapsedNodeIds: [...collapsedNodes] },
+        preferences: getPreferencesPayload(),
         selectedDept
     };
 }
@@ -1976,7 +2016,12 @@ function sanitizeCollapsedNodeIds(value) {
 
 function applyPreferences(preferences) {
     collapsedNodes = new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIds));
+    operationCollapsedNodesByScope = new Map(OPERATION_COLLAPSE_SCOPE_KEYS.map(scope => [
+        scope,
+        new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIdsByScope?.[scope]))
+    ]));
     isLayoutLocked = preferences?.layoutLocked === true;
+    operationRootPositionId = sanitizeOperationRootPositionId(preferences?.operationRootPositionId);
     updateLayoutLockUI();
 }
 
@@ -1985,7 +2030,9 @@ function getPreferencesPayload() {
         collapsedNodeIds: [...collapsedNodes]
             .filter(id => Number.isInteger(id))
             .sort((a, b) => a - b),
-        layoutLocked: isLayoutLocked
+        collapsedNodeIdsByScope: getOperationCollapsedNodeIdsByScope(),
+        layoutLocked: isLayoutLocked,
+        operationRootPositionId
     };
 }
 
@@ -2261,9 +2308,7 @@ async function handleImportFileChange(e) {
                 employees = parsed.employees;
                 positions = parsed.positions;
                 annotations = parsed.annotations || [];
-                collapsedNodes = new Set(
-                    sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || [])
-                );
+                applyPreferences(parsed.preferences || {});
                 setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
                 shouldSaveAnnotations = true;
@@ -2280,7 +2325,7 @@ async function handleImportFileChange(e) {
                 employees = parsed;
                 normalizeEmployeeProfiles();
                 positions = derivePositionsFromEmployees();
-                collapsedNodes.clear();
+                applyPreferences({});
                 setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
             } else {
@@ -3001,7 +3046,7 @@ function focusAndHighlightEmployee(id) {
 
 // Recursively expand all managers of an employee so they are visible
 function expandPathToEmployee(id) {
-    if (selectedDept !== "All") return;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return;
     const position = positions.find(position => position.employeeId === id) || positions.find(position => position.id === id);
     let displayPositionId = position
         ? currentChartRenderContext?.realToDisplayId.get(position.id) ?? position.id
@@ -3011,7 +3056,7 @@ function expandPathToEmployee(id) {
         const managerId = currentChartRenderContext?.effectiveManagerByDisplayId.get(displayPositionId) ?? null;
         if (managerId === null) break;
         getCollapsedRealPositionIdsForDisplayId(managerId).forEach(positionId => {
-            collapsedNodes.delete(positionId);
+            getActiveCollapsedNodes().delete(positionId);
         });
         displayPositionId = managerId;
     }
@@ -3022,7 +3067,7 @@ function isOverallView() {
 }
 
 function getCollapsedRealPositionIdsForDisplayId(positionId, renderContext = currentChartRenderContext) {
-    return [...collapsedNodes].filter(collapsedPositionId => {
+    return [...getActiveCollapsedNodes()].filter(collapsedPositionId => {
         const displayPositionId = renderContext?.realToDisplayId.get(collapsedPositionId)
             ?? collapsedPositionId;
         return displayPositionId === positionId;
@@ -3035,12 +3080,13 @@ function isDisplayPositionCollapsed(positionId, renderContext = currentChartRend
 
 // Expand / Collapse sub-tree toggle
 function toggleNode(id) {
-    if (selectedDept !== "All") return;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return;
+    const activeCollapsedNodes = getActiveCollapsedNodes();
     const collapsedMemberIds = getCollapsedRealPositionIdsForDisplayId(id);
     if (collapsedMemberIds.length > 0) {
-        collapsedMemberIds.forEach(positionId => collapsedNodes.delete(positionId));
+        collapsedMemberIds.forEach(positionId => activeCollapsedNodes.delete(positionId));
     } else {
-        collapsedNodes.add(id);
+        activeCollapsedNodes.add(id);
     }
     
     savePreferences();
@@ -3118,7 +3164,7 @@ function buildChartRenderContext() {
 
 function getCollapsedHiddenPositionIds(renderContext) {
     const hiddenIds = new Set();
-    if (!isOverallView()) return hiddenIds;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return hiddenIds;
 
     const reportsMap = new Map();
     renderContext.effectiveManagerByDisplayId.forEach((managerId, positionId) => {
@@ -3136,7 +3182,7 @@ function getCollapsedHiddenPositionIds(renderContext) {
         });
     }
 
-    collapsedNodes.forEach(positionId => {
+    getActiveCollapsedNodes().forEach(positionId => {
         const displayPositionId = renderContext.realToDisplayId.get(positionId) ?? positionId;
         if (renderContext.displayPositionIds.has(displayPositionId)) markHidden(displayPositionId);
     });
@@ -5737,7 +5783,7 @@ async function deletePosition(id) {
     });
 
     positions = positions.filter(position => position.id !== id);
-    collapsedNodes.delete(id);
+    removeCollapsedPositionId(id);
 
     await savePositions();
     await savePreferences();
@@ -5904,6 +5950,10 @@ async function deleteEmployee(id) {
     const employeesSnapshot = structuredClone(employees);
     const positionsSnapshot = structuredClone(positions);
     const collapsedNodesSnapshot = new Set(collapsedNodes);
+    const operationCollapsedNodesByScopeSnapshot = new Map(
+        [...operationCollapsedNodesByScope].map(([scope, ids]) => [scope, new Set(ids)])
+    );
+    const operationRootPositionIdSnapshot = operationRootPositionId;
     const linkedPositionIds = positions
         .filter(position => position.employeeId === id)
         .map(position => position.id);
@@ -5915,6 +5965,9 @@ async function deleteEmployee(id) {
             : employee);
     positions = EmployeeDirectory.detachEmployeeFromPositions(id, positions);
     linkedPositionIds.forEach(positionId => collapsedNodes.delete(positionId));
+    linkedPositionIds.forEach(positionId => {
+        operationCollapsedNodesByScope.forEach(ids => ids.delete(positionId));
+    });
 
     const saveSafely = async save => {
         try {
@@ -5934,6 +5987,8 @@ async function deleteEmployee(id) {
         employees = employeesSnapshot;
         positions = positionsSnapshot;
         collapsedNodes = collapsedNodesSnapshot;
+        operationCollapsedNodesByScope = operationCollapsedNodesByScopeSnapshot;
+        operationRootPositionId = operationRootPositionIdSnapshot;
         saveLocalBackup();
         saveLocalPositionsBackup();
         try {

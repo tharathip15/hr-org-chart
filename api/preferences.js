@@ -2,6 +2,10 @@ import { supabase } from "./_helpers/supabase.js";
 import { requireEditorWithCsrf } from "./_helpers/session.js";
 
 const MAX_BODY_SIZE = 256 * 1024;
+const OPERATION_COLLAPSE_SCOPES = new Set([
+  "__operation_current__",
+  "__operation_future__"
+]);
 
 export default async function handler(request, response) {
   if (request.method === "GET") {
@@ -29,7 +33,7 @@ async function handleGet(response) {
 
     if (error) {
       if (error.code === "PGRST116") { // PostgREST code for "no rows returned"
-        response.status(200).json({ collapsedNodeIds: [], layoutLocked: false });
+        response.status(200).json(normalizePreferences());
         return;
       }
       throw error;
@@ -71,16 +75,31 @@ async function handlePut(request, response) {
 }
 
 function normalizePreferences(value) {
-  const collapsedNodeIds = Array.isArray(value?.collapsedNodeIds)
-    ? value.collapsedNodeIds
-        .map(id => parseInt(id, 10))
-        .filter(Number.isInteger)
-    : [];
-
   return {
-    collapsedNodeIds: [...new Set(collapsedNodeIds)].sort((a, b) => a - b),
-    layoutLocked: value?.layoutLocked === true
+    collapsedNodeIds: normalizeIdList(value?.collapsedNodeIds),
+    collapsedNodeIdsByScope: normalizeCollapsedNodeIdsByScope(value?.collapsedNodeIdsByScope),
+    layoutLocked: value?.layoutLocked === true,
+    operationRootPositionId: normalizePositionId(value?.operationRootPositionId)
   };
+}
+
+function normalizeIdList(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map(id => parseInt(id, 10))
+    .filter(Number.isInteger))].sort((a, b) => a - b);
+}
+
+function normalizeCollapsedNodeIdsByScope(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).flatMap(([scope, ids]) =>
+    OPERATION_COLLAPSE_SCOPES.has(scope) ? [[scope, normalizeIdList(ids)]] : []
+  ));
+}
+
+function normalizePositionId(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const id = Number(value);
+  return Number.isInteger(id) ? id : null;
 }
 
 function readJsonBody(request) {
