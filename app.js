@@ -2918,6 +2918,15 @@ function setupEventListeners() {
             deletePosition(id);
         }
     });
+    const btnSetOperationRoot = document.getElementById("btn-set-operation-root");
+    if (btnSetOperationRoot) {
+        btnSetOperationRoot.addEventListener("click", () => {
+            const positionId = parseInt(document.getElementById("form-position-id").value, 10);
+            if (Number.isInteger(positionId)) {
+                setOperationRootPosition(positionId);
+            }
+        });
+    }
     
     // Edit & Delete actions inside Detail view
     document.getElementById("btn-edit-employee").addEventListener("click", () => {
@@ -5040,6 +5049,11 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-status-reason").value = "";
     document.getElementById("btn-delete-position").disabled = true;
     document.getElementById("btn-open-position-actions").disabled = true;
+    const btnSetOperationRoot = document.getElementById("btn-set-operation-root");
+    if (btnSetOperationRoot) {
+        btnSetOperationRoot.disabled = true;
+        btnSetOperationRoot.textContent = "Set as Operation Root";
+    }
     populatePositionFormLookups(editId);
 
     if (editId === null) return;
@@ -5057,6 +5071,12 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-status-reason").value = position.statusReason || "";
     document.getElementById("btn-delete-position").disabled = false;
     document.getElementById("btn-open-position-actions").disabled = false;
+    if (btnSetOperationRoot) {
+        btnSetOperationRoot.disabled = false;
+        btnSetOperationRoot.textContent = position.id === operationRootPositionId
+            ? "Current Operation Root"
+            : "Set as Operation Root";
+    }
 
     const manager = positions.find(candidate => candidate.id === position.managerId);
     document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
@@ -5793,6 +5813,9 @@ function renderPositionsList() {
                 <span class="position-row-main">
                     <strong>${escapeHTML(getPositionTitle(position))}</strong>
                     <small>${escapeHTML(getPositionDepartment(position))}</small>
+                    ${position.id === operationRootPositionId
+                        ? `<small class="operation-root-badge">OPERATION ROOT</small>`
+                        : ""}
                 </span>
                 <span class="position-row-meta">
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
@@ -5810,6 +5833,34 @@ function renderPositionsList() {
             resetPositionForm(id);
         });
     });
+}
+
+async function setOperationRootPosition(positionId) {
+    if (!requireEditorAction()) return false;
+    const position = positions.find(candidate => candidate.id === Number(positionId));
+    if (!position) {
+        showNotification("Select a valid position for the OPERATION root.", "error");
+        return false;
+    }
+    if (position.id === operationRootPositionId) return true;
+    if (!window.confirm(`Set "${getPositionTitle(position)}" as the OPERATION root?`)) return false;
+
+    const previousRootId = operationRootPositionId;
+    operationRootPositionId = position.id;
+    const saved = await savePreferences();
+    if (!saved) {
+        operationRootPositionId = previousRootId;
+        showNotification("Could not change the OPERATION root; the previous root was restored.", "error");
+        renderAll();
+        renderPositionsList();
+        return false;
+    }
+
+    renderAll();
+    renderPositionsList();
+    resetPositionForm(position.id);
+    showNotification(`OPERATION now starts at ${getPositionTitle(position)}.`, "success");
+    return true;
 }
 
 async function handlePositionFormSubmit(e) {

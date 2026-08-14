@@ -3785,9 +3785,15 @@ body.role-viewer #btn-save-position-lifecycle,
 body.role-viewer #btn-split-position-lifecycle,
 body.role-viewer #btn-combine-position-lifecycle,
 body.role-viewer #btn-open-position-actions,
+body.role-viewer #btn-set-operation-root,
 body.role-viewer .positions-form-card, /* Hide positions form for viewers */
 body.role-viewer #employee-modal .modal-footer button[type="submit"] {
     display: none !important;
+}
+
+.operation-root-badge {
+    color: var(--accent-primary);
+    font-weight: 700;
 }
 
 body.role-viewer .node-card {
