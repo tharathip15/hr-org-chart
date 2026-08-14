@@ -229,6 +229,23 @@ test("Employee Profile separates Overview grouping from real Combine", () => {
     assert.match(appSource, /OrgHierarchy\.ungroupOverviewPositions\(/);
 });
 
+test("chart structural actions are hidden in aggregate views while Position Management bypasses the chart scope", () => {
+    assert.match(
+        appSource,
+        /function chartStructuralActionsAllowed\(\)\s*\{\s*return !ChartViewScope\.blocksStructuralActions\(selectedDept\) && canEditHr\(\);\s*\}/
+    );
+    assert.match(
+        appSource,
+        /const structuralActionsAllowed = source === "position-management"\s*\|\| chartStructuralActionsAllowed\(\);/
+    );
+    assert.match(
+        appSource,
+        /const sourceAllowsStructuralAction = source === "position-management"\s*\|\| chartStructuralActionsAllowed\(\);/
+    );
+    assert.match(appSource, /const combineButtonHTML = structuralActionsAllowed && employeePositions\.length >= 2/);
+    assert.doesNotMatch(appSource, /chartStructuralActionsAllowed && employeePositions\.length >= 2/);
+});
+
 test("Overview Group dialog starts inert and delegates its keyboard lifecycle to the tested controller", () => {
     const modalStart = htmlSource.indexOf('id="overview-group-modal"');
     const modalTag = htmlSource.slice(htmlSource.lastIndexOf("<div", modalStart), htmlSource.indexOf(">", modalStart) + 1);

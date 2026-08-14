@@ -15,11 +15,15 @@ test("history snapshots preserve the complete raw position notes envelope throug
     isManual: true,
     manualLayouts: {
       Logistics: { x: 410, y: 520 },
-      Procurement: { x: 730, y: 520 }
+      Procurement: { x: 730, y: 520 },
+      __operation_current__: { x: 500, y: 600 },
+      __operation_future__: { x: 700, y: 800 }
     },
     connectionRoutes: {
       __overview__: { parentId: 12, branchOffsetX: -80, laneOffsetY: 45 },
-      Logistics: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 }
+      Logistics: { parentId: 12, branchOffsetX: 110, laneOffsetY: -30 },
+      __operation_current__: { parentId: 2, branchOffsetX: 20, laneOffsetY: 30 },
+      __operation_future__: { parentId: 2, branchOffsetX: 40, laneOffsetY: 50 }
     },
     status: "future",
     effectiveDate: "2026-10-01",
@@ -46,6 +50,18 @@ test("history snapshots preserve the complete raw position notes envelope throug
   assert.equal(snapshot.notes, rawNotes);
   assert.equal(restored.notes, rawNotes);
   assert.deepEqual(restored, databaseRow);
+  assert.deepEqual(JSON.parse(restored.notes).manualLayouts.__operation_current__, { x: 500, y: 600 });
+  assert.deepEqual(JSON.parse(restored.notes).manualLayouts.__operation_future__, { x: 700, y: 800 });
+  assert.deepEqual(JSON.parse(restored.notes).connectionRoutes.__operation_current__, {
+    parentId: 2,
+    branchOffsetX: 20,
+    laneOffsetY: 30
+  });
+  assert.deepEqual(JSON.parse(restored.notes).connectionRoutes.__operation_future__, {
+    parentId: 2,
+    branchOffsetX: 40,
+    laneOffsetY: 50
+  });
 });
 
 test("history restore rebuilds the notes envelope used by legacy flattened snapshots", () => {

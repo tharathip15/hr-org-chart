@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import vm from "node:vm";
 
+await import(new URL("../chart-view-scope.js", import.meta.url));
 await import(new URL("../connection-routing.js", import.meta.url)).catch(error => {
   if (error?.code !== "ERR_MODULE_NOT_FOUND") throw error;
 });
@@ -134,6 +135,17 @@ test("normalization uses finite offsets clamped to plus or minus 4000", () => {
 test("All selects the overview scope", () => {
   assert.equal(globalThis.ConnectionRouting.getScopeKey("All"), "__overview__");
   assert.equal(globalThis.ConnectionRouting.getScopeKey(" Sales "), "Sales");
+});
+
+test("OPERATION connector scopes remain separate across chart modes", () => {
+  assert.equal(
+    globalThis.ConnectionRouting.getScopeKey("__operation__", "current"),
+    "__operation_current__"
+  );
+  assert.equal(
+    globalThis.ConnectionRouting.getScopeKey("__operation__", "future"),
+    "__operation_future__"
+  );
 });
 
 test("clearing a scope from positions preserves unrelated routes", () => {

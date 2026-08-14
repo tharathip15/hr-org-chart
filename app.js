@@ -558,8 +558,12 @@ const KNOWN_PREFERENCE_KEYS = new Set([
     "operationRootPositionId"
 ]);
 
-function getOperationCollapseScopeKey() {
+function getActiveStorageScopeKey() {
     return ChartViewScope.getStorageScopeKey(selectedDept, chartMode);
+}
+
+function getOperationCollapseScopeKey() {
+    return getActiveStorageScopeKey();
 }
 
 function getActiveCollapsedNodes() {
@@ -3106,6 +3110,10 @@ function isOperationView() {
     return ChartViewScope.isOperation(selectedDept);
 }
 
+function chartStructuralActionsAllowed() {
+    return !ChartViewScope.blocksStructuralActions(selectedDept) && canEditHr();
+}
+
 function getCollapsedRealPositionIdsForDisplayId(positionId, renderContext = currentChartRenderContext) {
     return [...getActiveCollapsedNodes()].filter(collapsedPositionId => {
         const displayPositionId = renderContext?.realToDisplayId.get(collapsedPositionId)
@@ -3669,9 +3677,9 @@ function getPositionNote(position) {
 }
 
 function getManualPositionCoordinates(position) {
-    const coordinates = selectedDept === "All"
+    const coordinates = isOverallView()
         ? (position.isManual ? { x: position.x, y: position.y } : null)
-        : position.manualLayouts?.[selectedDept];
+        : position.manualLayouts?.[getActiveStorageScopeKey()];
 
     if (!coordinates) return null;
 
@@ -4378,10 +4386,8 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     const representedPositions = displayPositionId !== null
         ? OverviewGroupConsumer.getProfileMembers(currentChartRenderContext, displayPositionId, selectedPosition)
         : [];
-    const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
-    const chartStructuralActionsAllowed = selectedDept !== "All"
-        && !ChartViewScope.blocksStructuralActions(selectedDept)
-        && canEditHr();
+    const isGroupedOverviewCard = isOverallView() && representedPositions.length > 1;
+    const structuralActionsAllowed = chartStructuralActionsAllowed();
     
     // Add active classes
     document.getElementById("detail-drawer-overlay").classList.add("active");
@@ -4394,7 +4400,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     
     const btnSplitEmployeePosition = document.getElementById("btn-split-employee-position");
     if (btnSplitEmployeePosition) {
-        const canSplit = chartStructuralActionsAllowed && Boolean(selectedPosition);
+        const canSplit = structuralActionsAllowed && Boolean(selectedPosition);
         btnSplitEmployeePosition.hidden = !canSplit;
         btnSplitEmployeePosition.disabled = !canSplit;
         if (selectedPosition) {
@@ -4408,7 +4414,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     const compatibleOverviewPositions = getCompatibleOverviewPositions(selectedEmployeeId, selectedPosition);
     const btnGroupOverviewPositions = document.getElementById("btn-group-overview-positions");
     if (btnGroupOverviewPositions) {
-        const canGroup = chartStructuralActionsAllowed && compatibleOverviewPositions.length >= 2;
+        const canGroup = structuralActionsAllowed && compatibleOverviewPositions.length >= 2;
         btnGroupOverviewPositions.hidden = !canGroup;
         btnGroupOverviewPositions.disabled = !canGroup;
         if (selectedPosition) {
@@ -4419,7 +4425,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
 
     const btnUngroupOverviewPositions = document.getElementById("btn-ungroup-overview-positions");
     if (btnUngroupOverviewPositions) {
-        const canUngroup = chartStructuralActionsAllowed && Boolean(selectedPosition?.overviewGroupId);
+        const canUngroup = structuralActionsAllowed && Boolean(selectedPosition?.overviewGroupId);
         btnUngroupOverviewPositions.hidden = !canUngroup;
         btnUngroupOverviewPositions.disabled = !canUngroup;
         if (selectedPosition) {
@@ -4504,7 +4510,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
         });
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
-        const combineButtonHTML = chartStructuralActionsAllowed && employeePositions.length >= 2 ? `
+        const combineButtonHTML = structuralActionsAllowed && employeePositions.length >= 2 ? `
             <button type="button" class="btn btn-danger" id="btn-open-combine-modal" style="margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
                 <i data-lucide="combine"></i> Combine Real Positions
             </button>
@@ -4683,7 +4689,7 @@ function openPositionLifecycleDrawer(positionId, options = {}) {
         : null;
     const isViewer = document.body.classList.contains("role-viewer");
     const structuralActionsAllowed = source === "position-management"
-        || !ChartViewScope.blocksStructuralActions(selectedDept);
+        || chartStructuralActionsAllowed();
 
     document.getElementById("position-lifecycle-id").value = position.id;
     document.getElementById("position-lifecycle-title").innerText = getPositionTitle(position);
@@ -5140,7 +5146,7 @@ function updateOverviewGroupPrimaryOptions(preferredPositionId = null) {
 function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const employee = employees.find(candidate => candidate.id === employeeId);
     if (!employee) return false;
@@ -5227,7 +5233,7 @@ function getOverviewGroupErrorMessage(error) {
 async function handleOverviewGroupSubmit() {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const memberIds = Array.from(document.querySelectorAll(".overview-group-position-checkbox:checked"))
         .map(checkbox => parseInt(checkbox.dataset.positionId, 10))
@@ -5274,7 +5280,7 @@ async function handleOverviewGroupSubmit() {
 async function handleOverviewUngroup(positionId) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const selectedPosition = positions.find(position => position.id === Number(positionId));
     const groupId = selectedPosition?.overviewGroupId;
@@ -5306,7 +5312,7 @@ function openCombinePositionsModal(employeeId, selectedPosIds = null, options = 
     if (document.body.classList.contains("role-viewer")) return false;
     const source = options.source === "position-management" ? "position-management" : "chart";
     const sourceAllowsStructuralAction = source === "position-management"
-        || !ChartViewScope.blocksStructuralActions(selectedDept);
+        || chartStructuralActionsAllowed();
     if (!sourceAllowsStructuralAction) return false;
 
     const emp = employees.find(e => e.id === employeeId);
@@ -5411,7 +5417,7 @@ async function handleCombinePositionsSubmit() {
 
     const modal = document.getElementById("combine-positions-modal");
     const source = modal?.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
     const employeeId = parseInt(modal?.dataset.employeeId, 10);
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
@@ -5475,7 +5481,7 @@ function openSplitPositionModal(positionId, options = {}) {
         return false;
     }
     const source = options.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
 
     const pos = positions.find(p => p.id === positionId);
     if (!pos) return false;
@@ -5581,7 +5587,7 @@ async function handleSplitPositionSubmit() {
     const modal = document.getElementById("split-positions-modal");
     if (!modal) return;
     const source = modal.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && ChartViewScope.blocksStructuralActions(selectedDept)) return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
 
     const positionId = parseInt(modal.dataset.positionId, 10);
     if (!positionId) return;
@@ -6403,8 +6409,7 @@ function clearCombineDropZones() {
 
 function renderCombineDropZones(draggedPosition) {
     clearCombineDropZones();
-    if (isOverallView()) return;
-    if (ChartViewScope.blocksStructuralActions(selectedDept)) return;
+    if (!chartStructuralActionsAllowed()) return;
     if (!combineDropZonesOverlay || !draggedPosition) return;
 
     const draggedEmployee = getAssignedEmployee(draggedPosition);
@@ -6599,7 +6604,7 @@ function handleCardDragStart(e) {
     cardDragMoved = false;
     dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
     dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
-    if (!isOverallView()) {
+    if (chartStructuralActionsAllowed()) {
         renderCombineDropZones(position);
         captureStartingCombineDropTargets(card);
     }
@@ -6722,8 +6727,7 @@ function handleCardDragEnd(e) {
     clearCombineDropZones();
 
     if (combineTargetId !== null
-        && !isOverallView()
-        && !ChartViewScope.blocksStructuralActions(selectedDept)
+        && chartStructuralActionsAllowed()
         && draggedId !== null
         && combineTargetId !== draggedId) {
         const targetPos = positions.find(p => p.id === combineTargetId);
@@ -6764,13 +6768,13 @@ function handleCardDragEnd(e) {
             if (!movedPosition || !dragStartCoordinates.has(positionId)) return;
 
             const renderedCoordinates = getRenderedPositionCoordinates(movedPosition);
-            if (selectedDept === "All") {
+            if (isOverallView()) {
                 movedPosition.x = renderedCoordinates.x;
                 movedPosition.y = renderedCoordinates.y;
                 movedPosition.isManual = true;
             } else {
                 const manualLayouts = normalizeManualLayouts(movedPosition.manualLayouts);
-                manualLayouts[selectedDept] = {
+                manualLayouts[getActiveStorageScopeKey()] = {
                     x: renderedCoordinates.x,
                     y: renderedCoordinates.y
                 };
