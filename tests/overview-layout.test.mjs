@@ -38,7 +38,7 @@ test("app updates position coordinates on drag move", () => {
 
 test("manual position coordinates remain authoritative in Overall view", () => {
     assert.match(appSource, /function getManualPositionCoordinates\(position\)/);
-    assert.match(appSource, /selectedDept === "All"[\s\S]+position\.isManual/);
+    assert.match(appSource, /isOverallView\(\)[\s\S]+position\.isManual/);
     assert.match(appSource, /position\.x/);
     assert.match(appSource, /position\.y/);
 });
@@ -47,11 +47,11 @@ test("department views keep manual coordinates separate from Overall", () => {
     assert.match(appSource, /function getManualPositionCoordinates\(position\)/);
     assert.match(appSource, /manualLayouts/);
     assert.match(appSource, /position\.renderX/);
-    assert.match(appSource, /selectedDept === "All"/);
+    assert.match(appSource, /isOverallView\(\)/);
 });
 
 test("dragging a department card persists coordinates for that department", () => {
-    assert.match(appSource, /manualLayouts\[selectedDept\]/);
+    assert.match(appSource, /manualLayouts\[getActiveStorageScopeKey\(\)\]/);
     assert.match(appSource, /draggedPositionIds\.forEach\(positionId =>/);
     assert.match(appSource, /subtreePosition\.renderX = Math\.round\(start\.x \+ deltaX\);/);
     assert.match(appSource, /subtreePosition\.renderY = Math\.round\(start\.y \+ deltaY\);/);
@@ -88,7 +88,7 @@ test("dragging a subtree applies one snapped delta to every descendant", () => {
 
 test("dragging persists the subtree in the active coordinate scope", () => {
     assert.match(appSource, /draggedPositionIds\.forEach\(positionId =>/);
-    assert.match(appSource, /manualLayouts\[selectedDept\] =/);
+    assert.match(appSource, /manualLayouts\[getActiveStorageScopeKey\(\)\] =/);
     assert.match(appSource, /movedPosition\.isManual = true;/);
 });
 

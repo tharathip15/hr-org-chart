@@ -1,20 +1,40 @@
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import vm from "node:vm";
 
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 await import("../hierarchy-utils.js");
 await import("../position-lifecycle.js");
 
-test("collapse controls are restricted to the Overall view", () => {
-    assert.match(appSource, /function isOverallView\(\)\s*\{\s*return selectedDept === "All";/);
-    assert.match(appSource, /if \(hasReports && isOverallView\(\)\) \{/);
-    assert.match(appSource, /if \(selectedDept !== "All"\) return;/);
+function extractFunction(name) {
+    const marker = `function ${name}(`;
+    const start = appSource.indexOf(marker);
+    assert.notEqual(start, -1, `${name} must exist`);
+
+    const bodyStart = appSource.indexOf("{", start);
+    let depth = 0;
+    for (let index = bodyStart; index < appSource.length; index += 1) {
+        if (appSource[index] === "{") depth += 1;
+        if (appSource[index] === "}") depth -= 1;
+        if (depth === 0) return appSource.slice(start, index + 1);
+    }
+    throw new Error(`Could not extract ${name}`);
+}
+
+test("collapse controls are available in Overview and OPERATION only", () => {
+    const cardImplementation = appSource.match(
+        /function getPositionCardHTML\(position, renderContext = null\)\s*\{[\s\S]*?\n\}/
+    )?.[0] || "";
+
+    assert.match(appSource, /function isOverallView\(\)\s*\{\s*return ChartViewScope\.isOverview\(selectedDept\);/);
+    assert.match(cardImplementation, /if \(hasReports && ChartViewScope\.supportsCollapse\(selectedDept\)\) \{/);
+    assert.match(appSource, /if \(!ChartViewScope\.supportsCollapse\(selectedDept\)\) return;/);
 });
 
 test("department views ignore saved collapsed nodes", () => {
-    assert.match(appSource, /function getCollapsedHiddenPositionIds\(renderContext\)[\s\S]+if \(!isOverallView\(\)\) return hiddenIds;/);
-    assert.match(appSource, /btnExpandAll\.disabled = !isOverallView\(\);/);
+    assert.match(appSource, /function getCollapsedHiddenPositionIds\(renderContext\)[\s\S]+if \(!ChartViewScope\.supportsCollapse\(selectedDept\)\) return hiddenIds;/);
+    assert.match(appSource, /btnExpandAll\.disabled = !ChartViewScope\.supportsCollapse\(selectedDept\);/);
     assert.match(appSource, /function selectDepartment\(dept\)[\s\S]+updateCollapseControls\(\);/);
 });
 
@@ -39,7 +59,7 @@ test("grouped collapse state resolves real member IDs to the display card", () =
     );
     assert.match(
         appSource,
-        /function toggleNode\(id\)[\s\S]*getCollapsedRealPositionIdsForDisplayId\(id\)[\s\S]*collapsedNodes\.delete/
+        /function toggleNode\(id\)[\s\S]*getCollapsedRealPositionIdsForDisplayId\(id\)[\s\S]*activeCollapsedNodes\.delete/
     );
 });
 
@@ -73,6 +93,25 @@ test("employee focus clears every stored member ID for a collapsed display group
     assert.match(appSource, /function getCollapsedRealPositionIdsForDisplayId\(/);
     assert.match(
         expandPathImplementation,
-        /getCollapsedRealPositionIdsForDisplayId\(managerId[\s\S]*collapsedNodes\.delete/
+        /getCollapsedRealPositionIdsForDisplayId\(managerId[\s\S]*getActiveCollapsedNodes\(\)\.delete/
     );
+});
+
+test("collapsing a position in a visible cycle hides descendants without hiding the collapse origin", () => {
+    const context = vm.createContext({
+        ChartViewScope: { supportsCollapse: () => true },
+        selectedDept: "__operation__",
+        getActiveCollapsedNodes: () => new Set([1])
+    });
+    vm.runInContext(`
+        ${extractFunction("getCollapsedHiddenPositionIds")}
+        const renderContext = {
+            displayPositionIds: new Set([1, 2, 3]),
+            realToDisplayId: new Map([[1, 1], [2, 2], [3, 3]]),
+            effectiveManagerByDisplayId: new Map([[1, 2], [2, 1], [3, 2]])
+        };
+        globalThis.hiddenIds = [...getCollapsedHiddenPositionIds(renderContext)].sort((a, b) => a - b);
+    `, context);
+
+    assert.deepEqual([...context.hiddenIds], [2, 3]);
 });

@@ -11,8 +11,11 @@
         return Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, finite(value)));
     }
 
-    function getScopeKey(selectedDept) {
-        return selectedDept === "All" ? OVERVIEW_SCOPE : String(selectedDept || "").trim();
+    function getScopeKey(selectedView, chartMode = "current") {
+        if (root.ChartViewScope?.getStorageScopeKey) {
+            return root.ChartViewScope.getStorageScopeKey(selectedView, chartMode);
+        }
+        return selectedView === "All" ? OVERVIEW_SCOPE : String(selectedView || "").trim();
     }
 
     function normalizeRoute(route) {

@@ -18,21 +18,31 @@
         return toInteger(position?.managerId);
     }
 
-    function buildEffectiveManagerByRealId(sourcePositions, visiblePositionIds) {
+    function buildEffectiveManagerByRealId(sourcePositions, visiblePositionIds, baseManagerByRealId = null) {
         const positions = Array.isArray(sourcePositions) ? sourcePositions : [];
         const positionById = new Map(
             positions
                 .map(position => [toInteger(position.id), position])
                 .filter(([positionId]) => positionId !== null)
         );
+        const baseManagers = baseManagerByRealId instanceof Map
+            ? baseManagerByRealId
+            : null;
         const visibleIds = visiblePositionIds instanceof Set
             ? new Set([...visiblePositionIds].map(toInteger).filter(Number.isInteger))
             : new Set(Array.from(visiblePositionIds || []).map(toInteger).filter(Number.isInteger));
         const effectiveManagerByRealId = new Map();
 
+        function getBaseManagerId(positionId) {
+            if (baseManagers?.has(positionId)) {
+                return toInteger(baseManagers.get(positionId));
+            }
+            return toInteger(positionById.get(positionId)?.managerId);
+        }
+
         positionById.forEach((position, positionId) => {
             const visited = new Set([positionId]);
-            let managerId = toInteger(position.managerId);
+            let managerId = getBaseManagerId(positionId);
 
             while (managerId !== null && !visited.has(managerId)) {
                 if (visibleIds.has(managerId)) break;
@@ -55,7 +65,7 @@
                     }
                 }
 
-                managerId = toInteger(manager.managerId);
+                managerId = getBaseManagerId(managerId);
             }
 
             effectiveManagerByRealId.set(
@@ -64,6 +74,28 @@
                     ? managerId
                     : null
             );
+        });
+
+        const completed = new Set();
+        effectiveManagerByRealId.forEach((_, startId) => {
+            if (!visibleIds.has(startId) || completed.has(startId)) return;
+            const path = [];
+            const pathIndex = new Map();
+            let currentId = startId;
+
+            while (currentId !== null && visibleIds.has(currentId)) {
+                if (pathIndex.has(currentId)) {
+                    const cycleIds = path.slice(pathIndex.get(currentId));
+                    effectiveManagerByRealId.set(Math.min(...cycleIds), null);
+                    break;
+                }
+                if (completed.has(currentId)) break;
+                pathIndex.set(currentId, path.length);
+                path.push(currentId);
+                currentId = toInteger(effectiveManagerByRealId.get(currentId));
+            }
+
+            path.forEach(positionId => completed.add(positionId));
         });
 
         return effectiveManagerByRealId;
@@ -82,7 +114,7 @@
         );
     }
 
-    function repairPositionHierarchy(sourcePositions) {
+    function repairPositionHierarchy(sourcePositions, { repairCycles = true } = {}) {
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
             : [];
@@ -105,7 +137,7 @@
             }
         });
 
-        positions.forEach(start => {
+        if (repairCycles) positions.forEach(start => {
             const path = [];
             const pathIndex = new Map();
             let current = start;
@@ -218,6 +250,25 @@
 
         visit(rootPositionId);
         return result;
+    }
+
+    function isPositionInManagerCycle(sourcePositions, positionId) {
+        const targetId = toInteger(positionId);
+        if (targetId === null) return false;
+        const positionById = new Map((Array.isArray(sourcePositions) ? sourcePositions : [])
+            .map(position => [toInteger(position.id), position])
+            .filter(([id]) => id !== null));
+        if (!positionById.has(targetId)) return false;
+
+        const visited = new Set([targetId]);
+        let currentId = toInteger(positionById.get(targetId)?.managerId);
+        while (currentId !== null && positionById.has(currentId)) {
+            if (currentId === targetId) return true;
+            if (visited.has(currentId)) return false;
+            visited.add(currentId);
+            currentId = toInteger(positionById.get(currentId)?.managerId);
+        }
+        return false;
     }
 
     function getOverviewDragPositionIds(sourcePositions, displayPositionId, memberIds) {
@@ -434,6 +485,7 @@
         const positions = Array.isArray(sourcePositions)
             ? sourcePositions.map(position => ({ ...position }))
             : [];
+        const originalPositions = positions.map(position => ({ ...position }));
 
         const primaryId = toInteger(primaryPositionId);
         const secIds = new Set(
@@ -451,9 +503,15 @@
         if (options.title) primaryPosition.title = String(options.title).trim();
         if (options.department) primaryPosition.department = String(options.department).trim();
         if (options.notes !== undefined) primaryPosition.notes = String(options.notes).trim();
+        const changedManagerPositionIds = new Set();
         if (options.managerId !== undefined) {
             const managerId = toInteger(options.managerId);
-            if (managerId !== primaryId) primaryPosition.managerId = managerId;
+            if (managerId !== primaryId) {
+                if (toInteger(primaryPosition.managerId) !== managerId) {
+                    changedManagerPositionIds.add(primaryId);
+                }
+                primaryPosition.managerId = managerId;
+            }
         }
         primaryPosition = clearOverviewMetadata(primaryPosition);
         positions[positions.findIndex(position => toInteger(position.id) === primaryId)] = primaryPosition;
@@ -462,11 +520,17 @@
             const currentManagerId = toInteger(position.managerId);
             if (currentManagerId !== null && secIds.has(currentManagerId)) {
                 position.managerId = primaryId;
+                changedManagerPositionIds.add(toInteger(position.id));
             }
         });
 
         const nextPositions = positions.filter(position => !secIds.has(toInteger(position.id)));
-        const repairResult = repairPositionHierarchy(nextPositions);
+        const repairResult = repairPositionHierarchy(nextPositions, { repairCycles: false });
+        if ([...changedManagerPositionIds].some(positionId =>
+            isPositionInManagerCycle(repairResult.positions, positionId)
+        )) {
+            return { positions: originalPositions, changed: false, error: "cyclical_combination" };
+        }
 
         return {
             positions: repairResult.positions,
@@ -566,7 +630,8 @@
             return { positions: originalPositions, changed: false, error: groupingResult.error };
         }
         const repairResult = repairPositionHierarchy(
-            groupingResult.positions
+            groupingResult.positions,
+            { repairCycles: false }
         );
 
         return {

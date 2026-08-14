@@ -17,7 +17,7 @@ test("app has a shared position-first data model", () => {
     assert.match(appSource, /function normalizePosition\(position/);
     assert.match(appSource, /async function loadPositions\(\)/);
     assert.match(appSource, /async function savePositions\([^)]*\)/);
-    assert.match(appSource, /OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+    assert.match(appSource, /OrgHierarchy\.repairPositionHierarchy\(positions, \{ repairCycles: false \}\)/);
     assert.match(appSource, /position\.managerId/);
     assert.equal(existsSync(hierarchyUtilsPath), true);
 });
@@ -106,6 +106,13 @@ test("position edits use shared parent validation", () => {
     assert.match(appSource, /OrgHierarchy\.validatePositionParent\(/);
 });
 
+test("position editing delegates descendant lookup to the cycle-safe shared hierarchy", () => {
+    assert.match(
+        appSource,
+        /function getDescendantPositionIds\(positionId\) \{[\s\S]*?OrgHierarchy\.getDescendantPositionIds\(positions, positionId\)[\s\S]*?filter\(descendantId => descendantId !== rootId\)/
+    );
+});
+
 test("position parent control supports search while retaining stable position IDs", () => {
     assert.match(htmlSource, /<input[^>]+id="form-position-manager"[^>]+list="position-manager-list"/);
     assert.match(htmlSource, /<datalist id="position-manager-list"><\/datalist>/);
@@ -121,8 +128,8 @@ test("position list exposes parent and child counts", () => {
     assert.match(appSource, /childCount/);
 });
 
-test("position hierarchy repairs are applied to local fallback and saves", () => {
-    assert.match(appSource, /const hierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
-    assert.match(appSource, /const localHierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions\)/);
+test("safe position hierarchy repairs are applied to local fallback and saves without rewriting cycles", () => {
+    assert.match(appSource, /const hierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions, \{ repairCycles: false \}\)/);
+    assert.match(appSource, /const localHierarchyRepair = OrgHierarchy\.repairPositionHierarchy\(positions, \{ repairCycles: false \}\)/);
     assert.match(appSource, /positions = localHierarchyRepair\.positions/);
 });

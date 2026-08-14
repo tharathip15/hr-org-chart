@@ -52,8 +52,9 @@ test("future positions use the selected dashed indigo card treatment without a s
     assert.doesNotMatch(appSource, /future-status-badge/);
 });
 
-test("chart structural actions are hidden in Overview but Position Management can still Split", () => {
-    assert.match(appSource, /selectedDept !== "All"/);
+test("chart structural actions are hidden in aggregate views but Position Management can still Split", () => {
+    assert.match(appSource, /function chartStructuralActionsAllowed\(\)/);
+    assert.match(appSource, /ChartViewScope\.blocksStructuralActions\(selectedDept\)/);
     assert.match(appSource, /source === "position-management"/);
     assert.match(appSource, /showEmployeeDetails\(employee\.id, position\.id\)/);
 });

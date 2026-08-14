@@ -509,6 +509,10 @@ let employees = [];
 let positions = [];
 let positionsNeedEmployeeReconciliation = false;
 let collapsedNodes = new Set();
+let operationRootPositionId = null;
+let operationCollapsedNodesByScope = new Map();
+let operationCycleWarningKey = null;
+let additionalPreferences = {};
 let currentChartRenderContext = null;
 let positionLifecycleDrawerSource = "chart";
 let overviewGroupDialogController = null;
@@ -543,6 +547,60 @@ const treeContainer = document.getElementById("tree-container");
 const EMPLOYEES_API_URL = "/api/employees";
 const POSITIONS_API_URL = "/api/positions";
 const PREFERENCES_API_URL = "/api/preferences";
+const OPERATION_COLLAPSE_SCOPE_KEYS = [
+    "__operation_current__",
+    "__operation_future__"
+];
+const KNOWN_PREFERENCE_KEYS = new Set([
+    "collapsedNodeIds",
+    "collapsedNodeIdsByScope",
+    "layoutLocked",
+    "operationRootPositionId"
+]);
+
+function getActiveStorageScopeKey() {
+    return ChartViewScope.getStorageScopeKey(selectedDept, chartMode);
+}
+
+function getOperationCollapseScopeKey() {
+    return getActiveStorageScopeKey();
+}
+
+function getActiveCollapsedNodes() {
+    if (!ChartViewScope.isOperation(selectedDept)) return collapsedNodes;
+    const scope = getOperationCollapseScopeKey();
+    if (!operationCollapsedNodesByScope.has(scope)) {
+        operationCollapsedNodesByScope.set(scope, new Set());
+    }
+    return operationCollapsedNodesByScope.get(scope);
+}
+
+function getOperationCollapsedNodeIdsByScope() {
+    return Object.fromEntries(OPERATION_COLLAPSE_SCOPE_KEYS.map(scope => [
+        scope,
+        [...(operationCollapsedNodesByScope.get(scope) || [])]
+            .filter(Number.isInteger)
+            .sort((a, b) => a - b)
+    ]));
+}
+
+function sanitizeOperationRootPositionId(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const id = Number(value);
+    return Number.isInteger(id) ? id : null;
+}
+
+function getAdditionalPreferences(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => !KNOWN_PREFERENCE_KEYS.has(key)));
+}
+
+function removeCollapsedPositionId(id) {
+    collapsedNodes.delete(id);
+    operationCollapsedNodesByScope.forEach(ids => ids.delete(id));
+}
+
 function refreshDisplayModeIcons() {
     if (window.lucide) window.lucide.createIcons();
 }
@@ -680,6 +738,7 @@ function updateLayoutLockUI() {
     if (typeof updateAnnotationToolbarButtons === "function") {
         updateAnnotationToolbarButtons();
     }
+    updateOperationRootButtonState();
     updateConnectionRouteToolbar();
     refreshDisplayModeIcons();
 }
@@ -689,20 +748,22 @@ async function toggleLayoutLock() {
         showNotification("Only editors can change the shared layout lock.", "error");
         return;
     }
-    const previousValue = isLayoutLocked;
     isLayoutLocked = !isLayoutLocked;
     updateLayoutLockUI();
     renderAnnotations();
 
-    const saved = await savePreferences();
+    const saveRequest = savePreferences();
+    const saved = await saveRequest;
+    if (saveRequest.isCurrentPreferenceSave?.() === false) return;
     if (!saved) {
-        isLayoutLocked = previousValue;
         updateLayoutLockUI();
         renderAnnotations();
         showNotification("Could not update the shared layout lock.", "error");
         return;
     }
 
+    renderAll();
+    renderPositionsList();
     showNotification(
         isLayoutLocked
             ? "Layout locked. Cards and annotations can no longer be moved."
@@ -778,7 +839,10 @@ async function resetSelectedConnectionRoute() {
     if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
     if (!selectedConnection) return false;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const childId = Number(selectedConnection.childId);
     const candidatePositions = positions.map(position => position.id === childId
         ? {
@@ -800,7 +864,10 @@ async function resetAllConnectionRoutes() {
     if (isLayoutEditingBlocked() || isPresentationMode || !getConnectionRouteCapabilities().resettable) return false;
     if (!window.confirm("Reset all customized connector lines in this view?")) return false;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const candidatePositions = ConnectionRouting.clearScopeFromPositions(positions, scopeKey);
     latestPositionsSavePromise = savePositions(candidatePositions);
     const saved = await latestPositionsSavePromise;
@@ -826,7 +893,7 @@ function getCurrentMutationState(collection) {
     if (collection === "positions") return positions;
     if (collection === "annotations") return annotations;
     if (collection === "preferences") {
-        return { collapsedNodeIds: [...collapsedNodes] };
+        return getPreferencesPayload();
     }
     throw new Error(`Unknown mutation collection: ${collection}`);
 }
@@ -837,7 +904,7 @@ function applyMutationState(collection, value) {
     else if (collection === "positions") positions = restored;
     else if (collection === "annotations") annotations = restored;
     else if (collection === "preferences") {
-        collapsedNodes = new Set(restored.collapsedNodeIds || []);
+        applyPreferences(restored);
     } else {
         throw new Error(`Unknown mutation collection: ${collection}`);
     }
@@ -885,7 +952,7 @@ function captureMutationSnapshot() {
         employees: cloneMutationState(employees),
         positions: cloneMutationState(positions),
         annotations: cloneMutationState(annotations),
-        preferences: { collapsedNodeIds: [...collapsedNodes] },
+        preferences: getPreferencesPayload(),
         selectedDept
     };
 }
@@ -907,6 +974,9 @@ function confirmMutationState(collection, state = getCurrentMutationState(collec
 }
 
 function restoreRejectedMutation(collection, response) {
+    if (collection === "preferences") {
+        return restoreConfirmedMutationState(collection);
+    }
     if (response?.status !== 401 && response?.status !== 403) return false;
     return restoreConfirmedMutationState(collection);
 }
@@ -1784,7 +1854,7 @@ async function loadPositions() {
         positions = normalizePositionsList(savedPositions, {
             validateEmployeeIds: !deferEmployeeReconciliation
         });
-        const hierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+        const hierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions, { repairCycles: false });
         positions = hierarchyRepair.positions;
 
         if (deferEmployeeReconciliation) {
@@ -1855,7 +1925,7 @@ async function loadPositions() {
             positions = normalizePositionsList(JSON.parse(saved), {
                 validateEmployeeIds: !deferEmployeeReconciliation
             });
-            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions, { repairCycles: false });
             positions = localHierarchyRepair.positions;
             if (positions.length > 0) {
                 if (deferEmployeeReconciliation) {
@@ -1912,7 +1982,7 @@ async function persistPositions(candidatePositions, basePositions, sequence) {
     }
     setSyncStatus("saving");
     const normalizedCandidate = normalizePositionsList(candidatePositions);
-    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate);
+    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate, { repairCycles: false });
     const repairedCandidate = saveHierarchyRepair.positions;
     const payload = repairedCandidate.map(p => ({
         ...p,
@@ -1975,17 +2045,26 @@ function sanitizeCollapsedNodeIds(value) {
 }
 
 function applyPreferences(preferences) {
+    additionalPreferences = getAdditionalPreferences(preferences);
     collapsedNodes = new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIds));
+    operationCollapsedNodesByScope = new Map(OPERATION_COLLAPSE_SCOPE_KEYS.map(scope => [
+        scope,
+        new Set(sanitizeCollapsedNodeIds(preferences?.collapsedNodeIdsByScope?.[scope]))
+    ]));
     isLayoutLocked = preferences?.layoutLocked === true;
+    operationRootPositionId = sanitizeOperationRootPositionId(preferences?.operationRootPositionId);
     updateLayoutLockUI();
 }
 
 function getPreferencesPayload() {
     return {
+        ...additionalPreferences,
         collapsedNodeIds: [...collapsedNodes]
             .filter(id => Number.isInteger(id))
             .sort((a, b) => a - b),
-        layoutLocked: isLayoutLocked
+        collapsedNodeIdsByScope: getOperationCollapsedNodeIdsByScope(),
+        layoutLocked: isLayoutLocked,
+        operationRootPositionId
     };
 }
 
@@ -2018,39 +2097,65 @@ async function loadPreferences() {
     recordConfirmedMutationState("preferences");
 }
 
-async function savePreferences() {
+let preferencesSaveQueue = Promise.resolve(true);
+let preferencesSaveSequence = 0;
+
+function preferencesEqual(left, right) {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function canApplyPreferenceSave(sequence, candidatePreferences) {
+    return sequence === preferencesSaveSequence
+        && preferencesEqual(getPreferencesPayload(), candidatePreferences);
+}
+
+async function persistPreferences(candidatePreferences, sequence) {
     if (!requireEditorAction({ notify: false })) {
-        restoreConfirmedMutationState("preferences");
+        if (canApplyPreferenceSave(sequence, candidatePreferences)) {
+            restoreConfirmedMutationState("preferences");
+        }
         return false;
     }
     setSyncStatus("saving");
-    const preferences = getPreferencesPayload();
-    try {
-        localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
-    } catch (error) {
-        console.warn("Failed to write preferences to localStorage:", error);
-    }
 
     let response = null;
     try {
         response = await authenticatedFetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(preferences)
+            body: JSON.stringify(candidatePreferences)
         });
 
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
-        confirmMutationState("preferences");
-        setSyncStatus("success");
+        confirmMutationState("preferences", candidatePreferences);
+        if (canApplyPreferenceSave(sequence, candidatePreferences)) {
+            setSyncStatus("success");
+        }
         return true;
     } catch (error) {
-        restoreRejectedMutation("preferences", response);
+        const isCurrent = canApplyPreferenceSave(sequence, candidatePreferences);
+        if (isCurrent) restoreConfirmedMutationState("preferences");
         console.error("Failed to save shared view preferences.", error);
-        setSyncStatus("error");
+        if (isCurrent) setSyncStatus("error");
         return false;
     }
+}
+
+function queuePreferencesSave() {
+    const candidatePreferences = cloneMutationState(getPreferencesPayload());
+    const sequence = ++preferencesSaveSequence;
+    const run = () => persistPreferences(candidatePreferences, sequence);
+    const promise = preferencesSaveQueue.then(run, run);
+    preferencesSaveQueue = promise.catch(() => false);
+    return { sequence, candidatePreferences, promise };
+}
+
+function savePreferences() {
+    const request = queuePreferencesSave();
+    request.promise.isCurrentPreferenceSave = () => request.sequence === preferencesSaveSequence;
+    return request.promise;
 }
 
 function normalizePersonKey(name) {
@@ -2261,9 +2366,7 @@ async function handleImportFileChange(e) {
                 employees = parsed.employees;
                 positions = parsed.positions;
                 annotations = parsed.annotations || [];
-                collapsedNodes = new Set(
-                    sanitizeCollapsedNodeIds(parsed.preferences?.collapsedNodeIds || [])
-                );
+                applyPreferences(parsed.preferences || {});
                 setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
                 shouldSaveAnnotations = true;
@@ -2280,7 +2383,7 @@ async function handleImportFileChange(e) {
                 employees = parsed;
                 normalizeEmployeeProfiles();
                 positions = derivePositionsFromEmployees();
-                collapsedNodes.clear();
+                applyPreferences({});
                 setSelectedDepartment("All");
                 await compressAllEmployeePhotos();
             } else {
@@ -2402,14 +2505,7 @@ function setupEventListeners() {
     document.getElementById("zoom-fit").addEventListener("click", fitToScreen);
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (btnExpandAll) {
-        btnExpandAll.addEventListener("click", async () => {
-            if (selectedDept !== "All") return;
-            if (collapsedNodes.size === 0) return;
-            collapsedNodes.clear();
-            renderAll();
-            fitToScreen();
-            await savePreferences();
-        });
+        btnExpandAll.addEventListener("click", expandAllCollapsedNodes);
     }
     
     // Mouse Wheel Zoom
@@ -2846,6 +2942,15 @@ function setupEventListeners() {
             deletePosition(id);
         }
     });
+    const btnSetOperationRoot = document.getElementById("btn-set-operation-root");
+    if (btnSetOperationRoot) {
+        btnSetOperationRoot.addEventListener("click", () => {
+            const positionId = parseInt(document.getElementById("form-position-id").value, 10);
+            if (Number.isInteger(positionId)) {
+                setOperationRootPosition(positionId);
+            }
+        });
+    }
     
     // Edit & Delete actions inside Detail view
     document.getElementById("btn-edit-employee").addEventListener("click", () => {
@@ -3001,7 +3106,7 @@ function focusAndHighlightEmployee(id) {
 
 // Recursively expand all managers of an employee so they are visible
 function expandPathToEmployee(id) {
-    if (selectedDept !== "All") return;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return;
     const position = positions.find(position => position.employeeId === id) || positions.find(position => position.id === id);
     let displayPositionId = position
         ? currentChartRenderContext?.realToDisplayId.get(position.id) ?? position.id
@@ -3011,18 +3116,26 @@ function expandPathToEmployee(id) {
         const managerId = currentChartRenderContext?.effectiveManagerByDisplayId.get(displayPositionId) ?? null;
         if (managerId === null) break;
         getCollapsedRealPositionIdsForDisplayId(managerId).forEach(positionId => {
-            collapsedNodes.delete(positionId);
+            getActiveCollapsedNodes().delete(positionId);
         });
         displayPositionId = managerId;
     }
 }
 
 function isOverallView() {
-    return selectedDept === "All";
+    return ChartViewScope.isOverview(selectedDept);
+}
+
+function isOperationView() {
+    return ChartViewScope.isOperation(selectedDept);
+}
+
+function chartStructuralActionsAllowed() {
+    return !ChartViewScope.blocksStructuralActions(selectedDept) && canEditHr();
 }
 
 function getCollapsedRealPositionIdsForDisplayId(positionId, renderContext = currentChartRenderContext) {
-    return [...collapsedNodes].filter(collapsedPositionId => {
+    return [...getActiveCollapsedNodes()].filter(collapsedPositionId => {
         const displayPositionId = renderContext?.realToDisplayId.get(collapsedPositionId)
             ?? collapsedPositionId;
         return displayPositionId === positionId;
@@ -3035,17 +3148,29 @@ function isDisplayPositionCollapsed(positionId, renderContext = currentChartRend
 
 // Expand / Collapse sub-tree toggle
 function toggleNode(id) {
-    if (selectedDept !== "All") return;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return;
+    const activeCollapsedNodes = getActiveCollapsedNodes();
     const collapsedMemberIds = getCollapsedRealPositionIdsForDisplayId(id);
     if (collapsedMemberIds.length > 0) {
-        collapsedMemberIds.forEach(positionId => collapsedNodes.delete(positionId));
+        collapsedMemberIds.forEach(positionId => activeCollapsedNodes.delete(positionId));
     } else {
-        collapsedNodes.add(id);
+        activeCollapsedNodes.add(id);
     }
     
-    savePreferences();
+    if (canEditHr()) savePreferences();
     renderAll();
     fitToScreen();
+}
+
+async function expandAllCollapsedNodes() {
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return false;
+    const activeCollapsedNodes = getActiveCollapsedNodes();
+    if (activeCollapsedNodes.size === 0) return false;
+
+    activeCollapsedNodes.clear();
+    renderAll();
+    fitToScreen();
+    return canEditHr() ? savePreferences() : true;
 }
 
 // Reset highlights
@@ -3063,14 +3188,63 @@ function getChartModePositions() {
 
 function getChartDisplayPositions() {
     const modePositions = getChartModePositions();
-    return selectedDept === "All"
-        ? modePositions
-        : modePositions.filter(position => position.department === selectedDept);
+    if (isOverallView()) return modePositions;
+    if (isOperationView()) return getOperationRenderState(modePositions).visiblePositions;
+    return modePositions.filter(position => position.department === selectedDept);
+}
+
+function getOperationRenderState(modePositions) {
+    return OperationView.buildSubtree(positions, modePositions, operationRootPositionId);
 }
 
 function buildChartRenderContext() {
     const modePositions = getChartModePositions();
-    const realVisiblePositions = selectedDept === "All"
+    if (isOperationView()) {
+        const operationState = getOperationRenderState(modePositions);
+        const operationVisiblePositions = operationState.status === "ready"
+            ? operationState.visiblePositions
+            : [];
+        const operationVisibleIds = new Set(operationVisiblePositions.map(position => position.id));
+        const effectiveManagers = OrgHierarchy.buildEffectiveManagerByRealId(
+            positions,
+            operationVisibleIds,
+            operationState.displayManagerByRealId
+        );
+        const identityModel = {
+            displayPositions: operationVisiblePositions,
+            realToDisplayId: new Map(operationVisiblePositions.map(position => [position.id, position.id])),
+            membersByDisplayId: new Map(operationVisiblePositions.map(position => [position.id, [position]])),
+            allMembersByDisplayId: new Map(operationVisiblePositions.map(position => [position.id, [position]])),
+            effectiveManagerByDisplayId: new Map(operationVisiblePositions.map(position => [
+                position.id,
+                effectiveManagers.get(position.id) ?? null
+            ]))
+        };
+        const displayPositionIds = new Set(identityModel.displayPositions.map(position => position.id));
+        const positionByDisplayId = new Map(identityModel.displayPositions.map(position => [position.id, position]));
+        const hasReportsByPositionId = new Set();
+        identityModel.effectiveManagerByDisplayId.forEach(managerId => {
+            if (managerId !== null && displayPositionIds.has(managerId)) {
+                hasReportsByPositionId.add(managerId);
+            }
+        });
+
+        return {
+            viewKind: "operation",
+            operationStatus: operationState.status,
+            operationRootPosition: operationState.rootPosition,
+            operationCyclePositionIds: new Set(operationState.cyclePositionIds),
+            modePositions,
+            realVisiblePositions: operationVisiblePositions,
+            overviewEffectiveManagerByRealId: new Map(),
+            ...identityModel,
+            displayPositionIds,
+            positionByDisplayId,
+            hasReportsByPositionId
+        };
+    }
+
+    const realVisiblePositions = isOverallView()
         ? modePositions
         : modePositions.filter(position => position.department === selectedDept);
     const realVisibleIds = new Set(realVisiblePositions.map(position => position.id));
@@ -3079,7 +3253,7 @@ function buildChartRenderContext() {
         modePositions
     );
     const overviewEffectiveManagerByRealId = overviewRenderModel.overviewEffectiveManagerByRealId;
-    const viewEffectiveManagerByRealId = selectedDept === "All"
+    const viewEffectiveManagerByRealId = isOverallView()
         ? overviewEffectiveManagerByRealId
         : OrgHierarchy.buildEffectiveManagerByRealId(positions, realVisibleIds);
     const effectiveManagerByRealId = new Map(realVisiblePositions.map(position => [
@@ -3087,7 +3261,7 @@ function buildChartRenderContext() {
         viewEffectiveManagerByRealId.get(position.id) ?? null
     ]));
 
-    const model = selectedDept === "All"
+    const model = isOverallView()
         ? overviewRenderModel
         : {
             displayPositions: realVisiblePositions,
@@ -3106,6 +3280,10 @@ function buildChartRenderContext() {
     });
 
     return {
+        viewKind: isOverallView() ? "overview" : "department",
+        operationStatus: null,
+        operationRootPosition: null,
+        operationCyclePositionIds: new Set(),
         modePositions,
         realVisiblePositions,
         overviewEffectiveManagerByRealId,
@@ -3118,7 +3296,7 @@ function buildChartRenderContext() {
 
 function getCollapsedHiddenPositionIds(renderContext) {
     const hiddenIds = new Set();
-    if (!isOverallView()) return hiddenIds;
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return hiddenIds;
 
     const reportsMap = new Map();
     renderContext.effectiveManagerByDisplayId.forEach((managerId, positionId) => {
@@ -3131,12 +3309,13 @@ function getCollapsedHiddenPositionIds(renderContext) {
         if (visited.has(managerId)) return;
         visited.add(managerId);
         (reportsMap.get(managerId) || []).forEach(childId => {
+            if (visited.has(childId)) return;
             hiddenIds.add(childId);
             markHidden(childId, visited);
         });
     }
 
-    collapsedNodes.forEach(positionId => {
+    getActiveCollapsedNodes().forEach(positionId => {
         const displayPositionId = renderContext.realToDisplayId.get(positionId) ?? positionId;
         if (renderContext.displayPositionIds.has(displayPositionId)) markHidden(displayPositionId);
     });
@@ -3152,8 +3331,23 @@ function updateChartModeControls() {
 
     const title = document.getElementById("current-view-title");
     const desc = document.getElementById("current-view-desc");
-    title.innerText = selectedDept === "All" ? "Overall Organization" : `${selectedDept} Department`;
-    if (selectedDept === "All") {
+    if (isOperationView()) {
+        const operationState = getOperationRenderState(getChartModePositions());
+        title.innerText = "Operation Organization";
+        if (operationState.status === "ready") {
+            desc.innerText = `Root: ${getPositionTitle(operationState.rootPosition)}`;
+        } else if (operationState.status === "hidden") {
+            desc.innerText = `${getPositionTitle(operationState.rootPosition)} is not visible in the ${chartMode === "future" ? "Future" : "Current"} Chart`;
+        } else if (operationState.status === "missing") {
+            desc.innerText = "The configured Operation root could not be found";
+        } else {
+            desc.innerText = "Select an Operation root in Position Management";
+        }
+        return;
+    }
+
+    title.innerText = isOverallView() ? "Overall Organization" : `${selectedDept} Department`;
+    if (isOverallView()) {
         desc.innerText = chartMode === "future"
             ? "Showing approved active and future positions"
             : "Showing the organization as of today";
@@ -3205,10 +3399,10 @@ function updateCollapseControls() {
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (!btnExpandAll) return;
 
-    btnExpandAll.disabled = !isOverallView();
-    btnExpandAll.title = isOverallView()
+    btnExpandAll.disabled = !ChartViewScope.supportsCollapse(selectedDept);
+    btnExpandAll.title = ChartViewScope.supportsCollapse(selectedDept)
         ? "Expand All Positions"
-        : "Available in Overall View only";
+        : "Available in Overall and OPERATION views only";
 }
 
 // Compute counts and populate sidebar
@@ -3235,21 +3429,35 @@ function renderSidebarDeptList() {
     // Department navigation filters planned seats, so its badges count positions too.
     const visibleChartPositions = getChartModePositions();
     const deptCounts = EmployeeDirectory.getDepartmentCounts(visibleChartPositions);
+    const operationCount = getOperationRenderState(visibleChartPositions).visiblePositions.length;
     
     // Sort departments alphabetically
     const sortedDepts = Object.keys(deptCounts).sort();
     
     let html = `
-        <li class="department-item ${selectedDept === "All" ? "active" : ""}" data-dept="All">
-            <span>Overall View</span>
-            <span class="department-count">${visibleChartPositions.length}</span>
+        <li>
+            <button type="button" class="department-item ${isOverallView() ? "active" : ""}"
+                data-dept="All" aria-current="${isOverallView() ? "page" : "false"}">
+                <span>Overall View</span>
+                <span class="department-count">${visibleChartPositions.length}</span>
+            </button>
+        </li>
+        <li>
+            <button type="button" class="department-item operation-item ${isOperationView() ? "active" : ""}"
+                data-dept="${ChartViewScope.OPERATION_VIEW_ID}" aria-current="${isOperationView() ? "page" : "false"}">
+                <span>OPERATION</span>
+                <span class="department-count">${operationCount}</span>
+            </button>
         </li>
     `;
     
     html += sortedDepts.map(dept => `
-        <li class="department-item ${selectedDept === dept ? "active" : ""}" data-dept="${dept}">
-            <span>${escapeHTML(dept)}</span>
-            <span class="department-count">${deptCounts[dept]}</span>
+        <li>
+            <button type="button" class="department-item ${selectedDept === dept ? "active" : ""}"
+                data-dept="${escapeHTML(dept)}" aria-current="${selectedDept === dept ? "page" : "false"}">
+                <span>${escapeHTML(dept)}</span>
+                <span class="department-count">${deptCounts[dept]}</span>
+            </button>
         </li>
     `).join("");
     
@@ -3512,9 +3720,9 @@ function getPositionNote(position) {
 }
 
 function getManualPositionCoordinates(position) {
-    const coordinates = selectedDept === "All"
+    const coordinates = isOverallView()
         ? (position.isManual ? { x: position.x, y: position.y } : null)
-        : position.manualLayouts?.[selectedDept];
+        : position.manualLayouts?.[getActiveStorageScopeKey()];
 
     if (!coordinates) return null;
 
@@ -3567,7 +3775,7 @@ function getPositionCardHTML(position, renderContext = null) {
             ` : ""}
     `;
 
-    if (hasReports && isOverallView()) {
+    if (hasReports && ChartViewScope.supportsCollapse(selectedDept)) {
         cardHtml += `
             <button class="node-toggle-btn ${isCollapsed ? "collapsed" : ""}" data-id="${position.id}">
                 <i data-lucide="${isCollapsed ? "chevron-down" : "chevron-up"}"></i>
@@ -3579,6 +3787,63 @@ function getPositionCardHTML(position, renderContext = null) {
     return cardHtml;
 }
 
+function renderOperationEmptyState(status, rootPosition) {
+    const modeLabel = chartMode === "future" ? "Future Chart" : "Current Chart";
+    const rootTitle = rootPosition ? getPositionTitle(rootPosition) : "";
+    const messages = {
+        unconfigured: {
+            title: "Operation root has not been configured",
+            detail: "Choose the position that should anchor the dedicated Operation organization."
+        },
+        missing: {
+            title: "The configured Operation root could not be found",
+            detail: "The saved root may have been removed. Select another position to restore this view."
+        },
+        hidden: {
+            title: `${rootTitle} is not visible in the ${modeLabel}`,
+            detail: "Switch chart timeframe or update the position lifecycle to make this hierarchy visible."
+        }
+    };
+    const message = messages[status] || messages.unconfigured;
+    const editorAction = canEditHr()
+        ? `<button type="button" class="btn btn-primary operation-empty-state-action" onclick="openPositionsModal()">Select Operation Root</button>`
+        : "";
+
+    treeContainer.innerHTML = `
+        <section class="operation-empty-state" role="status">
+            <div class="operation-empty-state-icon" aria-hidden="true"><i data-lucide="network"></i></div>
+            <h3>${escapeHTML(message.title)}</h3>
+            <p>${escapeHTML(message.detail)}</p>
+            ${editorAction}
+        </section>
+    `;
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function notifyOperationCycleWarning(renderContext) {
+    if (!isOperationView()) {
+        operationCycleWarningKey = null;
+        return;
+    }
+
+    const cyclePositionIds = [...(renderContext?.operationCyclePositionIds || [])]
+        .filter(Number.isInteger)
+        .sort((left, right) => left - right);
+    if (cyclePositionIds.length === 0) {
+        operationCycleWarningKey = null;
+        return;
+    }
+    if (!canEditHr()) return;
+
+    const warningKey = `${operationRootPositionId}:${chartMode}:${cyclePositionIds.join(",")}`;
+    if (warningKey === operationCycleWarningKey) return;
+    operationCycleWarningKey = warningKey;
+    showNotification(
+        `Operation hierarchy contains a reporting cycle involving ${cyclePositionIds.map(id => `#${id}`).join(", ")}. Valid positions are shown once; update the reporting lines to resolve it.`,
+        "error"
+    );
+}
+
 function renderTree() {
     treeContainer.innerHTML = "";
     svgOverlay.innerHTML = "";
@@ -3588,6 +3853,14 @@ function renderTree() {
     // Build the lifecycle-aware display hierarchy once. Collapse, cards, layout,
     // and connections all consume this same context.
     const renderContext = buildChartRenderContext();
+    currentChartRenderContext = renderContext;
+    notifyOperationCycleWarning(renderContext);
+    if (renderContext.viewKind === "operation" && renderContext.operationStatus !== "ready") {
+        renderOperationEmptyState(renderContext.operationStatus, renderContext.operationRootPosition);
+        scheduleConnectionDraw();
+        renderAnnotations();
+        return;
+    }
     const hiddenIds = getCollapsedHiddenPositionIds(renderContext);
     renderContext.displayPositions = renderContext.displayPositions.filter(
         position => !hiddenIds.has(position.id)
@@ -3595,8 +3868,6 @@ function renderTree() {
     renderContext.displayPositionIds = new Set(
         renderContext.displayPositions.map(position => position.id)
     );
-    currentChartRenderContext = renderContext;
-
     // Run auto-layout dynamically to adjust layout and close gaps automatically on visibility/filter changes.
     calculateInitialCoordinates(renderContext);
 
@@ -3639,7 +3910,10 @@ function drawConnections(renderContext = currentChartRenderContext) {
 
     const minChildYByManager = new Map();
     const capabilities = getConnectionRouteCapabilities();
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     let selectedRouteGeometry = null;
     childrenByManager.forEach((childIds, managerId) => {
         const childYs = childIds
@@ -3817,7 +4091,10 @@ function handleConnectionRoutePointerDown(event) {
     const storagePosition = getConnectionRouteStoragePosition(childId);
     if (!Number.isInteger(parentId) || !Number.isInteger(childId) || !storagePosition) return;
 
-    const scopeKey = ConnectionRouting.getScopeKey(selectedDept);
+    const scopeKey = ConnectionRouting.getScopeKey(
+        selectedDept,
+        typeof chartMode === "string" ? chartMode : "current"
+    );
     const route = ConnectionRouting.getScopedRoute(storagePosition.connectionRoutes, scopeKey, parentId)
         || { parentId, branchOffsetX: 0, branchOffsetY: 0, laneOffsetY: 0 };
     activeConnectionRouteDrag = {
@@ -4152,8 +4429,8 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     const representedPositions = displayPositionId !== null
         ? OverviewGroupConsumer.getProfileMembers(currentChartRenderContext, displayPositionId, selectedPosition)
         : [];
-    const isGroupedOverviewCard = selectedDept === "All" && representedPositions.length > 1;
-    const chartStructuralActionsAllowed = selectedDept !== "All" && canEditHr();
+    const isGroupedOverviewCard = isOverallView() && representedPositions.length > 1;
+    const structuralActionsAllowed = chartStructuralActionsAllowed();
     
     // Add active classes
     document.getElementById("detail-drawer-overlay").classList.add("active");
@@ -4166,7 +4443,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     
     const btnSplitEmployeePosition = document.getElementById("btn-split-employee-position");
     if (btnSplitEmployeePosition) {
-        const canSplit = chartStructuralActionsAllowed && Boolean(selectedPosition);
+        const canSplit = structuralActionsAllowed && Boolean(selectedPosition);
         btnSplitEmployeePosition.hidden = !canSplit;
         btnSplitEmployeePosition.disabled = !canSplit;
         if (selectedPosition) {
@@ -4180,7 +4457,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
     const compatibleOverviewPositions = getCompatibleOverviewPositions(selectedEmployeeId, selectedPosition);
     const btnGroupOverviewPositions = document.getElementById("btn-group-overview-positions");
     if (btnGroupOverviewPositions) {
-        const canGroup = chartStructuralActionsAllowed && compatibleOverviewPositions.length >= 2;
+        const canGroup = structuralActionsAllowed && compatibleOverviewPositions.length >= 2;
         btnGroupOverviewPositions.hidden = !canGroup;
         btnGroupOverviewPositions.disabled = !canGroup;
         if (selectedPosition) {
@@ -4191,7 +4468,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
 
     const btnUngroupOverviewPositions = document.getElementById("btn-ungroup-overview-positions");
     if (btnUngroupOverviewPositions) {
-        const canUngroup = chartStructuralActionsAllowed && Boolean(selectedPosition?.overviewGroupId);
+        const canUngroup = structuralActionsAllowed && Boolean(selectedPosition?.overviewGroupId);
         btnUngroupOverviewPositions.hidden = !canUngroup;
         btnUngroupOverviewPositions.disabled = !canUngroup;
         if (selectedPosition) {
@@ -4276,7 +4553,7 @@ function showEmployeeDetails(id, selectedPositionId = null) {
         });
     let siblingsHTML = "";
     if (siblingPositions.length > 0) {
-        const combineButtonHTML = chartStructuralActionsAllowed && employeePositions.length >= 2 ? `
+        const combineButtonHTML = structuralActionsAllowed && employeePositions.length >= 2 ? `
             <button type="button" class="btn btn-danger" id="btn-open-combine-modal" style="margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600;">
                 <i data-lucide="combine"></i> Combine Real Positions
             </button>
@@ -4454,7 +4731,8 @@ function openPositionLifecycleDrawer(positionId, options = {}) {
         ? positions.find(candidate => candidate.id === position.managerId)
         : null;
     const isViewer = document.body.classList.contains("role-viewer");
-    const structuralActionsAllowed = source === "position-management" || selectedDept !== "All";
+    const structuralActionsAllowed = source === "position-management"
+        || chartStructuralActionsAllowed();
 
     document.getElementById("position-lifecycle-id").value = position.id;
     document.getElementById("position-lifecycle-title").innerText = getPositionTitle(position);
@@ -4733,20 +5011,9 @@ function getPrimaryPositionForEmployee(employeeId) {
 }
 
 function getDescendantPositionIds(positionId) {
-    const descendants = [];
-    const queue = [positionId];
-
-    while (queue.length > 0) {
-        const currentId = queue.shift();
-        positions.forEach(position => {
-            if (position.managerId === currentId) {
-                descendants.push(position.id);
-                queue.push(position.id);
-            }
-        });
-    }
-
-    return descendants;
+    const rootId = Number(positionId);
+    return OrgHierarchy.getDescendantPositionIds(positions, positionId)
+        .filter(descendantId => descendantId !== rootId);
 }
 
 function getAutoPositionForPosition(managerId, excludePositionId = null) {
@@ -4810,6 +5077,33 @@ function populatePositionFormLookups(excludePositionId = null) {
         .join("");
 }
 
+function updateOperationRootButtonState() {
+    const button = document.getElementById("btn-set-operation-root");
+    if (!button) return;
+
+    const selectedId = parseInt(document.getElementById("form-position-id")?.value, 10);
+    const position = Number.isInteger(selectedId)
+        ? positions.find(candidate => candidate.id === selectedId)
+        : null;
+    const label = document.getElementById("operation-root-button-label");
+    const title = !position
+        ? "Select a saved position to set the OPERATION root"
+        : isLayoutLocked
+            ? "Unlock the shared layout to change the OPERATION root"
+            : position.id === operationRootPositionId
+                ? "This position is the current OPERATION root"
+                : "Set this position as the OPERATION root";
+
+    button.disabled = !position || isLayoutLocked;
+    button.title = title;
+    button.setAttribute?.("aria-label", title);
+    if (label) {
+        label.textContent = position?.id === operationRootPositionId
+            ? "Current Operation Root"
+            : "Set as Operation Root";
+    }
+}
+
 function resetPositionForm(editId = null) {
     const form = document.getElementById("position-form");
     form.reset();
@@ -4822,10 +5116,16 @@ function resetPositionForm(editId = null) {
     document.getElementById("btn-open-position-actions").disabled = true;
     populatePositionFormLookups(editId);
 
-    if (editId === null) return;
+    if (editId === null) {
+        updateOperationRootButtonState();
+        return;
+    }
 
     const position = positions.find(position => position.id === editId);
-    if (!position) return;
+    if (!position) {
+        updateOperationRootButtonState();
+        return;
+    }
 
     document.getElementById("form-position-id").value = position.id;
     document.getElementById("form-position-title").value = getPositionTitle(position);
@@ -4837,6 +5137,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-status-reason").value = position.statusReason || "";
     document.getElementById("btn-delete-position").disabled = false;
     document.getElementById("btn-open-position-actions").disabled = false;
+    updateOperationRootButtonState();
 
     const manager = positions.find(candidate => candidate.id === position.managerId);
     document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
@@ -4899,7 +5200,7 @@ function updateOverviewGroupPrimaryOptions(preferredPositionId = null) {
 function openOverviewGroupModal(employeeId, selectedPositionIds = []) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const employee = employees.find(candidate => candidate.id === employeeId);
     if (!employee) return false;
@@ -4986,7 +5287,7 @@ function getOverviewGroupErrorMessage(error) {
 async function handleOverviewGroupSubmit() {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const memberIds = Array.from(document.querySelectorAll(".overview-group-position-checkbox:checked"))
         .map(checkbox => parseInt(checkbox.dataset.positionId, 10))
@@ -5033,7 +5334,7 @@ async function handleOverviewGroupSubmit() {
 async function handleOverviewUngroup(positionId) {
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
-    if (selectedDept === "All") return false;
+    if (!chartStructuralActionsAllowed()) return false;
 
     const selectedPosition = positions.find(position => position.id === Number(positionId));
     const groupId = selectedPosition?.overviewGroupId;
@@ -5064,7 +5365,8 @@ function openCombinePositionsModal(employeeId, selectedPosIds = null, options = 
     if (!requireEditorAction()) return false;
     if (document.body.classList.contains("role-viewer")) return false;
     const source = options.source === "position-management" ? "position-management" : "chart";
-    const sourceAllowsStructuralAction = source === "position-management" || selectedDept !== "All";
+    const sourceAllowsStructuralAction = source === "position-management"
+        || chartStructuralActionsAllowed();
     if (!sourceAllowsStructuralAction) return false;
 
     const emp = employees.find(e => e.id === employeeId);
@@ -5169,7 +5471,7 @@ async function handleCombinePositionsSubmit() {
 
     const modal = document.getElementById("combine-positions-modal");
     const source = modal?.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
     const employeeId = parseInt(modal?.dataset.employeeId, 10);
     const emp = employees.find(e => e.id === employeeId);
     if (!emp) return;
@@ -5233,7 +5535,7 @@ function openSplitPositionModal(positionId, options = {}) {
         return false;
     }
     const source = options.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
 
     const pos = positions.find(p => p.id === positionId);
     if (!pos) return false;
@@ -5339,7 +5641,7 @@ async function handleSplitPositionSubmit() {
     const modal = document.getElementById("split-positions-modal");
     if (!modal) return;
     const source = modal.dataset.source === "position-management" ? "position-management" : "chart";
-    if (source !== "position-management" && selectedDept === "All") return false;
+    if (source !== "position-management" && !chartStructuralActionsAllowed()) return false;
 
     const positionId = parseInt(modal.dataset.positionId, 10);
     if (!positionId) return;
@@ -5572,6 +5874,9 @@ function renderPositionsList() {
                 <span class="position-row-main">
                     <strong>${escapeHTML(getPositionTitle(position))}</strong>
                     <small>${escapeHTML(getPositionDepartment(position))}</small>
+                    ${position.id === operationRootPositionId
+                        ? `<small class="operation-root-badge">OPERATION ROOT</small>`
+                        : ""}
                 </span>
                 <span class="position-row-meta">
                     <span>${employee ? escapeHTML(employee.name) : "VACANT"}</span>
@@ -5589,6 +5894,38 @@ function renderPositionsList() {
             resetPositionForm(id);
         });
     });
+}
+
+async function setOperationRootPosition(positionId) {
+    if (!requireEditorAction()) return false;
+    if (isLayoutEditingBlocked()) {
+        showNotification("Unlock the shared layout before changing the OPERATION root.", "error");
+        return false;
+    }
+    const position = positions.find(candidate => candidate.id === Number(positionId));
+    if (!position) {
+        showNotification("Select a valid position for the OPERATION root.", "error");
+        return false;
+    }
+    if (position.id === operationRootPositionId) return true;
+    if (!window.confirm(`Set "${getPositionTitle(position)}" as the OPERATION root?`)) return false;
+
+    operationRootPositionId = position.id;
+    const saveRequest = savePreferences();
+    const saved = await saveRequest;
+    if (saveRequest.isCurrentPreferenceSave?.() === false) return saved;
+    if (!saved) {
+        showNotification("Could not change the OPERATION root; the previous root was restored.", "error");
+        renderAll();
+        renderPositionsList();
+        return false;
+    }
+
+    renderAll();
+    renderPositionsList();
+    resetPositionForm(position.id);
+    showNotification(`OPERATION now starts at ${getPositionTitle(position)}.`, "success");
+    return true;
 }
 
 async function handlePositionFormSubmit(e) {
@@ -5737,7 +6074,7 @@ async function deletePosition(id) {
     });
 
     positions = positions.filter(position => position.id !== id);
-    collapsedNodes.delete(id);
+    removeCollapsedPositionId(id);
 
     await savePositions();
     await savePreferences();
@@ -5904,6 +6241,10 @@ async function deleteEmployee(id) {
     const employeesSnapshot = structuredClone(employees);
     const positionsSnapshot = structuredClone(positions);
     const collapsedNodesSnapshot = new Set(collapsedNodes);
+    const operationCollapsedNodesByScopeSnapshot = new Map(
+        [...operationCollapsedNodesByScope].map(([scope, ids]) => [scope, new Set(ids)])
+    );
+    const operationRootPositionIdSnapshot = operationRootPositionId;
     const linkedPositionIds = positions
         .filter(position => position.employeeId === id)
         .map(position => position.id);
@@ -5915,6 +6256,9 @@ async function deleteEmployee(id) {
             : employee);
     positions = EmployeeDirectory.detachEmployeeFromPositions(id, positions);
     linkedPositionIds.forEach(positionId => collapsedNodes.delete(positionId));
+    linkedPositionIds.forEach(positionId => {
+        operationCollapsedNodesByScope.forEach(ids => ids.delete(positionId));
+    });
 
     const saveSafely = async save => {
         try {
@@ -5934,6 +6278,8 @@ async function deleteEmployee(id) {
         employees = employeesSnapshot;
         positions = positionsSnapshot;
         collapsedNodes = collapsedNodesSnapshot;
+        operationCollapsedNodesByScope = operationCollapsedNodesByScopeSnapshot;
+        operationRootPositionId = operationRootPositionIdSnapshot;
         saveLocalBackup();
         saveLocalPositionsBackup();
         try {
@@ -6120,7 +6466,7 @@ function clearCombineDropZones() {
 
 function renderCombineDropZones(draggedPosition) {
     clearCombineDropZones();
-    if (isOverallView()) return;
+    if (!chartStructuralActionsAllowed()) return;
     if (!combineDropZonesOverlay || !draggedPosition) return;
 
     const draggedEmployee = getAssignedEmployee(draggedPosition);
@@ -6315,7 +6661,7 @@ function handleCardDragStart(e) {
     cardDragMoved = false;
     dragGrabOffsetX = (e.clientX / currentScale) - rootStart.x;
     dragGrabOffsetY = (e.clientY / currentScale) - rootStart.y;
-    if (!isOverallView()) {
+    if (chartStructuralActionsAllowed()) {
         renderCombineDropZones(position);
         captureStartingCombineDropTargets(card);
     }
@@ -6437,7 +6783,10 @@ function handleCardDragEnd(e) {
     dragDropCombineTargetId = null;
     clearCombineDropZones();
 
-    if (combineTargetId !== null && !isOverallView() && draggedId !== null && combineTargetId !== draggedId) {
+    if (combineTargetId !== null
+        && chartStructuralActionsAllowed()
+        && draggedId !== null
+        && combineTargetId !== draggedId) {
         const targetPos = positions.find(p => p.id === combineTargetId);
         const draggedPos = positions.find(p => p.id === draggedId);
         const emp = draggedPos ? getAssignedEmployee(draggedPos) : null;
@@ -6476,13 +6825,13 @@ function handleCardDragEnd(e) {
             if (!movedPosition || !dragStartCoordinates.has(positionId)) return;
 
             const renderedCoordinates = getRenderedPositionCoordinates(movedPosition);
-            if (selectedDept === "All") {
+            if (isOverallView()) {
                 movedPosition.x = renderedCoordinates.x;
                 movedPosition.y = renderedCoordinates.y;
                 movedPosition.isManual = true;
             } else {
                 const manualLayouts = normalizeManualLayouts(movedPosition.manualLayouts);
-                manualLayouts[selectedDept] = {
+                manualLayouts[getActiveStorageScopeKey()] = {
                     x: renderedCoordinates.x,
                     y: renderedCoordinates.y
                 };

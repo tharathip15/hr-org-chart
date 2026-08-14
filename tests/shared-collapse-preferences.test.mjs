@@ -20,17 +20,19 @@ test("app loads shared collapsed node preferences before rendering", () => {
     );
     assert.match(appSource, /function applyPreferences\(preferences\)/);
     assert.match(appSource, /collapsedNodes = new Set\(sanitizeCollapsedNodeIds\(preferences\?\.collapsedNodeIds\)\)/);
+    assert.match(appSource, /operationCollapsedNodesByScope/);
+    assert.match(appSource, /operationRootPositionId/);
 });
 
 test("explicit collapse toggles are saved to shared preferences", () => {
     assert.match(appSource, /function getPreferencesPayload\(\)/);
-    assert.match(appSource, /async function savePreferences\(\)/);
+    assert.match(appSource, /function savePreferences\(\)/);
     assert.match(appSource, /function toggleNode\(id\)[\s\S]+savePreferences\(\);[\s\S]+renderAll\(\);/);
 });
 
 test("overall view provides a recovery action for shared collapsed nodes", () => {
     assert.match(htmlSource, /id="btn-expand-all"/);
-    assert.match(appSource, /collapsedNodes\.clear\(\)/);
+    assert.match(appSource, /activeCollapsedNodes\.clear\(\)/);
 });
 
 test("the Vercel API exposes shared preferences", () => {
@@ -39,4 +41,6 @@ test("the Vercel API exposes shared preferences", () => {
     const preferencesApiSource = readFileSync(preferencesApiPath, "utf8");
     assert.match(preferencesApiSource, /\.from\("preferences"\)/);
     assert.match(preferencesApiSource, /collapsedNodeIds/);
+    assert.match(preferencesApiSource, /collapsedNodeIdsByScope/);
+    assert.match(preferencesApiSource, /operationRootPositionId/);
 });

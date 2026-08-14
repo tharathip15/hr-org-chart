@@ -652,7 +652,12 @@ test("anonymous HR GET handlers still return their public data", async () => {
       assert.deepEqual(
         response.payload,
         file === "preferences.js"
-          ? { collapsedNodeIds: [], layoutLocked: false }
+          ? {
+            collapsedNodeIds: [],
+            collapsedNodeIdsByScope: {},
+            layoutLocked: false,
+            operationRootPositionId: null,
+          }
           : [],
         file,
       );
