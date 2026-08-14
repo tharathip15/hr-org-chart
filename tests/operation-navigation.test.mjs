@@ -6,6 +6,8 @@ import vm from "node:vm";
 const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const operationViewSource = readFileSync(new URL("../operation-view.js", import.meta.url), "utf8");
 const chartViewScopeSource = readFileSync(new URL("../chart-view-scope.js", import.meta.url), "utf8");
+const hierarchySource = readFileSync(new URL("../hierarchy-utils.js", import.meta.url), "utf8");
+const lifecycleSource = readFileSync(new URL("../position-lifecycle.js", import.meta.url), "utf8");
 
 function extractFunction(name) {
   const marker = `function ${name}(`;
@@ -28,7 +30,10 @@ test("OPERATION is a dedicated navigation and render-context branch", () => {
   assert.match(appSource, /<span>OPERATION<\/span>/);
   assert.match(appSource, /Operation Organization/);
   assert.match(appSource, /OperationView\.buildSubtree\(positions, modePositions, operationRootPositionId\)/);
-  assert.match(appSource, /OrgHierarchy\.buildEffectiveManagerByRealId\(positions, operationVisibleIds\)/);
+  assert.match(
+    appSource,
+    /OrgHierarchy\.buildEffectiveManagerByRealId\(\s*positions,\s*operationVisibleIds,\s*operationState\.displayManagerByRealId\s*\)/
+  );
   assert.match(appSource, /renderOperationEmptyState\(renderContext\.operationStatus/);
 });
 
@@ -89,7 +94,7 @@ test("sidebar orders Overall, OPERATION, then sorted departments and counts the 
   ].join("\n"), context);
 
   const items = [...list.innerHTML.matchAll(
-    /<li[^>]*data-dept="([^"]+)"[^>]*>\s*<span>([^<]+)<\/span>\s*<span class="department-count">(\d+)<\/span>/g
+    /<button[^>]*data-dept="([^"]+)"[^>]*>\s*<span>([^<]+)<\/span>\s*<span class="department-count">(\d+)<\/span>/g
   )].map(match => ({ scope: match[1], label: match[2], count: Number(match[3]) }));
 
   assert.deepEqual(items, [
@@ -99,6 +104,85 @@ test("sidebar orders Overall, OPERATION, then sorted departments and counts the 
     { scope: "Executive", label: "Executive", count: 2 },
     { scope: "Sales", label: "Sales", count: 1 }
   ]);
+});
+
+test("Overall, OPERATION, and department navigation are native keyboard controls with selected state", () => {
+  const activations = [];
+  const list = {
+    markup: "",
+    controls: [],
+    set innerHTML(value) {
+      this.markup = value;
+      this.controls = [...value.matchAll(
+        /<button type="button" class="([^"]*department-item[^"]*)"\s+data-dept="([^"]+)" aria-current="([^"]+)">/g
+      )].map(match => ({
+        tagName: "BUTTON",
+        className: match[1],
+        dataset: { dept: match[2] },
+        ariaCurrent: match[3],
+        listeners: {},
+        addEventListener(type, listener) { this.listeners[type] = listener; },
+        click() { this.listeners.click(); }
+      }));
+    },
+    get innerHTML() { return this.markup; },
+    querySelectorAll(selector) {
+      assert.equal(selector, ".department-item");
+      return this.controls;
+    }
+  };
+  const positions = [
+    { id: 1, managerId: null, department: "Executive" },
+    { id: 2, managerId: 1, department: "Accounting" },
+    { id: 3, managerId: 1, department: "Sales" }
+  ];
+  const context = vm.createContext({
+    positions,
+    operationRootPositionId: 1,
+    selectedDept: "All",
+    document: { getElementById: () => list },
+    EmployeeDirectory: {
+      getDepartmentCounts(items) {
+        return items.reduce((counts, position) => {
+          counts[position.department] = (counts[position.department] || 0) + 1;
+          return counts;
+        }, {});
+      }
+    },
+    getChartModePositions: () => positions,
+    escapeHTML: value => value,
+    selectDepartment: dept => activations.push(dept)
+  });
+
+  vm.runInContext([
+    chartViewScopeSource,
+    operationViewSource,
+    extractFunction("isOverallView"),
+    extractFunction("isOperationView"),
+    extractFunction("getOperationRenderState"),
+    extractFunction("renderSidebarDeptList")
+  ].join("\n"), context);
+
+  context.renderSidebarDeptList();
+  assert.equal(list.controls.every(control => control.tagName === "BUTTON"), true);
+  assert.deepEqual(list.controls.map(control => [control.dataset.dept, control.ariaCurrent]), [
+    ["All", "page"],
+    ["__operation__", "false"],
+    ["Accounting", "false"],
+    ["Executive", "false"],
+    ["Sales", "false"]
+  ]);
+  list.controls.find(control => control.dataset.dept === "All").click();
+  list.controls.find(control => control.dataset.dept === "__operation__").click();
+  list.controls.find(control => control.dataset.dept === "Sales").click();
+  assert.deepEqual(activations, ["All", "__operation__", "Sales"]);
+
+  context.selectedDept = "__operation__";
+  context.renderSidebarDeptList();
+  assert.equal(list.controls.find(control => control.dataset.dept === "__operation__").ariaCurrent, "page");
+  context.selectedDept = "Accounting";
+  context.renderSidebarDeptList();
+  assert.equal(list.controls.find(control => control.dataset.dept === "Accounting").ariaCurrent, "page");
 });
 
 test("Operation empty states explain unconfigured, missing, and hidden roots", () => {
@@ -342,6 +426,7 @@ test("changing the Operation root preserves layouts, routes, annotations, and co
     operationCollapsedNodesByScope: collapseScopes,
     operationRootPositionId: 2,
     requireEditorAction: () => true,
+    isLayoutEditingBlocked: () => false,
     window: { confirm: () => true },
     getPositionTitle: position => position.title,
     savePreferences: async () => true,
@@ -422,6 +507,8 @@ test("anonymous startup renders a configured cross-department Operation subtree 
       return { ok: true, status: 200, json: async () => structuredClone(apiPayloads[url]) };
     },
     normalizeEmployeeProfiles: () => false,
+    isLegacyPhotoDataUrl: () => false,
+    compressAllEmployeePhotos: async () => false,
     normalizePositionsList: value => structuredClone(value),
     OrgHierarchy: { repairPositionHierarchy: value => ({ positions: value, changed: false }) },
     PositionLifecycle: { normalizeStatus: value => value || "active" },
@@ -488,6 +575,146 @@ test("anonymous startup renders a configured cross-department Operation subtree 
   ]);
 });
 
+test("editor startup preserves a configured cyclic Operation subtree through load, reconcile, and render", async () => {
+  const requests = [];
+  const notifications = [];
+  const treeContainer = { innerHTML: "" };
+  const apiPayloads = {
+    "/api/employees": [
+      { id: 20, name: "Cycle Two", role: "Two", department: "Operations" },
+      { id: 30, name: "Cycle Three", role: "Three", department: "Finance" },
+      { id: 40, name: "Cycle Four", role: "Four", department: "Technology" }
+    ],
+    "/api/positions": [
+      { id: 2, title: "Two", department: "Operations", managerId: 4, employeeId: 20, status: "active" },
+      { id: 3, title: "Three", department: "Finance", managerId: 2, employeeId: 30, status: "active" },
+      { id: 4, title: "Four", department: "Technology", managerId: 3, employeeId: 40, status: "active" }
+    ],
+    "/api/preferences": {
+      collapsedNodeIds: [],
+      collapsedNodeIdsByScope: {},
+      layoutLocked: false,
+      operationRootPositionId: 3
+    },
+    "/api/annotations": []
+  };
+  const context = vm.createContext({
+    employees: [],
+    positions: [],
+    annotations: [],
+    authSession: { canEdit: true },
+    positionsNeedEmployeeReconciliation: false,
+    operationRootPositionId: null,
+    operationCycleWarningKey: null,
+    collapsedNodes: new Set(),
+    operationCollapsedNodesByScope: new Map(),
+    additionalPreferences: {},
+    isLayoutLocked: false,
+    selectedDept: "__operation__",
+    chartMode: "current",
+    currentChartRenderContext: null,
+    EMPLOYEES_API_URL: "/api/employees",
+    POSITIONS_API_URL: "/api/positions",
+    PREFERENCES_API_URL: "/api/preferences",
+    ANNOTATIONS_API_URL: "/api/annotations",
+    OPERATION_COLLAPSE_SCOPE_KEYS: ["__operation_current__", "__operation_future__"],
+    KNOWN_PREFERENCE_KEYS: new Set([
+      "collapsedNodeIds",
+      "collapsedNodeIdsByScope",
+      "layoutLocked",
+      "operationRootPositionId"
+    ]),
+    treeContainer,
+    svgOverlay: { innerHTML: "" },
+    authenticatedFetch: async (url, options = {}) => {
+      const method = options.method || "GET";
+      requests.push({ url, method });
+      if (method !== "GET") throw new Error(`Unexpected startup write: ${method} ${url}`);
+      return { ok: true, status: 200, json: async () => structuredClone(apiPayloads[url]) };
+    },
+    normalizeEmployeeProfiles: () => false,
+    isLegacyPhotoDataUrl: () => false,
+    compressAllEmployeePhotos: async () => false,
+    normalizePositionsList: value => structuredClone(value),
+    PositionPersistence: { shouldPersistAutomaticRepair: () => true },
+    recordConfirmedMutationState() {},
+    updateLayoutLockUI() {},
+    saveData: async () => { throw new Error("startup must not repair employees"); },
+    savePositions: async () => { throw new Error("startup must not persist a cycle repair"); },
+    loadAnnotations: async () => {
+      const response = await context.authenticatedFetch("/api/annotations");
+      context.annotations = await response.json();
+    },
+    setLoaderProgress() {},
+    setupEventListeners() {},
+    renderAll() { context.renderTree(); },
+    hideLoader() {},
+    requestAnimationFrame: callback => callback(),
+    fitToScreen() {},
+    localStorage: { setItem() {}, getItem() { return null; } },
+    clearAlignmentGuides() {},
+    clearCombineDropZones() {},
+    getCollapsedHiddenPositionIds: () => new Set(),
+    calculateInitialCoordinates(renderContext) {
+      context.renderedManagerMap = [...renderContext.effectiveManagerByDisplayId];
+    },
+    getPositionCardHTML: position => `<article data-position-id="${position.id}"></article>`,
+    wireTreeInteractions() {},
+    scheduleConnectionDraw() {},
+    renderAnnotations() {},
+    renderOperationEmptyState() {},
+    canEditHr: () => true,
+    getPositionTitle: position => position.title,
+    showNotification: (...args) => notifications.push(args),
+    console: { log() {}, warn() {}, error() {} }
+  });
+
+  vm.runInContext([
+    chartViewScopeSource,
+    hierarchySource,
+    lifecycleSource,
+    operationViewSource,
+    extractFunction("getOperationCollapsedNodeIdsByScope"),
+    extractFunction("sanitizeOperationRootPositionId"),
+    extractFunction("getAdditionalPreferences"),
+    extractFunction("sanitizeCollapsedNodeIds"),
+    extractFunction("applyPreferences"),
+    extractFunction("loadData"),
+    extractFunction("reconcilePositionsWithEmployees"),
+    extractFunction("loadPositions"),
+    extractFunction("loadPreferences"),
+    extractFunction("init"),
+    extractFunction("isOverallView"),
+    extractFunction("isOperationView"),
+    extractFunction("getChartModePositions"),
+    extractFunction("getOperationRenderState"),
+    extractFunction("buildChartRenderContext"),
+    extractFunction("notifyOperationCycleWarning"),
+    extractFunction("renderTree")
+  ].join("\n"), context);
+
+  await context.init();
+
+  assert.deepEqual(context.positions.map(position => [position.id, position.managerId]), [
+    [2, 4],
+    [3, 2],
+    [4, 3]
+  ]);
+  assert.deepEqual(
+    [...treeContainer.innerHTML.matchAll(/data-position-id="(\d+)"/g)].map(match => Number(match[1])).sort(),
+    [2, 3, 4]
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(context.renderedManagerMap)), [[2, 4], [3, null], [4, 3]]);
+  assert.equal(notifications.length, 1);
+  assert.match(notifications[0][0], /reporting cycle/i);
+  assert.deepEqual(requests, [
+    { url: "/api/employees", method: "GET" },
+    { url: "/api/positions", method: "GET" },
+    { url: "/api/preferences", method: "GET" },
+    { url: "/api/annotations", method: "GET" }
+  ]);
+});
+
 test("anonymous Viewer collapse remains local and never attempts a protected preference write", () => {
   const collapsedNodes = new Set();
   const context = vm.createContext({
@@ -515,4 +742,44 @@ test("anonymous Viewer collapse remains local and never attempts a protected pre
   assert.deepEqual([...collapsedNodes], []);
   assert.equal(context.renderCount, 2);
   assert.equal(context.fitCount, 2);
+});
+
+test("Viewer Expand All remains local and performs zero protected writes", async () => {
+  const collapsed = new Set([2, 3]);
+  const context = vm.createContext({
+    selectedDept: "__operation__",
+    ChartViewScope: { supportsCollapse: () => true },
+    getActiveCollapsedNodes: () => collapsed,
+    canEditHr: () => false,
+    savePreferences() { throw new Error("Viewer Expand All must not save shared preferences"); },
+    renderCount: 0,
+    fitCount: 0,
+    renderAll() { context.renderCount += 1; },
+    fitToScreen() { context.fitCount += 1; }
+  });
+  vm.runInContext(extractFunction("expandAllCollapsedNodes"), context);
+
+  assert.equal(await context.expandAllCollapsedNodes(), true);
+  assert.deepEqual([...collapsed], []);
+  assert.equal(context.renderCount, 1);
+  assert.equal(context.fitCount, 1);
+});
+
+test("Admin Expand All persists the cleared shared collapse candidate", async () => {
+  const collapsed = new Set([2, 3]);
+  let saves = 0;
+  const context = vm.createContext({
+    selectedDept: "All",
+    ChartViewScope: { supportsCollapse: () => true },
+    getActiveCollapsedNodes: () => collapsed,
+    canEditHr: () => true,
+    savePreferences: async () => { saves += 1; return true; },
+    renderAll() {},
+    fitToScreen() {}
+  });
+  vm.runInContext(extractFunction("expandAllCollapsedNodes"), context);
+
+  assert.equal(await context.expandAllCollapsedNodes(), true);
+  assert.deepEqual([...collapsed], []);
+  assert.equal(saves, 1);
 });

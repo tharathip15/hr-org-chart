@@ -50,8 +50,8 @@ async function handlePut(request, response) {
       readJsonBody(request)
     ]);
     const body = normalizePreferences({
-      ...getUnknownPreferenceFields(storedValue),
-      ...getPreferenceRecord(requestValue)
+      ...getPreferenceRecord(requestValue),
+      ...getUnknownPreferenceFields(storedValue)
     });
     
     const { error } = await supabase

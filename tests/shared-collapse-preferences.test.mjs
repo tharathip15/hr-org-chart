@@ -26,13 +26,13 @@ test("app loads shared collapsed node preferences before rendering", () => {
 
 test("explicit collapse toggles are saved to shared preferences", () => {
     assert.match(appSource, /function getPreferencesPayload\(\)/);
-    assert.match(appSource, /async function savePreferences\(\)/);
+    assert.match(appSource, /function savePreferences\(\)/);
     assert.match(appSource, /function toggleNode\(id\)[\s\S]+savePreferences\(\);[\s\S]+renderAll\(\);/);
 });
 
 test("overall view provides a recovery action for shared collapsed nodes", () => {
     assert.match(htmlSource, /id="btn-expand-all"/);
-    assert.match(appSource, /collapsedNodes\.clear\(\)/);
+    assert.match(appSource, /activeCollapsedNodes\.clear\(\)/);
 });
 
 test("the Vercel API exposes shared preferences", () => {

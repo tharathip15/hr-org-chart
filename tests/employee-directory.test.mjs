@@ -144,8 +144,8 @@ test("deleting an employee clears collapse state for linked positions with diffe
 });
 
 test("save helpers report persistence failures and delete rolls back partial saves", () => {
-    for (const functionName of ["saveData", "savePreferences"]) {
-        const source = appSource.match(new RegExp(`async function ${functionName}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+    for (const [functionName, parameters] of [["saveData", ""], ["persistPreferences", "candidatePreferences, sequence"]]) {
+        const source = appSource.match(new RegExp(`async function ${functionName}\\(${parameters}\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
         assert.ok(source, `${functionName} source was found`);
         assert.match(source, /return true;/);
         assert.match(source, /return false;/);

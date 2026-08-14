@@ -30,17 +30,19 @@
 
     const realPositionIds = new Set();
     const cyclePositionIds = new Set();
-    const visit = (id, path = new Set()) => {
+    const displayManagerByRealId = new Map();
+    const visit = (id, displayManagerId = null, path = new Set()) => {
       if (path.has(id)) {
         cyclePositionIds.add(id);
         return;
       }
       if (realPositionIds.has(id)) return;
       realPositionIds.add(id);
+      displayManagerByRealId.set(id, displayManagerId);
       const nextPath = new Set(path).add(id);
       (childrenByManager.get(id) || []).forEach(childId => {
         if (nextPath.has(childId)) cyclePositionIds.add(id);
-        visit(childId, nextPath);
+        visit(childId, id, nextPath);
       });
     };
     visit(rootId);
@@ -50,7 +52,8 @@
       rootPosition,
       realPositionIds,
       visiblePositions: visible.filter(position => realPositionIds.has(toPositionId(position?.id))),
-      cyclePositionIds
+      cyclePositionIds,
+      displayManagerByRealId
     };
   }
 
@@ -60,7 +63,8 @@
       rootPosition: null,
       realPositionIds: new Set(),
       visiblePositions: [],
-      cyclePositionIds: new Set()
+      cyclePositionIds: new Set(),
+      displayManagerByRealId: new Map()
     };
   }
 

@@ -66,6 +66,36 @@ test("combinePositions merges two positions and preserves child reporting lines"
     assert.equal(officer26.managerId, 17);
 });
 
+test("combinePositions does not silently repair an unrelated reporting cycle", () => {
+    const sourcePositions = [
+        { id: 1, title: "Cycle A", managerId: 2, department: "Operations" },
+        { id: 2, title: "Cycle B", managerId: 1, department: "Operations" },
+        { id: 3, title: "Primary", managerId: null, department: "Finance" },
+        { id: 4, title: "Secondary", managerId: 3, department: "Finance" }
+    ];
+
+    const result = combinePositions(sourcePositions, 3, [4], { title: "Combined" });
+
+    assert.deepEqual(
+        result.positions.filter(position => position.id <= 2).map(position => position.managerId),
+        [2, 1]
+    );
+});
+
+test("combinePositions rejects a cycle introduced by combining an ancestor into its descendant", () => {
+    const sourcePositions = [
+        { id: 1, title: "Top", managerId: null, department: "Operations", employeeId: 99 },
+        { id: 2, title: "Middle", managerId: 1, department: "Operations", employeeId: 20 },
+        { id: 3, title: "Bottom", managerId: 2, department: "Operations", employeeId: 99 }
+    ];
+
+    const result = combinePositions(sourcePositions, 3, [1], { managerId: 2 });
+
+    assert.equal(result.changed, false);
+    assert.equal(result.error, "cyclical_combination");
+    assert.deepEqual(result.positions, sourcePositions);
+});
+
 test("suggestSplitTitles parses combined titles into separate titles", () => {
     const { suggestSplitTitles } = globalThis.EmployeeDirectory || {};
     assert.equal(typeof suggestSplitTitles, "function");
@@ -101,6 +131,23 @@ test("splitPosition splits a combined position into two separate positions", () 
     assert.equal(newPos.title, "Logistics Manager");
     assert.equal(newPos.employeeId, 6);
     assert.equal(newPos.managerId, 10);
+});
+
+test("splitPosition does not silently repair an unrelated reporting cycle", () => {
+    const { splitPosition } = globalThis.OrgHierarchy || {};
+    const sourcePositions = [
+        { id: 1, title: "Cycle A", managerId: 2, department: "Operations" },
+        { id: 2, title: "Cycle B", managerId: 1, department: "Operations" },
+        { id: 10, title: "Combined", managerId: null, department: "Finance", employeeId: 5 }
+    ];
+
+    const result = splitPosition(sourcePositions, 10, ["First", "Second"]);
+
+    assert.equal(result.changed, true);
+    assert.deepEqual(
+        result.positions.filter(position => position.id <= 2).map(position => position.managerId),
+        [2, 1]
+    );
 });
 
 test("splitPosition preserves lifecycle and offsets every saved layout for three positions", () => {
@@ -210,8 +257,8 @@ test("Employee Profile exposes Split as a persistent footer action outside the s
 
     assert.match(detailDrawerSource, /class="drawer-footer detail-drawer-footer"/);
     assert.match(detailDrawerSource, /id="btn-split-employee-position"/);
-    assert.match(htmlSource, /href="style\.css\?v=5"/);
-    assert.match(htmlSource, /src="app\.js\?v=3\.21"/);
+    assert.match(htmlSource, /href="style\.css\?v=6"/);
+    assert.match(htmlSource, /src="app\.js\?v=3\.22"/);
     assert.match(appSource, /btnSplitEmployeePosition\.dataset\.positionId = String\(selectedPosition\.id\)/);
     assert.match(appSource, /btnSplitEmployeePosition\.addEventListener\("click"/);
     assert.doesNotMatch(appSource, /id="btn-open-split-modal"/);

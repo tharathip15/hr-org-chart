@@ -738,6 +738,7 @@ function updateLayoutLockUI() {
     if (typeof updateAnnotationToolbarButtons === "function") {
         updateAnnotationToolbarButtons();
     }
+    updateOperationRootButtonState();
     updateConnectionRouteToolbar();
     refreshDisplayModeIcons();
 }
@@ -747,20 +748,22 @@ async function toggleLayoutLock() {
         showNotification("Only editors can change the shared layout lock.", "error");
         return;
     }
-    const previousValue = isLayoutLocked;
     isLayoutLocked = !isLayoutLocked;
     updateLayoutLockUI();
     renderAnnotations();
 
-    const saved = await savePreferences();
+    const saveRequest = savePreferences();
+    const saved = await saveRequest;
+    if (saveRequest.isCurrentPreferenceSave?.() === false) return;
     if (!saved) {
-        isLayoutLocked = previousValue;
         updateLayoutLockUI();
         renderAnnotations();
         showNotification("Could not update the shared layout lock.", "error");
         return;
     }
 
+    renderAll();
+    renderPositionsList();
     showNotification(
         isLayoutLocked
             ? "Layout locked. Cards and annotations can no longer be moved."
@@ -1851,7 +1854,7 @@ async function loadPositions() {
         positions = normalizePositionsList(savedPositions, {
             validateEmployeeIds: !deferEmployeeReconciliation
         });
-        const hierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+        const hierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions, { repairCycles: false });
         positions = hierarchyRepair.positions;
 
         if (deferEmployeeReconciliation) {
@@ -1922,7 +1925,7 @@ async function loadPositions() {
             positions = normalizePositionsList(JSON.parse(saved), {
                 validateEmployeeIds: !deferEmployeeReconciliation
             });
-            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions);
+            const localHierarchyRepair = OrgHierarchy.repairPositionHierarchy(positions, { repairCycles: false });
             positions = localHierarchyRepair.positions;
             if (positions.length > 0) {
                 if (deferEmployeeReconciliation) {
@@ -1979,7 +1982,7 @@ async function persistPositions(candidatePositions, basePositions, sequence) {
     }
     setSyncStatus("saving");
     const normalizedCandidate = normalizePositionsList(candidatePositions);
-    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate);
+    const saveHierarchyRepair = OrgHierarchy.repairPositionHierarchy(normalizedCandidate, { repairCycles: false });
     const repairedCandidate = saveHierarchyRepair.positions;
     const payload = repairedCandidate.map(p => ({
         ...p,
@@ -2094,39 +2097,65 @@ async function loadPreferences() {
     recordConfirmedMutationState("preferences");
 }
 
-async function savePreferences() {
+let preferencesSaveQueue = Promise.resolve(true);
+let preferencesSaveSequence = 0;
+
+function preferencesEqual(left, right) {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function canApplyPreferenceSave(sequence, candidatePreferences) {
+    return sequence === preferencesSaveSequence
+        && preferencesEqual(getPreferencesPayload(), candidatePreferences);
+}
+
+async function persistPreferences(candidatePreferences, sequence) {
     if (!requireEditorAction({ notify: false })) {
-        restoreConfirmedMutationState("preferences");
+        if (canApplyPreferenceSave(sequence, candidatePreferences)) {
+            restoreConfirmedMutationState("preferences");
+        }
         return false;
     }
     setSyncStatus("saving");
-    const preferences = getPreferencesPayload();
-    try {
-        localStorage.setItem("hr_org_preferences", JSON.stringify(preferences));
-    } catch (error) {
-        console.warn("Failed to write preferences to localStorage:", error);
-    }
 
     let response = null;
     try {
         response = await authenticatedFetch(PREFERENCES_API_URL, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(preferences)
+            body: JSON.stringify(candidatePreferences)
         });
 
         if (!response.ok) {
             throw new Error(`Server responded with ${response.status}`);
         }
-        confirmMutationState("preferences");
-        setSyncStatus("success");
+        confirmMutationState("preferences", candidatePreferences);
+        if (canApplyPreferenceSave(sequence, candidatePreferences)) {
+            setSyncStatus("success");
+        }
         return true;
     } catch (error) {
-        restoreRejectedMutation("preferences", response);
+        const isCurrent = canApplyPreferenceSave(sequence, candidatePreferences);
+        if (isCurrent) restoreConfirmedMutationState("preferences");
         console.error("Failed to save shared view preferences.", error);
-        setSyncStatus("error");
+        if (isCurrent) setSyncStatus("error");
         return false;
     }
+}
+
+function queuePreferencesSave() {
+    const candidatePreferences = cloneMutationState(getPreferencesPayload());
+    const sequence = ++preferencesSaveSequence;
+    const run = () => persistPreferences(candidatePreferences, sequence);
+    const promise = preferencesSaveQueue.then(run, run);
+    preferencesSaveQueue = promise.catch(() => false);
+    return { sequence, candidatePreferences, promise };
+}
+
+function savePreferences() {
+    const request = queuePreferencesSave();
+    request.promise.isCurrentPreferenceSave = () => request.sequence === preferencesSaveSequence;
+    return request.promise;
 }
 
 function normalizePersonKey(name) {
@@ -2476,19 +2505,7 @@ function setupEventListeners() {
     document.getElementById("zoom-fit").addEventListener("click", fitToScreen);
     const btnExpandAll = document.getElementById("btn-expand-all");
     if (btnExpandAll) {
-        btnExpandAll.addEventListener("click", async () => {
-            if (!ChartViewScope.supportsCollapse(selectedDept)) return;
-            const activeCollapsedNodes = getActiveCollapsedNodes();
-            if (activeCollapsedNodes.size === 0) return;
-            if (activeCollapsedNodes === collapsedNodes) {
-                collapsedNodes.clear();
-            } else {
-                activeCollapsedNodes.clear();
-            }
-            renderAll();
-            fitToScreen();
-            await savePreferences();
-        });
+        btnExpandAll.addEventListener("click", expandAllCollapsedNodes);
     }
     
     // Mouse Wheel Zoom
@@ -3145,6 +3162,17 @@ function toggleNode(id) {
     fitToScreen();
 }
 
+async function expandAllCollapsedNodes() {
+    if (!ChartViewScope.supportsCollapse(selectedDept)) return false;
+    const activeCollapsedNodes = getActiveCollapsedNodes();
+    if (activeCollapsedNodes.size === 0) return false;
+
+    activeCollapsedNodes.clear();
+    renderAll();
+    fitToScreen();
+    return canEditHr() ? savePreferences() : true;
+}
+
 // Reset highlights
 function clearHighlights() {
     document.querySelectorAll(".node-card").forEach(c => c.classList.remove("highlighted"));
@@ -3177,7 +3205,11 @@ function buildChartRenderContext() {
             ? operationState.visiblePositions
             : [];
         const operationVisibleIds = new Set(operationVisiblePositions.map(position => position.id));
-        const effectiveManagers = OrgHierarchy.buildEffectiveManagerByRealId(positions, operationVisibleIds);
+        const effectiveManagers = OrgHierarchy.buildEffectiveManagerByRealId(
+            positions,
+            operationVisibleIds,
+            operationState.displayManagerByRealId
+        );
         const identityModel = {
             displayPositions: operationVisiblePositions,
             realToDisplayId: new Map(operationVisiblePositions.map(position => [position.id, position.id])),
@@ -3403,21 +3435,29 @@ function renderSidebarDeptList() {
     const sortedDepts = Object.keys(deptCounts).sort();
     
     let html = `
-        <li class="department-item ${isOverallView() ? "active" : ""}" data-dept="All">
-            <span>Overall View</span>
-            <span class="department-count">${visibleChartPositions.length}</span>
+        <li>
+            <button type="button" class="department-item ${isOverallView() ? "active" : ""}"
+                data-dept="All" aria-current="${isOverallView() ? "page" : "false"}">
+                <span>Overall View</span>
+                <span class="department-count">${visibleChartPositions.length}</span>
+            </button>
         </li>
-        <li class="department-item operation-item ${isOperationView() ? "active" : ""}"
-            data-dept="${ChartViewScope.OPERATION_VIEW_ID}">
-            <span>OPERATION</span>
-            <span class="department-count">${operationCount}</span>
+        <li>
+            <button type="button" class="department-item operation-item ${isOperationView() ? "active" : ""}"
+                data-dept="${ChartViewScope.OPERATION_VIEW_ID}" aria-current="${isOperationView() ? "page" : "false"}">
+                <span>OPERATION</span>
+                <span class="department-count">${operationCount}</span>
+            </button>
         </li>
     `;
     
     html += sortedDepts.map(dept => `
-        <li class="department-item ${selectedDept === dept ? "active" : ""}" data-dept="${dept}">
-            <span>${escapeHTML(dept)}</span>
-            <span class="department-count">${deptCounts[dept]}</span>
+        <li>
+            <button type="button" class="department-item ${selectedDept === dept ? "active" : ""}"
+                data-dept="${escapeHTML(dept)}" aria-current="${selectedDept === dept ? "page" : "false"}">
+                <span>${escapeHTML(dept)}</span>
+                <span class="department-count">${deptCounts[dept]}</span>
+            </button>
         </li>
     `).join("");
     
@@ -4971,20 +5011,9 @@ function getPrimaryPositionForEmployee(employeeId) {
 }
 
 function getDescendantPositionIds(positionId) {
-    const descendants = [];
-    const queue = [positionId];
-
-    while (queue.length > 0) {
-        const currentId = queue.shift();
-        positions.forEach(position => {
-            if (position.managerId === currentId) {
-                descendants.push(position.id);
-                queue.push(position.id);
-            }
-        });
-    }
-
-    return descendants;
+    const rootId = Number(positionId);
+    return OrgHierarchy.getDescendantPositionIds(positions, positionId)
+        .filter(descendantId => descendantId !== rootId);
 }
 
 function getAutoPositionForPosition(managerId, excludePositionId = null) {
@@ -5048,6 +5077,33 @@ function populatePositionFormLookups(excludePositionId = null) {
         .join("");
 }
 
+function updateOperationRootButtonState() {
+    const button = document.getElementById("btn-set-operation-root");
+    if (!button) return;
+
+    const selectedId = parseInt(document.getElementById("form-position-id")?.value, 10);
+    const position = Number.isInteger(selectedId)
+        ? positions.find(candidate => candidate.id === selectedId)
+        : null;
+    const label = document.getElementById("operation-root-button-label");
+    const title = !position
+        ? "Select a saved position to set the OPERATION root"
+        : isLayoutLocked
+            ? "Unlock the shared layout to change the OPERATION root"
+            : position.id === operationRootPositionId
+                ? "This position is the current OPERATION root"
+                : "Set this position as the OPERATION root";
+
+    button.disabled = !position || isLayoutLocked;
+    button.title = title;
+    button.setAttribute?.("aria-label", title);
+    if (label) {
+        label.textContent = position?.id === operationRootPositionId
+            ? "Current Operation Root"
+            : "Set as Operation Root";
+    }
+}
+
 function resetPositionForm(editId = null) {
     const form = document.getElementById("position-form");
     form.reset();
@@ -5058,18 +5114,18 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-status-reason").value = "";
     document.getElementById("btn-delete-position").disabled = true;
     document.getElementById("btn-open-position-actions").disabled = true;
-    const btnSetOperationRoot = document.getElementById("btn-set-operation-root");
-    const operationRootButtonLabel = document.getElementById("operation-root-button-label");
-    if (btnSetOperationRoot) {
-        btnSetOperationRoot.disabled = true;
-        if (operationRootButtonLabel) operationRootButtonLabel.textContent = "Set as Operation Root";
-    }
     populatePositionFormLookups(editId);
 
-    if (editId === null) return;
+    if (editId === null) {
+        updateOperationRootButtonState();
+        return;
+    }
 
     const position = positions.find(position => position.id === editId);
-    if (!position) return;
+    if (!position) {
+        updateOperationRootButtonState();
+        return;
+    }
 
     document.getElementById("form-position-id").value = position.id;
     document.getElementById("form-position-title").value = getPositionTitle(position);
@@ -5081,12 +5137,7 @@ function resetPositionForm(editId = null) {
     document.getElementById("form-position-status-reason").value = position.statusReason || "";
     document.getElementById("btn-delete-position").disabled = false;
     document.getElementById("btn-open-position-actions").disabled = false;
-    if (btnSetOperationRoot) {
-        btnSetOperationRoot.disabled = false;
-        if (operationRootButtonLabel) operationRootButtonLabel.textContent = position.id === operationRootPositionId
-            ? "Current Operation Root"
-            : "Set as Operation Root";
-    }
+    updateOperationRootButtonState();
 
     const manager = positions.find(candidate => candidate.id === position.managerId);
     document.getElementById("form-position-manager").value = manager ? getPositionOptionLabel(manager) : "";
@@ -5847,6 +5898,10 @@ function renderPositionsList() {
 
 async function setOperationRootPosition(positionId) {
     if (!requireEditorAction()) return false;
+    if (isLayoutEditingBlocked()) {
+        showNotification("Unlock the shared layout before changing the OPERATION root.", "error");
+        return false;
+    }
     const position = positions.find(candidate => candidate.id === Number(positionId));
     if (!position) {
         showNotification("Select a valid position for the OPERATION root.", "error");
@@ -5855,12 +5910,11 @@ async function setOperationRootPosition(positionId) {
     if (position.id === operationRootPositionId) return true;
     if (!window.confirm(`Set "${getPositionTitle(position)}" as the OPERATION root?`)) return false;
 
-    const previousRootId = operationRootPositionId;
     operationRootPositionId = position.id;
-    const saved = await savePreferences();
+    const saveRequest = savePreferences();
+    const saved = await saveRequest;
+    if (saveRequest.isCurrentPreferenceSave?.() === false) return saved;
     if (!saved) {
-        operationRootPositionId = previousRootId;
-        writeMutationBackup("preferences");
         showNotification("Could not change the OPERATION root; the previous root was restored.", "error");
         renderAll();
         renderPositionsList();

@@ -635,6 +635,7 @@ test("auth downgrade and lock activation share route cleanup semantics", () => {
     clearConnectionRouteEditing: options => lockEvents.push(["clear", options]),
     isViewerMode: () => false,
     isLayoutEditingBlocked: () => true,
+    updateOperationRootButtonState: () => lockEvents.push(["operation-root"]),
     updateConnectionRouteToolbar: () => lockEvents.push(["toolbar"]),
     refreshDisplayModeIcons: () => lockEvents.push(["icons"]),
     document: {

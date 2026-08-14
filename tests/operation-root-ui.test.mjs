@@ -52,6 +52,9 @@ function createElements() {
       innerText: "",
       value: "",
       textContent: "",
+      title: "",
+      attributes: new Map(),
+      setAttribute(name, value) { this.attributes.set(name, String(value)); },
       reset() {},
       querySelectorAll() { return []; }
     });
@@ -59,7 +62,7 @@ function createElements() {
   return elements;
 }
 
-function createContext({ editor = true, saveResult = true, rootId = 1 } = {}) {
+function createContext({ editor = true, saveResult = true, rootId = 1, locked = false } = {}) {
   const elements = createElements();
   const calls = { renderAll: 0, renderPositionsList: 0, resetPositionForm: [] };
   const notifications = [];
@@ -71,6 +74,7 @@ function createContext({ editor = true, saveResult = true, rootId = 1 } = {}) {
     ],
     employees: [],
     chartMode: "current",
+    isLayoutLocked: locked,
     operationRootPositionId: rootId,
     document: {
       body: { classList: { contains: () => !editor } },
@@ -78,8 +82,13 @@ function createContext({ editor = true, saveResult = true, rootId = 1 } = {}) {
     },
     window: { confirm: () => true },
     confirm: () => true,
+    canEditHr: () => editor,
     requireEditorAction: () => editor,
-    savePreferences: async () => saveResult,
+    isLayoutEditingBlocked: () => locked || !editor,
+    savePreferences: async () => {
+      if (!saveResult) context.operationRootPositionId = rootId;
+      return saveResult;
+    },
     showNotification: (...args) => notifications.push(args),
     renderAll: () => { calls.renderAll += 1; },
     renderPositionsList: () => { calls.renderPositionsList += 1; },
@@ -108,7 +117,10 @@ function createContext({ editor = true, saveResult = true, rootId = 1 } = {}) {
 
 test("Operation root form action is disabled for a new position and enabled for an editor-selected position", () => {
   const { context, elements } = createContext();
-  vm.runInContext(extractFunction("resetPositionForm"), context);
+  vm.runInContext([
+    extractFunction("updateOperationRootButtonState"),
+    extractFunction("resetPositionForm")
+  ].join("\n"), context);
 
   context.resetPositionForm();
   assert.equal(elements.get("btn-set-operation-root").disabled, true);
@@ -117,6 +129,27 @@ test("Operation root form action is disabled for a new position and enabled for 
   context.resetPositionForm(2);
   assert.equal(elements.get("btn-set-operation-root").disabled, false);
   assert.equal(elements.get("operation-root-button-label").textContent, "Set as Operation Root");
+  assert.equal(elements.get("btn-set-operation-root").title, "Set this position as the OPERATION root");
+});
+
+test("shared layout lock disables Operation root selection with an accessible explanation", () => {
+  const { context, elements } = createContext({ locked: true });
+  vm.runInContext([
+    extractFunction("updateOperationRootButtonState"),
+    extractFunction("resetPositionForm")
+  ].join("\n"), context);
+
+  context.resetPositionForm(2);
+
+  assert.equal(elements.get("btn-set-operation-root").disabled, true);
+  assert.equal(
+    elements.get("btn-set-operation-root").title,
+    "Unlock the shared layout to change the OPERATION root"
+  );
+  assert.equal(
+    elements.get("btn-set-operation-root").attributes.get("aria-label"),
+    "Unlock the shared layout to change the OPERATION root"
+  );
 });
 
 test("Operation root button preserves its network icon while its label changes", () => {
@@ -124,10 +157,10 @@ test("Operation root button preserves its network icon while its label changes",
     htmlSource,
     /id="btn-set-operation-root"[^>]*>[\s\S]*?<i data-lucide="network"><\/i>[\s\S]*?<span id="operation-root-button-label">Set as Operation Root<\/span>/
   );
-  const resetFormSource = extractFunction("resetPositionForm");
-  assert.match(resetFormSource, /const operationRootButtonLabel = document\.getElementById\("operation-root-button-label"\)/);
-  assert.match(resetFormSource, /operationRootButtonLabel\.textContent/);
-  assert.doesNotMatch(resetFormSource, /btnSetOperationRoot\.textContent/);
+  const buttonStateSource = extractFunction("updateOperationRootButtonState");
+  assert.match(buttonStateSource, /document\.getElementById\("operation-root-button-label"\)/);
+  assert.match(buttonStateSource, /label\.textContent/);
+  assert.doesNotMatch(buttonStateSource, /button\.textContent/);
 });
 
 test("Operation root form action is inert for a Viewer", async () => {
@@ -137,6 +170,24 @@ test("Operation root form action is inert for a Viewer", async () => {
   assert.equal(await context.setOperationRootPosition(2), false);
   assert.equal(context.operationRootPositionId, 1);
   assert.equal(calls.renderAll, 0);
+});
+
+test("shared layout lock guards Operation root reconfiguration before confirmation or persistence", async () => {
+  const { context, notifications } = createContext({ locked: true });
+  let confirmations = 0;
+  let saves = 0;
+  context.window.confirm = () => { confirmations += 1; return true; };
+  context.savePreferences = async () => { saves += 1; return true; };
+  vm.runInContext(extractFunction("async setOperationRootPosition"), context);
+
+  assert.equal(await context.setOperationRootPosition(2), false);
+  assert.equal(context.operationRootPositionId, 1);
+  assert.equal(confirmations, 0);
+  assert.equal(saves, 0);
+  assert.deepEqual(notifications, [[
+    "Unlock the shared layout before changing the OPERATION root.",
+    "error"
+  ]]);
 });
 
 test("setting an Operation root confirms with the selected position name", async () => {
@@ -184,7 +235,11 @@ test("a failed Operation root save restores the local preference fallback with u
       { id: 3, title: "Operations Analyst" }
     ],
     operationRootPositionId: 2,
+    preferencesSaveQueue: Promise.resolve(true),
+    preferencesSaveSequence: 0,
+    PREFERENCES_API_URL: "/api/preferences",
     requireEditorAction: () => true,
+    isLayoutEditingBlocked: () => false,
     window: { confirm: () => true },
     getPositionTitle: position => position.title,
     renderAll() {},
@@ -198,7 +253,12 @@ test("a failed Operation root save restores the local preference fallback with u
     setSyncStatus() {},
     authenticatedFetch: async () => ({ ok: false, status: 503 }),
     confirmMutationState() {},
-    restoreRejectedMutation: () => false,
+    restoreConfirmedMutationState() {
+      context.operationRootPositionId = 2;
+      context.localStorage.setItem("hr_org_preferences", JSON.stringify(context.getPreferencesPayload()));
+      return true;
+    },
+    cloneMutationState: value => JSON.parse(JSON.stringify(value)),
     console: { warn() {}, error() {} }
   });
   context.getPreferencesPayload = () => ({
@@ -214,7 +274,11 @@ test("a failed Operation root save restores the local preference fallback with u
     "const MUTATION_STORAGE_KEYS = { preferences: 'hr_org_preferences' };",
     extractFunction("getCurrentMutationState"),
     extractFunction("writeMutationBackup"),
-    extractFunction("async savePreferences"),
+    extractFunction("preferencesEqual"),
+    extractFunction("canApplyPreferenceSave"),
+    extractFunction("async persistPreferences"),
+    extractFunction("queuePreferencesSave"),
+    extractFunction("savePreferences"),
     extractFunction("async setOperationRootPosition")
   ].join("\n"), context);
 

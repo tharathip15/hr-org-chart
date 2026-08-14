@@ -200,11 +200,16 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    width: 100%;
     padding: 10px 12px;
+    border: 0;
     border-radius: var(--radius-md);
+    background: transparent;
     cursor: pointer;
+    font-family: inherit;
     font-size: 14px;
     font-weight: 500;
+    text-align: left;
     color: var(--text-secondary);
     transition: var(--transition-fast);
 }
@@ -227,6 +232,11 @@ body {
 .department-item.active .department-count {
     background-color: var(--bg-secondary);
     color: var(--accent-primary);
+}
+
+.department-item:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
 }
 
 .operation-item {

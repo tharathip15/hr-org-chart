@@ -46,3 +46,21 @@ test("terminates a cycle and returns every reached position once", () => {
   assert.deepEqual([...result.realPositionIds], [2, 3, 4]);
   assert.deepEqual([...result.cyclePositionIds].sort((a, b) => a - b), [2, 4]);
 });
+
+test("roots a cyclic Operation subtree with an acyclic display manager map", () => {
+  const cyclic = [
+    { id: 2, managerId: 4 },
+    { id: 3, managerId: 2 },
+    { id: 4, managerId: 3 }
+  ];
+
+  const result = buildSubtree(cyclic, cyclic, 3);
+
+  assert.deepEqual([...result.realPositionIds], [3, 4, 2]);
+  assert.deepEqual(JSON.parse(JSON.stringify([...result.displayManagerByRealId])), [
+    [3, null],
+    [4, 3],
+    [2, 4]
+  ]);
+  assert.deepEqual([...result.cyclePositionIds].sort((a, b) => a - b), [2, 3]);
+});

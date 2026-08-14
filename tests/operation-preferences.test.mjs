@@ -112,6 +112,88 @@ function extractArrowListener(source, marker) {
   throw new Error(`Could not extract ${marker} listener`);
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise(complete => { resolve = complete; });
+  return { promise, resolve };
+}
+
+async function nextTurn() {
+  await new Promise(resolve => setImmediate(resolve));
+}
+
+function createQueuedPreferenceContext(authenticatedFetch) {
+  const storage = new Map();
+  const syncStatuses = [];
+  const context = vm.createContext({
+    positions: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 9 }],
+    employees: [],
+    collapsedNodes: new Set(),
+    operationCollapsedNodesByScope: new Map(),
+    operationRootPositionId: null,
+    additionalPreferences: {},
+    isLayoutLocked: false,
+    preferencesSaveQueue: Promise.resolve(true),
+    preferencesSaveSequence: 0,
+    PREFERENCES_API_URL: "/api/preferences",
+    OPERATION_COLLAPSE_SCOPE_KEYS: ["__operation_current__", "__operation_future__"],
+    KNOWN_PREFERENCE_KEYS: new Set([
+      "collapsedNodeIds",
+      "collapsedNodeIdsByScope",
+      "layoutLocked",
+      "operationRootPositionId"
+    ]),
+    MUTATION_STORAGE_KEYS: { preferences: "hr_org_preferences" },
+    confirmedMutationState: new Map(),
+    localStorage: {
+      setItem(key, value) { storage.set(key, value); },
+      getItem(key) { return storage.get(key) || null; }
+    },
+    requireEditorAction: () => true,
+    authenticatedFetch,
+    updateLayoutLockUI() {},
+    setSyncStatus(status) { syncStatuses.push(status); },
+    renderAll() {},
+    renderAnnotations() {},
+    console: { warn() {}, error() {} }
+  });
+
+  vm.runInContext([
+    extractFunction(appSource, "getOperationCollapsedNodeIdsByScope"),
+    extractFunction(appSource, "sanitizeOperationRootPositionId"),
+    extractFunction(appSource, "getAdditionalPreferences"),
+    extractFunction(appSource, "cloneMutationState"),
+    extractFunction(appSource, "getCurrentMutationState"),
+    extractFunction(appSource, "applyMutationState"),
+    extractFunction(appSource, "writeMutationBackup"),
+    extractFunction(appSource, "renderMutationCollection"),
+    extractFunction(appSource, "recordConfirmedMutationState"),
+    extractFunction(appSource, "restoreConfirmedMutationState"),
+    extractFunction(appSource, "confirmMutationState"),
+    extractFunction(appSource, "sanitizeCollapsedNodeIds"),
+    extractFunction(appSource, "applyPreferences"),
+    extractFunction(appSource, "getPreferencesPayload"),
+    extractFunction(appSource, "preferencesEqual"),
+    extractFunction(appSource, "canApplyPreferenceSave"),
+    extractFunction(appSource, "persistPreferences"),
+    extractFunction(appSource, "queuePreferencesSave"),
+    extractFunction(appSource, "savePreferences")
+  ].join("\n"), context);
+
+  context.applyPreferences({
+    dashboardDensity: "compact",
+    collapsedNodeIds: [1],
+    collapsedNodeIdsByScope: {
+      __operation_current__: [3],
+      __operation_future__: [4]
+    },
+    layoutLocked: false,
+    operationRootPositionId: 1
+  });
+  context.recordConfirmedMutationState("preferences");
+  return { context, storage, syncStatuses };
+}
+
 function browserPreferenceRoundTrip(preferences) {
   const context = vm.createContext({
     positions: [{ id: 2 }, { id: 3 }, { id: 4 }, { id: 8 }],
@@ -217,6 +299,234 @@ test("retains unknown compatible preference fields on API reads and mutations", 
     dashboardDensity: "compact",
     featureFlags: { showVacancies: true }
   });
+});
+
+test("server preference writes keep the latest stored value of unknown compatible fields", async () => {
+  const { requests } = await savePreferences({
+    collapsedNodeIds: [4],
+    collapsedNodeIdsByScope: {},
+    layoutLocked: true,
+    operationRootPositionId: 2,
+    dashboardDensity: "stale-client-value",
+    importedExtension: { enabled: true }
+  }, {
+    collapsedNodeIds: [2],
+    layoutLocked: false,
+    dashboardDensity: "latest-server-value",
+    featureFlags: { showVacancies: true }
+  });
+
+  const persistedRequest = requests.find(request => request.init.body);
+  assert.deepEqual(JSON.parse(persistedRequest.init.body).value, {
+    collapsedNodeIds: [4],
+    collapsedNodeIdsByScope: {},
+    layoutLocked: true,
+    operationRootPositionId: 2,
+    dashboardDensity: "latest-server-value",
+    featureFlags: { showVacancies: true },
+    importedExtension: { enabled: true }
+  });
+});
+
+test("an older failed root candidate cannot roll back a newer successful root", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  const requests = [];
+  const { context, storage } = createQueuedPreferenceContext(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return requests.length === 1 ? firstResponse.promise : secondResponse.promise;
+  });
+
+  context.operationRootPositionId = 2;
+  const olderSave = context.savePreferences();
+  context.operationRootPositionId = 3;
+  const newerSave = context.savePreferences();
+
+  await nextTurn();
+  assert.deepEqual(requests.map(request => request.operationRootPositionId), [2]);
+
+  firstResponse.resolve({ ok: false, status: 503 });
+  assert.equal(await olderSave, false);
+  assert.equal(context.operationRootPositionId, 3);
+
+  await nextTurn();
+  assert.deepEqual(requests.map(request => request.operationRootPositionId), [2, 3]);
+  secondResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await newerSave, true);
+
+  assert.equal(context.operationRootPositionId, 3);
+  assert.equal(context.confirmedMutationState.get("preferences").operationRootPositionId, 3);
+  assert.equal(JSON.parse(storage.get("hr_org_preferences")).operationRootPositionId, 3);
+});
+
+test("a newer failed root candidate rolls back to the exact older successful candidate", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  const requests = [];
+  const { context } = createQueuedPreferenceContext(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return requests.length === 1 ? firstResponse.promise : secondResponse.promise;
+  });
+
+  context.operationRootPositionId = 2;
+  const olderSave = context.savePreferences();
+  context.operationRootPositionId = 3;
+  const newerSave = context.savePreferences();
+
+  await nextTurn();
+  firstResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await olderSave, true);
+  assert.equal(context.operationRootPositionId, 3);
+
+  await nextTurn();
+  secondResponse.resolve({ ok: false, status: 503 });
+  assert.equal(await newerSave, false);
+
+  assert.deepEqual(requests.map(request => request.operationRootPositionId), [2, 3]);
+  assert.equal(context.operationRootPositionId, 2);
+  assert.equal(context.confirmedMutationState.get("preferences").operationRootPositionId, 2);
+});
+
+test("a stale preference completion cannot publish success while a newer candidate is pending", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  const { context, syncStatuses } = createQueuedPreferenceContext(async (_url, options) =>
+    JSON.parse(options.body).operationRootPositionId === 2
+      ? firstResponse.promise
+      : secondResponse.promise
+  );
+
+  context.operationRootPositionId = 2;
+  const olderSave = context.savePreferences();
+  context.operationRootPositionId = 3;
+  const newerSave = context.savePreferences();
+
+  await nextTurn();
+  firstResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await olderSave, true);
+  await nextTurn();
+  assert.deepEqual(syncStatuses, ["saving", "saving"]);
+
+  secondResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await newerSave, true);
+  assert.deepEqual(syncStatuses, ["saving", "saving", "success"]);
+});
+
+test("a newer lock and collapse candidate retains an overlapping root intent after the older save fails", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  const requests = [];
+  const { context } = createQueuedPreferenceContext(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return requests.length === 1 ? firstResponse.promise : secondResponse.promise;
+  });
+
+  context.operationRootPositionId = 2;
+  const rootSave = context.savePreferences();
+  context.isLayoutLocked = true;
+  context.operationCollapsedNodesByScope.get("__operation_current__").add(9);
+  const lockAndCollapseSave = context.savePreferences();
+
+  await nextTurn();
+  firstResponse.resolve({ ok: false, status: 500 });
+  assert.equal(await rootSave, false);
+  assert.equal(context.operationRootPositionId, 2);
+  assert.equal(context.isLayoutLocked, true);
+
+  await nextTurn();
+  assert.deepEqual(requests[1], {
+    dashboardDensity: "compact",
+    collapsedNodeIds: [1],
+    collapsedNodeIdsByScope: {
+      __operation_current__: [3, 9],
+      __operation_future__: [4]
+    },
+    layoutLocked: true,
+    operationRootPositionId: 2
+  });
+  secondResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await lockAndCollapseSave, true);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(context.getPreferencesPayload())), requests[1]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.confirmedMutationState.get("preferences"))),
+    requests[1]
+  );
+});
+
+test("a failed lock and collapse candidate rolls back to the exact successful root candidate", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  const requests = [];
+  const { context } = createQueuedPreferenceContext(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return requests.length === 1 ? firstResponse.promise : secondResponse.promise;
+  });
+
+  context.operationRootPositionId = 2;
+  const rootSave = context.savePreferences();
+  context.isLayoutLocked = true;
+  context.operationCollapsedNodesByScope.get("__operation_current__").add(9);
+  const lockAndCollapseSave = context.savePreferences();
+
+  await nextTurn();
+  firstResponse.resolve({ ok: true, status: 200 });
+  assert.equal(await rootSave, true);
+
+  await nextTurn();
+  secondResponse.resolve({ ok: false, status: 503 });
+  assert.equal(await lockAndCollapseSave, false);
+
+  assert.equal(context.operationRootPositionId, 2);
+  assert.equal(context.isLayoutLocked, false);
+  assert.deepEqual([...context.operationCollapsedNodesByScope.get("__operation_current__")], [3]);
+  assert.deepEqual([...context.operationCollapsedNodesByScope.get("__operation_future__")], [4]);
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.confirmedMutationState.get("preferences"))),
+    requests[0]
+  );
+});
+
+test("a newer successful lock candidate renders the root intent retained from a stale failed root save", async () => {
+  const firstResponse = deferred();
+  const secondResponse = deferred();
+  let requestCount = 0;
+  const { context } = createQueuedPreferenceContext(async () => {
+    requestCount += 1;
+    return requestCount === 1 ? firstResponse.promise : secondResponse.promise;
+  });
+  const renders = { chart: 0, positions: 0 };
+  context.positions = [
+    { id: 1, title: "Chief Executive" },
+    { id: 2, title: "Operations Director" }
+  ];
+  context.isLayoutEditingBlocked = () => context.isLayoutLocked;
+  context.isViewerMode = () => false;
+  context.window = { confirm: () => true };
+  context.getPositionTitle = position => position.title;
+  context.showNotification = () => {};
+  context.updateLayoutLockUI = () => {};
+  context.renderAnnotations = () => {};
+  context.renderAll = () => { renders.chart += 1; };
+  context.renderPositionsList = () => { renders.positions += 1; };
+  context.resetPositionForm = () => {};
+  vm.runInContext([
+    extractFunction(appSource, "setOperationRootPosition"),
+    extractFunction(appSource, "toggleLayoutLock")
+  ].join("\n"), context);
+
+  const rootSave = context.setOperationRootPosition(2);
+  const lockSave = context.toggleLayoutLock();
+  await nextTurn();
+  firstResponse.resolve({ ok: false, status: 503 });
+  assert.equal(await rootSave, false);
+  await nextTurn();
+  secondResponse.resolve({ ok: true, status: 200 });
+  await lockSave;
+
+  assert.equal(context.operationRootPositionId, 2);
+  assert.equal(context.isLayoutLocked, true);
+  assert.deepEqual(renders, { chart: 1, positions: 1 });
 });
 
 test("browser preference round trips unknown fields with recognized state", () => {
@@ -463,7 +773,7 @@ test("browser preference persistence uses the complete payload at every bounded 
   );
   assert.match(loadAndSave, /applyPreferences\(await response\.json\(\)\)/);
   assert.match(loadAndSave, /applyPreferences\(JSON\.parse\(saved\)\)/);
-  assert.match(loadAndSave, /localStorage\.setItem\("hr_org_preferences", JSON\.stringify\(preferences\)\)/);
+  assert.match(loadAndSave, /confirmMutationState\("preferences", candidatePreferences\)/);
   assert.match(loadAndSave, /restoreConfirmedMutationState\("preferences"\)/);
 });
 
@@ -477,6 +787,9 @@ test("a backend preference failure restores the confirmed root and both collapse
     operationRootPositionId: null,
     additionalPreferences: {},
     isLayoutLocked: false,
+    preferencesSaveQueue: Promise.resolve(true),
+    preferencesSaveSequence: 0,
+    PREFERENCES_API_URL: "/api/preferences",
     OPERATION_COLLAPSE_SCOPE_KEYS: ["__operation_current__", "__operation_future__"],
     KNOWN_PREFERENCE_KEYS: new Set([
       "collapsedNodeIds",
@@ -515,6 +828,10 @@ test("a backend preference failure restores the confirmed root and both collapse
     extractFunction(appSource, "sanitizeCollapsedNodeIds", "applyPreferences"),
     extractFunction(appSource, "applyPreferences", "getPreferencesPayload"),
     extractFunction(appSource, "getPreferencesPayload", "loadPreferences"),
+    extractFunction(appSource, "preferencesEqual"),
+    extractFunction(appSource, "canApplyPreferenceSave"),
+    extractFunction(appSource, "persistPreferences"),
+    extractFunction(appSource, "queuePreferencesSave"),
     extractFunction(appSource, "savePreferences", "normalizePersonKey"),
     `applyPreferences({
       dashboardDensity: "compact",

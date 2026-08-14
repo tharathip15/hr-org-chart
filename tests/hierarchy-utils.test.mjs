@@ -7,7 +7,8 @@ const {
     repairPositionHierarchy,
     repairEmployeeManagers,
     isPrimaryEmployeePosition,
-    getDescendantPositionIds
+    getDescendantPositionIds,
+    buildEffectiveManagerByRealId
 } = globalThis.OrgHierarchy || {};
 
 test("repairs self-reporting and multi-position cycles without dropping positions", () => {
@@ -30,6 +31,59 @@ test("repairs self-reporting and multi-position cycles without dropping position
     assert.equal(result.positions.find(position => position.id === 4).managerId, 3);
     assert.equal(result.positions.find(position => position.id === 5).managerId, null);
     assert.deepEqual(source.map(position => position.managerId), [null, 2, 4, 3, 999]);
+});
+
+test("preserves loaded multi-position cycles while still repairing invalid and self managers", () => {
+    const source = [
+        { id: 1, managerId: 1 },
+        { id: 2, managerId: 4 },
+        { id: 3, managerId: 2 },
+        { id: 4, managerId: 3 },
+        { id: 5, managerId: 999 }
+    ];
+
+    const result = repairPositionHierarchy(source, { repairCycles: false });
+
+    assert.equal(result.changed, true);
+    assert.deepEqual(
+        result.positions.map(position => position.managerId),
+        [null, 4, 2, 3, null]
+    );
+    assert.equal(result.repairs.some(repair => repair.type === "cycle"), false);
+});
+
+test("promotes hidden managers through an acyclic Operation display hierarchy", () => {
+    const positions = [
+        { id: 2, managerId: 4 },
+        { id: 3, managerId: 2 },
+        { id: 4, managerId: 3 }
+    ];
+    const operationDisplayManagers = new Map([
+        [3, null],
+        [4, 3],
+        [2, 4]
+    ]);
+
+    const result = buildEffectiveManagerByRealId(
+        positions,
+        new Set([2, 3]),
+        operationDisplayManagers
+    );
+
+    assert.deepEqual([...result], [[2, 3], [3, null], [4, 3]]);
+});
+
+test("builds an acyclic display hierarchy from a raw visible cycle without mutating it", () => {
+    const positions = [
+        { id: 2, managerId: 4 },
+        { id: 3, managerId: 2 },
+        { id: 4, managerId: 3 }
+    ];
+
+    const result = buildEffectiveManagerByRealId(positions, new Set([2, 3, 4]));
+
+    assert.deepEqual([...result], [[2, null], [3, 2], [4, 3]]);
+    assert.deepEqual(positions.map(position => position.managerId), [4, 2, 3]);
 });
 
 test("repairs employee self-managers while preserving valid reporting lines", () => {
@@ -70,11 +124,15 @@ test("collects a position subtree without duplicates or cycle loops", () => {
         { id: 50, managerId: 40 },
         { id: 60, managerId: 50 },
         { id: 70, managerId: 70 },
+        { id: 80, managerId: 100 },
+        { id: 90, managerId: 80 },
+        { id: 100, managerId: 90 },
         { id: 99, managerId: null }
     ];
 
     assert.deepEqual(getDescendantPositionIds(positions, 10), [10, 20, 30, 40, 50, 60]);
     assert.deepEqual(getDescendantPositionIds(positions, 70), [70]);
+    assert.deepEqual(getDescendantPositionIds(positions, 80), [80, 90, 100]);
     assert.deepEqual(getDescendantPositionIds(positions, 999), []);
 });
 
