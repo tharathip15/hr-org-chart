@@ -173,3 +173,29 @@ test("an editor receives one stable cycle warning until leaving OPERATION", () =
   assert.match(notifications[0][0], /#3, #7/);
   assert.equal(notifications[0][1], "error");
 });
+
+test("resolving a cycle clears its warning key so the same recurring cycle warns again", () => {
+  const notifications = [];
+  const context = vm.createContext({
+    notifications,
+    ChartViewScope: { isOperation: value => value === "__operation__" },
+    canEditHr: () => true,
+    showNotification: (...args) => notifications.push(args)
+  });
+  vm.runInContext(`
+    let selectedDept = "__operation__";
+    let chartMode = "current";
+    let operationRootPositionId = 99;
+    let operationCycleWarningKey = null;
+    ${extractFunction("isOperationView")}
+    ${extractFunction("notifyOperationCycleWarning")}
+    const cycleContext = { operationCyclePositionIds: new Set([7, 3]) };
+    notifyOperationCycleWarning(cycleContext);
+    notifyOperationCycleWarning({ operationCyclePositionIds: new Set() });
+    globalThis.clearedKey = operationCycleWarningKey;
+    notifyOperationCycleWarning(cycleContext);
+  `, context);
+
+  assert.equal(context.clearedKey, null);
+  assert.equal(notifications.length, 2);
+});

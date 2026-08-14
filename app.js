@@ -3257,6 +3257,7 @@ function getCollapsedHiddenPositionIds(renderContext) {
         if (visited.has(managerId)) return;
         visited.add(managerId);
         (reportsMap.get(managerId) || []).forEach(childId => {
+            if (visited.has(childId)) return;
             hiddenIds.add(childId);
             markHidden(childId, visited);
         });
@@ -3768,7 +3769,11 @@ function notifyOperationCycleWarning(renderContext) {
     const cyclePositionIds = [...(renderContext?.operationCyclePositionIds || [])]
         .filter(Number.isInteger)
         .sort((left, right) => left - right);
-    if (cyclePositionIds.length === 0 || !canEditHr()) return;
+    if (cyclePositionIds.length === 0) {
+        operationCycleWarningKey = null;
+        return;
+    }
+    if (!canEditHr()) return;
 
     const warningKey = `${operationRootPositionId}:${chartMode}:${cyclePositionIds.join(",")}`;
     if (warningKey === operationCycleWarningKey) return;
